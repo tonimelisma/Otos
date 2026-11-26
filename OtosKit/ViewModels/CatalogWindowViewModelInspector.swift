@@ -242,13 +242,15 @@ extension CatalogWindowViewModel {
         showsInfo ? photoInfo?.id : nil
     }
 
-    /// Keeps In This Photo and Description current while they are read: each ring re-reads
-    /// the shown item's labels, text and description and applies them if it is still the one
-    /// shown. Only those sections are re-read, so the place lookup is not restarted.
+    /// Keeps In This Photo, Description and the File section's `Original` current while they
+    /// change: each ring re-reads the shown item's labels, text, description and where its
+    /// original is, and applies them if it is still the one shown. Only those are re-read, so
+    /// the place lookup is not restarted.
     ///
-    /// One loop, woken by a newest-wins doorbell that three sources ring: search's index each
-    /// time it announces new readings, the description writer each time it writes, and each
-    /// Info read as it lands. The last closes the one order the others cannot: a reading
+    /// One loop, woken by a newest-wins doorbell that four sources ring: search's index each
+    /// time it announces new readings, the description writer each time it writes, the
+    /// download coordinator each time an original it fetched lands, and each Info read as it
+    /// lands. The last closes the one order the others cannot: a reading
     /// announced while an Info read is in flight is re-read for the item shown then, and the
     /// Info read lands afterwards with what it read before the reading. A ring during a re-read
     /// is kept, so the last write to the sections is always followed by a fresh read. The loop
@@ -263,6 +265,7 @@ extension CatalogWindowViewModel {
         let store = catalogStore
         let labelNames = sceneLabelNames
         let availability = descriptionAvailability
+        let materialization = materializationCoordinator
         readingsRefreshTask = Task { [weak self] in
             await withDiscardingTaskGroup { group in
                 if let index {
@@ -279,12 +282,26 @@ extension CatalogWindowViewModel {
                         }
                     }
                 }
+                group.addTask {
+                    for await _ in await materialization.landings() {
+                        doorbell.yield()
+                    }
+                }
                 for await _ in rings {
                     guard let id = self?.readingsTarget else {
                         if self == nil {
                             break
                         }
                         continue
+                    }
+                    // Where the original is: a download Otos ran may have made it local.
+                    let locality = await materialization.locality(of: id)
+                    if let self, self.readingsTarget == id, self.photoInfo?.locality != locality {
+                        self.photoInfo?.update(locality: locality)
+                        OtosLog.ui.debugOperation("photo.info.locality", phase: "applied", fields: [
+                            "id": id.relativePath.rawValue,
+                            "locality": "\(locality)",
+                        ])
                     }
                     let readsText = self?.photoInfo?.recognized?.readsText ?? true
                     let describes = self?.photoInfo?.photoDescription != nil

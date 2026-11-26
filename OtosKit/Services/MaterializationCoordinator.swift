@@ -287,6 +287,9 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
     private var effectiveInteractiveCount = 0
     private var backgroundByRoot: [LibraryRootPath: Int] = [:]
 
+    /// Subscribers to `landings()`, each a newest-wins doorbell.
+    private var landingContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+
     private var supervisor: Task<Void, Never>?
     private var lastBlockedSnapshot: AdmissionSnapshot?
     private var isShuttingDown = false
@@ -388,6 +391,27 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         return OriginalLocality.of(kind: kind, status: status(id.fileURL))
     }
 
+    /// Rings each time a transfer this coordinator ran made an original local, so a surface
+    /// that shows where an original is (Info's `Original` row) reads it again. A ring names
+    /// no file: the subscriber re-reads the one it shows, and a newer ring covers an older.
+    func landings() -> AsyncStream<Void> {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        guard !isShuttingDown else {
+            continuation.finish()
+            return stream
+        }
+        let id = UUID()
+        landingContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeLandingContinuation(id) }
+        }
+        return stream
+    }
+
+    private func removeLandingContinuation(_ id: UUID) {
+        landingContinuations[id] = nil
+    }
+
     func shutdown() async {
         guard !isShuttingDown else {
             if let supervisor {
@@ -399,6 +423,10 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         breakerWakeTask?.cancel()
         breakerWakeTask = nil
         wakeContinuation.finish()
+        for continuation in landingContinuations.values {
+            continuation.finish()
+        }
+        landingContinuations = [:]
 
         let cancelled = MaterializationResult.cancelled
         for entry in pendingByID.values {
@@ -920,6 +948,11 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             finishedInRun += 1
             finishedBytesInRun = entry.request.sourceSize.flatMap { size in finishedBytesInRun.map { $0 + size } }
         }
+        if result.outcome == .materialized {
+            for continuation in landingContinuations.values {
+                continuation.yield()
+            }
+        }
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
         let completionDeliveryMs = DiagnosticsTiming.milliseconds(from: providerFinishedAt, to: deliveredAt)
@@ -930,7 +963,9 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             .map { DiagnosticsTiming.milliseconds(from: $0.requestedAt, to: deliveredAt) }
             .max() ?? providerMs
         let outcome = result.outcome.diagnosticDescription
-        let phase = result.isMaterialized ? "completed" : "failed"
+        // A transfer its waiters gave up on (a Cancel in the hand-off bar) did not fail: it is
+        // logged as cancelled, so a search for failed downloads finds only failures.
+        let phase = result.isMaterialized ? "completed" : result.outcome == .cancelled ? "cancelled" : "failed"
         let currentInFlight = inFlightCount
         let currentBytes = inFlightBytes
         OtosLog.mediaIO.notice(

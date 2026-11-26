@@ -123,7 +123,11 @@ Mac on 2026-11-20 every request failed with a `LanguageModelError` of no public 
 `ModelManagerError` 1026, which the system relayed from an asset lock it could not open ("Too
 many open files", `MobileAssetError.AutoAsset` 6583) while Otos held 67 descriptors; read as a
 failure of each photo, it made 13,177 requests in three hours, about three a second, one per
-owed still. A failure's log line names its error chain by domain and code (`causes=`). The model call is injected
+owed still. The fault is macOS's: on 2026-11-26 a standalone program that only calls
+`LanguageModelSession` failed the same way at a 256 and a 10240 open-file limit, and so did
+the system's own `textunderstandingd`
+(`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`), so Otos leaves its open-file
+limit alone. A failure's log line names its error chain by domain and code (`causes=`). The model call is injected
 (`PhotoDescribing`), the live one `PhotoDescriber.live` on `SystemLanguageModel.default`.
 
 **While Otos is in front too, and at memory-pressure warning** (ADR 0057 decision 8; ADR 0055

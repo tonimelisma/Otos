@@ -26,6 +26,25 @@ struct PhotoInfoTests {
         #expect(info.coordinate == nil)
     }
 
+    /// A download that made the original local changes the `Original` row it is shown in,
+    /// and nothing else; with no single item there is nothing to change.
+    @Test func anOriginalThatLandedReadsOnThisMac() {
+        var info = PhotoInfo.make(PhotoInfo.Source(id: still, locality: .fetchable))
+        #expect(info.value("Original") == "Not Downloaded")
+        let before = info.sections.flatMap(\.rows).filter { $0.label != "Original" }
+
+        info.update(locality: .local)
+
+        #expect(info.value("Original") == "On This Mac")
+        #expect(info.locality == .local)
+        #expect(info.sections.flatMap(\.rows).filter { $0.label != "Original" } == before)
+
+        var none = PhotoInfo.none(itemCount: 2)
+        none.update(locality: .local)
+        #expect(none.value("Original") == PhotoInfo.notApplicable)
+        #expect(none.locality == nil)
+    }
+
     @Test func aStillShowsEverythingOtosHolds() {
         let asset = MediaAsset(
             libraryRootPath: still.libraryRootPath,

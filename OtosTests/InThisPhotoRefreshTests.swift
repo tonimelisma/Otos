@@ -40,4 +40,26 @@ struct InThisPhotoRefreshTests {
             #expect(model.photoInfo?.id == id)
         }
     }
+
+    /// The File section's `Original` follows where the original is: each ring, which the
+    /// download coordinator sends as an original it fetched lands, reads it again. Here the
+    /// original goes away, the one move a test can make on a real file, and the ring finds it.
+    @Test func originalReadsWhereTheFileIsWhenTheDoorbellRings() async throws {
+        try await withEditableLibrary(fileCount: 1) { library in
+            let id = library.ids[0]
+            let model = library.makeEditModel()
+            model.startReadingsRefresh()
+            defer { model.readingsRefreshTask?.cancel() }
+
+            model.openLoupe(id: id)
+            model.toggleInspector(.info)
+            try await waitUntil { model.photoInfo?.id == id }
+            #expect(model.photoInfo?.locality == .local)
+
+            try FileManager.default.removeItem(at: id.fileURL)
+            model.readingsDoorbell?.yield()
+            try await waitUntil { model.photoInfo?.locality == .unreachable }
+            #expect(model.photoInfo?.sections.flatMap(\.rows).first { $0.label == "Original" }?.value == "Unavailable")
+        }
+    }
 }

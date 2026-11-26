@@ -194,6 +194,27 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// A surface that shows where an original is (Info's `Original`) hears when a transfer
+    /// made one local, and the stream ends with the coordinator.
+    @Test func aTransferThatMadeAnOriginalLocalRingsLandings() async throws {
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: makeTestStore(location: .inMemory),
+            executor: { await executor.run($0.id.fileURL) },
+            volumeCapacity: ampleVolumeCapacity
+        )
+        let landings = await coordinator.landings()
+        let fetch = Task { await coordinator.materialize(request("landed.jpg", priority: .interactive)) }
+        try await executor.waitForStarts(1)
+        try await executor.releaseNext()
+        #expect(await fetch.value.isMaterialized)
+
+        var rings = landings.makeAsyncIterator()
+        #expect(await rings.next() != nil)
+        await coordinator.shutdown()
+        #expect(await rings.next() == nil)
+    }
+
     @Test func queuedBackgroundRequestIsPromotedWithoutDuplicateTransfer() async throws {
         var policy = MaterializationAdmissionPolicy.production
         policy.globalConcurrency = 2

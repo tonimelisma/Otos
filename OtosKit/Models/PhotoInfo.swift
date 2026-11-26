@@ -215,6 +215,9 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
     var recognized: Recognized?
     /// A still's description; nil with no single item and for a movie, which has none.
     var photoDescription: Description?
+    /// Where the original was when last read, which the File section's `Original` row shows;
+    /// nil with no single item or when it was not read.
+    private(set) var locality: OriginalLocality?
     private var sectionRows: [SectionID: [Row]]
     private let sectionOrder: [SectionID]
 
@@ -310,6 +313,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             photoDescription: resolvedKind == .video
                 ? nil
                 : Description(source.overlay?.photoDescription, availability: source.descriptionAvailability),
+            locality: source.locality,
             sectionRows: rows,
             sectionOrder: order
         )
@@ -514,7 +518,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
             Row(label: "Dimensions", value: dimensions(source.nativePixelSize)),
             Row(label: "Size", value: asset?.byteSize.map { ImportBarByteFormat.string(bytes: $0) } ?? unknown),
             Row(label: "Folder", value: folder),
-            Row(label: "Original", value: source.locality.map(localityText) ?? unknown),
+            Row(label: originalLabel, value: source.locality.map(localityText) ?? unknown),
             Row(label: "Created", value: asset?.createdAt?.formatted(fileDate) ?? unknown),
             Row(label: "Modified", value: asset?.contentModifiedAt?.formatted(fileDate) ?? unknown),
             Row(label: "Imported", value: imported),
@@ -596,6 +600,18 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         let megapixels = Double(width * height) / 1_000_000
         let pixels = "\(width) × \(height)"
         return megapixels >= 1 ? "\(pixels) (\(number(megapixels, digits: 1)) MP)" : pixels
+    }
+
+    private static let originalLabel = "Original"
+
+    /// Shows where the original is now, read again after it may have moved: a download made
+    /// it local. Changes nothing with no single item.
+    mutating func update(locality: OriginalLocality) {
+        guard id != nil, let rows = sectionRows[.file] else { return }
+        self.locality = locality
+        sectionRows[.file] = rows.map { row in
+            row.label == Self.originalLabel ? Row(label: row.label, value: Self.localityText(locality)) : row
+        }
     }
 
     private static func localityText(_ locality: OriginalLocality) -> String {

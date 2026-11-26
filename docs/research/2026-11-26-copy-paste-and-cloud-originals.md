@@ -184,16 +184,31 @@ model-service log, with the installed v1.0.2:
   window's identity across activation, popovers and sheets is not a record that can be kept
   reliably, so nothing decides on it now: Copy is available whenever photos are targeted,
   and a command asks AppKit what holds the keyboard when it runs (`KeyboardFocus.live`).
-- **Apple Intelligence did not fail; Otos ran out of open files.** Every description request
-  since the log's start (2026-11-25 21:55, seven sessions) failed with
+- **Apple Intelligence fails for every app on this Mac, not for Otos.** Every description
+  request since the log's start (2026-11-25 21:55, seven sessions) failed with
   `LanguageModelError -1` / `ModelManagerError 1026`, none written. macOS's model service,
   inside Otos's process, logged: `Failed to open lock file for ClientDomain:
   com.apple.UnifiedAssetFramework | SetIdentifier:com.apple.MobileAsset.UAF.FM.Overrides …
-  Error: Too many open files` (`com.apple.MobileAssetError.AutoAsset` 6583). Otos's soft
-  limit was the 256 a Mac app starts with (`ulimit -n`, `launchctl limit maxfiles`: 256 /
-  unlimited); `lsof` counted about 127 entries 40 s after a background launch, mapped
-  frameworks included, steady, so no runaway leak in that window: the model service's files
-  on top of Otos's bursts crossed 256. Otos now raises the limit at launch (ARC-073).
+  Error: Too many open files` (`com.apple.MobileAssetError.AutoAsset` 6583). It is not Otos's
+  open-file limit:
+  - v1.0.4 raised Otos's soft limit from 256 to 10240 at launch, and the same line and 1026
+    came 18 s later (11:37:15). At 11:52 a second request failed with
+    `failedToRetrieveAssetSet("CoherenceLock: com.apple.MobileAsset.UAF.FM.Overrides - no
+    asset set")`.
+  - Otos held 81 descriptors (`lsof -a -d 0-65535`; `lsof`'s 184 lines include mapped
+    frameworks), flat across 78 samples over 6.5 minutes. ADR 0053 recorded 67 on 2026-11-20.
+  - A 15-line program that only calls `LanguageModelSession().respond(to:)` failed the same
+    way, with the same two lines, at a 256 and at a 10240 limit, while
+    `SystemLanguageModel.default.availability` said `available`.
+  - `textunderstandingd`, a system daemon, logged the same lock failure at 11:00:14.
+
+  The lock file
+  (`/System/Library/AssetsV2/locks/com.apple.UnifiedAssetFramework/com.apple.MobileAsset.UAF.FM.Overrides/shared_locks/atomic_instance_1A4CB6F0-….locker`,
+  root-owned, read-only to users) is a 620 KB `SoftwareUpdateCorePersistedStateFile` whose
+  `sharedLockSetStatus` archive records about 270 shared locks across at least seven asset
+  versions, the oldest from October 2025 builds. That stale lock entries accumulated
+  past a limit of the framework is the likeliest reading **[I]**: nothing documents the limit.
+  The repair is macOS's (a restart, an update, or Feedback to Apple). The open-file limit
+  #34 added was removed, since nothing measured needs it, and ADR 0053's account stands.
 - Public reports of error 1026 (<https://developer.apple.com/forums/thread/807145>) describe
-  it only as a model-service failure cured by updates or restarts; none names its cause, so
-  the lock-file line above is the evidence.
+  it only as a model-service failure cured by updates or restarts; none names its cause.

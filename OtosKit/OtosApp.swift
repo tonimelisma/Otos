@@ -108,8 +108,6 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     private var machineConditions: MachineConditionsMonitor?
 
     func applicationWillFinishLaunching(_: Notification) {
-        // Before anything opens a file: 256 is too few for Otos and the frameworks it hosts.
-        OpenFileLimit.raise()
         backgroundReading = BackgroundReading.begin()
         metricKit = MetricKitRecorder.start(
             folder: Self.applicationSupportFolder.appending(
