@@ -16,11 +16,8 @@ struct CatalogWindowViewModelOpenWithTests {
             applications: ["jpg": [.preview], "mov": [.quickTime]]
         )
         let model = makeOpenWithModel(workspace: workspace)
-        let jpgs = makeIDs(count: 2)
-        let mov = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            relativePath: MediaRelativePath(rawValue: "clip.mov")
-        )
+        let jpgs = try makeIDs(count: 2)
+        let mov = try makeLocalMediaIDs(["clip.mov"])[0]
         let ids = [jpgs[0], mov, jpgs[1]]
         model.applyState(openWithWindowState(ids: ids))
         model.selectAll()
@@ -40,7 +37,7 @@ struct CatalogWindowViewModelOpenWithTests {
     @Test func openWithSendsWholeSelectionToChosenApp() async throws {
         let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview, .photos]])
         let model = makeOpenWithModel(workspace: workspace)
-        let ids = makeIDs(count: 3)
+        let ids = try makeIDs(count: 3)
         model.applyState(openWithWindowState(ids: ids))
         model.selectAll()
         try await waitUntil { model.openWithMenu.targetCount == 3 }
@@ -57,7 +54,7 @@ struct CatalogWindowViewModelOpenWithTests {
     @Test func loupeTargetsTheFocusedAssetOnly() async throws {
         let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview]])
         let model = makeOpenWithModel(workspace: workspace)
-        let ids = makeIDs(count: 3)
+        let ids = try makeIDs(count: 3)
         model.applyState(openWithWindowState(ids: ids))
         model.openLoupe(id: ids[1])
         try await waitUntil { model.openWithMenu.targetCount == 1 }
@@ -79,11 +76,8 @@ struct CatalogWindowViewModelOpenWithTests {
             gate: gate
         )
         let model = makeOpenWithModel(workspace: workspace)
-        let jpg = makeIDs(count: 1)[0]
-        let mov = MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            relativePath: MediaRelativePath(rawValue: "clip.mov")
-        )
+        let jpg = try makeIDs(count: 1)[0]
+        let mov = try makeLocalMediaIDs(["clip.mov"])[0]
         let ids = [jpg, mov]
         model.applyState(openWithWindowState(ids: ids))
 
@@ -102,21 +96,25 @@ struct CatalogWindowViewModelOpenWithTests {
         #expect(model.openWithMenu.defaultsByTarget[jpg.fileURL] == nil)
     }
 
-    @Test func openingRequestsNoMaterializationAndReadsNoBytes() async throws {
-        // The workspace is the only collaborator; a target under a path that does not
-        // exist opens exactly as a real one would, which is only possible because no
-        // byte or stat read happens in Otos.
+    /// An original that is not where the catalog last saw it opens nothing: the hand-off
+    /// hands over only files on this Mac, and says which photo it could not find (ADR 0012).
+    @Test func aMissingOriginalOpensNothingAndSaysSo() async throws {
         let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview]])
         let model = makeOpenWithModel(workspace: workspace)
-        let ids = makeIDs(count: 1)
-        model.applyState(openWithWindowState(ids: ids))
+        let missing = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+            relativePath: MediaRelativePath(rawValue: "gone.jpg")
+        )
+        model.applyState(openWithWindowState(ids: [missing]))
         model.selectAll()
         try await waitUntil { model.openWithMenu.targetCount == 1 }
 
         model.openTargetsInDefaultApplication()
-        try await waitUntil { await workspace.opens.count == 1 }
+        try await waitUntil { model.hasSettledHandOffs }
 
-        #expect(await workspace.opens.first?.targets == [URL(fileURLWithPath: "/Pictures/asset-0.jpg")])
+        #expect(await workspace.opens.isEmpty)
+        #expect(model.handOffAlertMessage
+            == "One photo’s original isn’t where Otos last saw it. Nothing was handed over.")
     }
 }
 
@@ -137,13 +135,8 @@ private func makeOpenWithModel(workspace: RecordingWorkspace) -> CatalogWindowVi
     return model
 }
 
-private func makeIDs(count: Int) -> [MediaAssetID] {
-    (0 ..< count).map { index in
-        MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            relativePath: MediaRelativePath(rawValue: "asset-\(index).jpg")
-        )
-    }
+private func makeIDs(count: Int) throws -> [MediaAssetID] {
+    try makeLocalMediaIDs((0 ..< count).map { "asset-\($0).jpg" })
 }
 
 private func openWithWindowState(ids: [MediaAssetID]) -> CatalogWindowState {

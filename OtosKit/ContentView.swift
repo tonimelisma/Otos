@@ -99,6 +99,9 @@ struct ContentView: View {
         // The field's clear button, pressed while the field is not being edited, does not reach
         // the binding above; the field's own action does (`ToolbarSearchFieldClearRelay`).
         .background(ToolbarSearchFieldClearRelay { viewModel.setSearchText("") })
+        // What holds the keyboard, which Edit ▸ Cut, Copy, Paste and Select All act on
+        // (DES-093): the key window's first responder, as AppKit keeps it.
+        .background(KeyboardFocusRelay { viewModel.setKeyboardFocus($0) })
         .onChange(of: viewModel.searchFocusRequest) {
             isSearchFocused = true
         }
@@ -741,7 +744,6 @@ struct InspectorColumn: View {
                     toggleLine: viewModel.editSession.toggleStraightenLine,
                     autoCrop: viewModel.editSession.autoCrop
                 ),
-                setEntering: viewModel.editSession.setEnteringEditValue,
                 setLensCorrection: viewModel.editSession.setLensCorrection,
                 resetControl: viewModel.editSession.resetEditControl,
                 originalActions: EditPanelOriginalActions(

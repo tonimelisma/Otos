@@ -239,10 +239,12 @@ public struct OtosApp: App {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
-            // While text holds the keyboard (an edit value, the export sheet), Cut, Copy,
+            // While text holds the keyboard — any field being edited or text view focused in
+            // the key window, as its first responder says (`KeyboardFocusRelay`) — Cut, Copy,
             // Paste and Select All act on it through the responder chain, as in any text
-            // field (Keyboards: respect standard shortcuts); otherwise Copy and Select All
-            // act on photos.
+            // field (Keyboards: respect standard shortcuts). Otherwise, in the catalog window,
+            // Copy and Select All act on photos; behind a sheet or in another window, they
+            // act on nothing (DES-093).
             CommandGroup(replacing: .pasteboard) {
                 Button("Cut") {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
@@ -250,14 +252,18 @@ public struct OtosApp: App {
                 .keyboardShortcut("x", modifiers: .command)
                 .disabled(!catalogViewModel.textHoldsKeyboard)
                 Button("Copy") {
-                    if catalogViewModel.textHoldsKeyboard {
+                    switch catalogViewModel.keyboardFocus {
+                    case .text:
                         NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-                    } else {
+                    case .photos:
                         catalogViewModel.copyCurrentTargets()
+                    case .elsewhere:
+                        break
                     }
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(!catalogViewModel.textHoldsKeyboard && !catalogViewModel.hasMediaChoiceTarget)
+                .disabled(!catalogViewModel.textHoldsKeyboard
+                    && !(catalogViewModel.photosHoldKeyboard && catalogViewModel.hasMediaChoiceTarget))
                 Button("Paste") {
                     NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                 }
@@ -265,17 +271,22 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.textHoldsKeyboard)
                 Divider()
                 Button("Select All") {
-                    if catalogViewModel.textHoldsKeyboard {
+                    switch catalogViewModel.keyboardFocus {
+                    case .text:
                         NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                    } else {
+                    case .photos:
                         catalogViewModel.selectAll()
+                    case .elsewhere:
+                        break
                     }
                 }
                 .keyboardShortcut("a", modifiers: .command)
+                .disabled(catalogViewModel.keyboardFocus == .elsewhere)
                 Button("Deselect All") {
                     catalogViewModel.deselectAll()
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(!catalogViewModel.photosHoldKeyboard)
             }
             // Edit ▸ Find (⌘F), as in Photos: focuses the toolbar search field (ADR 0048).
             CommandGroup(replacing: .textEditing) {

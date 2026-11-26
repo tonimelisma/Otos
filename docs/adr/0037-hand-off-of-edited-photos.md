@@ -1,7 +1,7 @@
 # ADR 0037: A hand-off is the photo as Otos shows it
 
 - Status: Accepted
-- Last updated: 2026-10-25
+- Last updated: 2026-11-26
 
 ## Context
 
@@ -27,10 +27,12 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
 ## Decision
 
 - **What is handed over** (`HandOffPreparer`, one owner for every path):
-  - an unedited still that is not a RAW, or an untrimmed video: the original, unread, as
-    before. An original a source stages — an Immich account's or a camera's (ADR 0046
-    §4) — has no file until Otos copies it, and no app can fetch it, so one not yet staged
-    is fetched first as the user's work, and is then handed over as itself;
+  - an unedited still that is not a RAW, or an untrimmed video: the original itself, on this
+    Mac (ADR 0012). A cloud-only original is downloaded first as the user's work. An
+    original a source stages — an Immich account's or a camera's (ADR 0046 §4) — has no file
+    until Otos copies it, and no app can fetch it, so one not yet staged is fetched first
+    too. An original missing from its folder, which no source can send, fails the hand-off;
+    its path is never handed over;
   - an edited still or any RAW: a full-size JPEG rendered from the original with its
     recipe, which carries the original's Exif, GPS, TIFF and IPTC metadata with
     orientation and pixel size reset;
@@ -39,38 +41,63 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   The files are written by `MediaFileWriter`, which export (ADR 0038) also uses, so a
   photo handed off and a photo exported as full-size JPEG are the same file.
 - **Where prepared files live.** One folder in Application Support (`HandOff`), never a
-  media folder. A file's path is fixed by the photo and its recipe, so a photo handed off
-  twice in one launch reuses its file. The folder is cleared once per launch, before the
-  first hand-off. Nothing full-size is kept beyond that launch.
+  media folder, holding a folder of the launch's own. A file's path in it is fixed by the
+  photo and its recipe, so a photo handed off twice in one launch reuses its file, and an
+  earlier launch's file is never taken for one. The earlier launches' folders are cleared
+  once, before this launch's first preparation writes. Nothing full-size is kept beyond
+  that launch.
+- **One preparation per file.** An actor runs other work at every `await`, so two asks for
+  one photo's file (a drag's promise and a Copy) join one preparation: each waits on its own
+  continuation and can stop waiting at once; the preparation is cancelled when its last
+  waiter leaves (`HandOffPreparer.join`).
 - **Copy, Share, Open and Open With** are one ordered view-model lane:
   1. read the targets' details;
-  2. prepare what needs it, behind a bottom status bar (`Preparing 3 photos to copy`,
-     M of N, Cancel);
+  2. prepare what needs it — download, render or export — behind a bottom status bar
+     (`Preparing 3 photos to copy`, M of N, Cancel);
   3. act: write the pasteboard, show the share picker, or open the files (each with its
      own default app).
 
-  A selection that needs nothing prepared acts with no bar. Cancel hands nothing over. A
-  photo that cannot be prepared fails the hand-off with an alert, because handing over
-  the rest would silently drop a photo the person chose.
-  The alert names the cause it knows: a write the hand-off folder's volume refused for
-  space says the disk is full (`HandOffPreparer.PrepareError.outOfSpace`, classified by the
-  error's typed chain through `FreeSpaceFloor.refusedForSpace`); a source that cannot send
-  an original is named by its sidebar name in its own terms (`“Family” isn’t answering`,
-  `“EOS R5” isn’t connected`; `PrepareError.sourceUnavailable`, from the executor's
-  `serverUnreachable` or `deviceUnavailable`); any other failure says the original may be
-  unavailable. `MediaFileWriter` encodes in memory and then writes the
-  file, so the write's own error reaches the caller instead of Image I/O's bare failure.
+  Each request's work is a task of its own (`handOffWork`). A selection that needs nothing
+  prepared acts with no bar. Cancel cancels that task, which stops the download or render
+  in flight, and hands nothing over; the lane goes on to the next request. A newer Copy
+  cancels an older one still being prepared and skips one still queued, since the
+  pasteboard keeps only the newest. A hand-off is all or nothing, because handing over the
+  rest would silently drop a photo the person chose, so the first photo that cannot be
+  prepared ends it with an alert naming that photo's cause (`HandOffFailure`), each
+  classified by type, never by text:
+  - the disk is full: a write the hand-off folder's volume refused for space
+    (`PrepareError.outOfSpace`, through `FreeSpaceFloor.refusedForSpace`);
+  - a source that cannot send an original, by its sidebar name (`“Family” isn’t answering`,
+    `“EOS R5” isn’t connected`; `sourceUnavailable`, from the executor's
+    `serverUnreachable` or `deviceUnavailable`);
+  - a folder's provider that did not deliver a cloud-only original, by the folder's sidebar
+    name (`downloadFailed`);
+  - an original missing from its folder (`originalMissing`);
+  - macOS's missing support for a RAW's camera (`rawSupportUnavailable`, from
+    `ImageRenderer.RAWResourcesUnavailable`), which is no verdict on the photo;
+  - a render or export that failed (`renderFailed`);
+  - the targets' details the catalog could not read.
+
+  `MediaFileWriter` encodes in memory and then writes the file, so the write's own error
+  reaches the caller instead of Image I/O's bare failure.
 - **Drag cannot wait,** so its writer is chosen synchronously from the details the grid
-  holds:
-  - the original's URL;
+  holds (`dragWriters(for:)`):
+  - the original's `public.file-url`, a cloud placeholder included: the receiver downloads
+    it, because a promise for it would never be fulfilled by Chrome;
   - a file this launch already prepared;
-  - or a file promise, which prepares the photo when the receiver asks. Finder, Mail,
-    Messages and Safari wait for it.
-  A photo dragged into Chrome arrives only if its file is already prepared. ⌘C then paste
-  works in every case. A staged original not yet copied is promised, never offered as a
-  path with nothing there. A promise that cannot be kept fails with the reason
-  (`PrepareError`'s description), which is what the receiver shows, since a drag has no
-  alert of Otos's own.
+  - or a file promise, which prepares the photo when the receiver asks, downloading a
+    cloud-only original through the shared coordinator first and copying the file into the
+    receiver's folder on the promise's own queue. Finder, Mail, Messages and Safari wait for
+    it.
+
+  A photo dragged into Chrome arrives only if its file is ready. ⌘C then paste works in
+  every case. A staged original not yet copied is promised, never offered as a path with
+  nothing there. A tile whose details the grid does not hold is promised as pending: its
+  details are read at once, off the main actor, and the promise waits for them before it
+  names the file (AppKit asks on the main thread at the drop), so the name and the file
+  written are always the photo's hand-off file; until then it declares only that it is an
+  image or a movie. A promise that cannot be kept fails with the reason (`PrepareError`'s
+  description), which is what the receiver shows, since a drag has no alert of Otos's own.
 - **Open and Open With list apps by file type** for an original not on disk yet, because
   LaunchServices answers nothing for a path with no file (`LaunchServicesWorkspace`).
 - **An unedited HEIC is handed over as itself,** as Finder does. Chrome receives a file it
@@ -82,9 +109,9 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
   source stages and has not copied yet (an Immich account's, a camera's) is fetched first
   at interactive priority (`HandOffPreparer.prepare(_:as: .original)`), because Finder can show
   only a file that is there, and then revealed in its staging folder. A source that
-  cannot send it fails the reveal with the same alert, naming the source and ending
-  "Nothing was revealed."; a partial reveal would silently leave out photos the person
-  chose. A cloud placeholder is revealed as it is, as Finder shows it, and never
+  cannot send it, or an original missing from its folder, fails the reveal with the same
+  alert, ending "Nothing was revealed."; a partial reveal would silently leave out photos
+  the person chose. A cloud placeholder is revealed as it is, as Finder shows it, and never
   materialized. Disabling the item for an unstaged original was rejected: whether it is
   staged is not a reason the person can act on, and every other act on the same targets
   fetches it.
@@ -96,8 +123,8 @@ Measured (`2026-10-25-browser-multi-file-paste-and-drop.md`):
 - A copied, shared or opened file of an edited photo or a RAW lives in Application Support
   until the next launch. A receiver that keeps only a reference must copy the file before
   then (Finder, Mail and browsers copy at once).
-- Copy of an unedited JPEG, HEIC or video still reads no bytes and never materializes a
-  cloud-only original.
+- Copy of an unedited JPEG, HEIC or video that is on this Mac reads no bytes and is
+  instant; one that is cloud-only is downloaded first, behind the status bar (ADR 0012).
 
 ## Rejected
 

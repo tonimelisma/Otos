@@ -127,53 +127,63 @@ struct FileMaterializationTests {
         #expect(probeCalls.withLock { $0 } == answers.count)
     }
 
-    /// The oracle for APP-023's persistence rule.
-    ///
-    /// A provider that is merely slow returns `ETIMEDOUT` on the one-byte probe exactly as
-    /// a dead one does, so the two-strike short-circuit abandoned the image in front of the
-    /// user. Measured 2026-08-31: 43 interactive requests failed between 2402 ms and
-    /// 5539 ms against a 120 s budget, while the slowest *successful* materialization in
-    /// the same window took 62,316 ms. Healthy hydration on this library reaches 8.9 s
-    /// (research 2026-07-11) — inside the 3 s probe timeout's blind spot.
-    ///
-    /// Interactive persistence must therefore outlast an unbroken run of refusals and still
-    /// deliver when the bytes land. Fails before this change; the probe is not even called.
-    @Test func interactiveMaterializationOutlastsAnUnbrokenRunOfProviderRefusals() async {
-        let probes = Mutex(0)
-        let polls = Mutex(0)
-        let result = await FileMaterialization.materialize(
-            URL(fileURLWithPath: "/tmp/slow-provider.arw"),
-            persistence: FileMaterialization.Persistence(
-                failsFastOnProviderUnavailable: false,
-                deadline: nil,
-                requestRetryInterval: .milliseconds(1)
-            ),
-            providers: FileMaterializationProviders(
-                status: { _ in
-                    // Arrives only after far more polling than the fail-fast would allow.
-                    let seen = polls.withLock { (count: inout Int) -> Int in
-                        count += 1
-                        return count
+    /// APP-023's persistence rule, by construction: a provider that is merely slow returns
+    /// `ETIMEDOUT` on a one-byte probe exactly as a dead one does, so a probe or a run of
+    /// re-requests abandoned the image in front of the user (measured 2026-08-31: 43
+    /// interactive requests failed between 2402 ms and 5539 ms while the slowest successful
+    /// one took 62,316 ms), and one re-request that failed ended a download still under way.
+    /// Interactive work is one coordinated read instead: no request, no probe, no re-request,
+    /// and its outcome is the read's answer — the bytes arrived, it was cancelled, or the
+    /// provider refused it.
+    @Test func anInteractiveDownloadIsOneCoordinatedReadThatEndsWithItsAnswer() async {
+        func download(_ answer: CoordinatedReadAnswer, arrives: Bool) async -> MaterializationResult {
+            let arrived = Mutex(false)
+            let reads = Mutex(0)
+            let result = await FileMaterialization.materialize(
+                MaterializationCoordinator.Request(
+                    id: MediaAssetID(
+                        libraryRootPath: LibraryRootPath(rawValue: "/tmp"),
+                        relativePath: MediaRelativePath(rawValue: "slow-provider-\(UUID().uuidString).arw")
+                    ),
+                    sourceSize: nil, isVideo: false, priority: .interactive
+                ),
+                providers: FileMaterializationProviders(
+                    status: { _ in arrived.withLock { $0 } ? .materialized : .dataless },
+                    request: { _ in Issue.record("an interactive download requests nothing") },
+                    probe: { _ async in
+                        Issue.record("an interactive download probes nothing")
+                        return .providerUnavailable
+                    },
+                    changes: noAttributeChanges,
+                    coordinatedRead: { _ async in
+                        reads.withLock { $0 += 1 }
+                        if arrives {
+                            arrived.withLock { $0 = true }
+                        }
+                        return answer
                     }
-                    return seen < 200 ? .dataless : .materialized
-                },
-                request: { _ in },
-                probe: { _ async in
-                    probes.withLock { $0 += 1 }
-                    return .providerUnavailable
-                },
-                changes: noAttributeChanges
+                )
             )
-        )
+            #expect(reads.withLock { $0 } == 1)
+            #expect(result.rerequestCount == 0)
+            return result
+        }
 
-        #expect(
-            result.outcome == .materialized,
-            "an interactive request must wait out a slow provider, not read it as a refusal"
-        )
-        #expect(
-            probes.withLock { $0 } == 0,
-            "the probe is a faulting one-byte read whose only consumer was the short-circuit"
-        )
+        #expect(await download(.read, arrives: true).outcome == .materialized)
+        #expect(await download(.read, arrives: false).outcome == .requestFailed)
+        #expect(await download(.failed(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT)), arrives: false).outcome
+            == .requestFailed)
+        #expect(await download(.cancelled, arrives: false).outcome == .cancelled)
+    }
+
+    /// The production coordinated read grants a read of a file that is there, through a
+    /// coordinator on its own queue.
+    @Test func aCoordinatedReadOfALocalFileIsGranted() async throws {
+        let directory = try makeTestDirectory()
+        let file = directory.appending(path: "local.jpg")
+        try Data([0xFF, 0xD8]).write(to: file)
+
+        #expect(await FileMaterialization.coordinatedRead(of: file) == .read)
     }
 
     /// Arrival is reported, not polled for: an attribute change on the file wakes the

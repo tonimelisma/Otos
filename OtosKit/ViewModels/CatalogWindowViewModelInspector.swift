@@ -54,11 +54,25 @@ extension CatalogWindowViewModel {
 
     // MARK: - Edit session
 
-    /// Text owns the keyboard: an edit value is being typed, or a sheet with fields is up.
-    /// Edit ▸ Cut, Copy, Paste and Select All then act on text through the responder
-    /// chain, never on photos behind the sheet.
+    /// Text holds the keyboard: any field being edited or text view focused in the key
+    /// window. Edit ▸ Cut, Copy, Paste and Select All then act on it through the responder
+    /// chain.
     var textHoldsKeyboard: Bool {
-        editSession.isEnteringEditValue || exportSheet != nil
+        keyboardFocus == .text
+    }
+
+    /// The catalog window holds the keyboard and no text does: Copy and Select All act on
+    /// photos. Never behind a sheet or from another window.
+    var photosHoldKeyboard: Bool {
+        keyboardFocus == .photos
+    }
+
+    /// The key window's first responder changed what holds the keyboard
+    /// (`KeyboardFocusRelay`).
+    func setKeyboardFocus(_ focus: KeyboardFocus) {
+        guard focus != keyboardFocus else { return }
+        keyboardFocus = focus
+        OtosLog.ui.debugOperation("keyboardFocus", phase: "changed", fields: ["focus": "\(focus)"])
     }
 
     /// What `editSession` reads of this window and the intents it calls on it, each this

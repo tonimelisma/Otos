@@ -147,6 +147,18 @@ func makeTestDirectory() throws -> URL {
     return url
 }
 
+/// Targets whose originals exist: one empty file per name in a fresh test directory, so a
+/// hand-off — which hands over only files that are on this Mac (ADR 0012) — finds them.
+func makeLocalMediaIDs(_ names: [String]) throws -> [MediaAssetID] {
+    let directory = try makeTestDirectory()
+    let root = try CatalogPath.normalizedExistingDirectoryPath(for: directory)
+    return try names.map { name in
+        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: name))
+        try Data().write(to: id.fileURL)
+        return id
+    }
+}
+
 /// What a store made on a database file that does not exist yet opens.
 enum TestCatalogStart {
     /// A copy of the empty catalog at the current schema (`TestCatalogTemplate`): the open

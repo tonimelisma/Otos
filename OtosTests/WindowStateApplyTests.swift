@@ -288,11 +288,11 @@ struct WindowStateApplyTests {
         let ids = makeIDs(3)
         model.applyState(windowState(ids: ids).sharingUnchanged(with: nil))
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
-        #expect(model.dragWriter(for: ids[0]) != nil)
+        #expect(model.dragWriters(for: [ids[0]]).count == 1)
 
         model.selectSidebar(.people)
         #expect(!model.showsSelectedScope)
-        #expect(model.dragWriter(for: ids[0]) == nil)
+        #expect(model.dragWriters(for: [ids[0]]).isEmpty)
         #expect(!model.editSession.canEdit)
         model.openLoupe(id: ids[1])
         #expect(model.viewMode == .grid)

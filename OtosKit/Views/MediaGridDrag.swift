@@ -5,10 +5,10 @@ import Foundation
 ///
 /// Dragging tiles out of the grid or filmstrip hands each asset over as ⌘C does (ADR 0028,
 /// ADR 0012, ADR 0037): one writer per asset in display order, chosen by
-/// `CatalogWindowViewModel.dragWriter(for:)`. That is the original's `public.fileURL` for
-/// an unedited still or video (no bytes read, so a dataless cloud original is downloaded
-/// by the receiver), a file already prepared this launch, or a file promise that prepares
-/// an edited photo or a RAW when the receiver asks.
+/// `CatalogWindowViewModel.dragWriters(for:)`. That is the `public.file-url` of a file that
+/// is ready — an unedited still or video's original (a cloud placeholder as it is, since a
+/// drag cannot wait: the receiver downloads it), or a file already prepared this launch —
+/// or a file promise that prepares the photo's file when the receiver asks.
 ///
 /// Because `MediaGridCollectionView` owns `mouseDown` and never calls `super`, AppKit's
 /// own drag initiation never runs; the view detects the drag itself and the controller

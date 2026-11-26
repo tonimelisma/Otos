@@ -2,158 +2,113 @@
 
 ## Status
 
-Accepted; superseded in part by ADR 0037. Copy still writes one `public.fileURL` per
-photo in display order, but the file is the one ADR 0037's hand-off chooses: the original,
-unread, for an unedited still that is not a RAW or an untrimmed video, and a prepared
-full-size file for an edited photo or a RAW. The rest of this record describes the
-original decision for originals. Extended 2026-09-13 to Open /
-Open With (APP-035) and Share (APP-036), which hand the same file URLs to another
-process under the same rule.
+Accepted; rewritten 2026-11-26 by the owner's decision to download a cloud-only original
+before it is copied ("yes, download before copying"). Which file is copied for a photo is ADR
+0037's (the original, or a full-size file prepared for an edited photo or a RAW); this ADR owns
+what the pasteboard carries for it, when it is written, and that the file is on this Mac.
+Open / Open With (APP-035) and Share (APP-036) hand the same files to another process under
+the same rule.
 
 ## Context
 
-The media grid is gaining selection and a ⌘C / Edit ▸ Copy command
-. We must decide what a copied
-image or video actually places on `NSPasteboard.general`, so it can be pasted or
-attached in other apps.
+The media grid has a ⌘C / Edit ▸ Copy command. We must decide what a copied image or video
+places on `NSPasteboard.general`, so it can be pasted or attached in other apps, and what
+happens when its original is a dataless cloud placeholder, which most of the owner's library
+is.
 
-Verified facts:
+Verified facts (`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`,
+`docs/research/2026-10-25-browser-multi-file-paste-and-drop.md`):
 
-- macOS's default representation for a copied image is uncompressed `public.tiff`;
-  a full-resolution TIFF of one large photo can be tens to hundreds of MB.
-  Apple's own apps show the trade-off: Preview copies full-res TIFF (heavy),
-  Photos copies downscaled pixels (lossy). Neither copies a file URL for images.
-- Pasting a **file URL** attaches/copies the original file in Finder, Messages,
-  Mail, and AirDrop, at full fidelity, for a few bytes, and is the only
-  representation that works for **video**. A file URL does **not** paste as an
-  image into a browser `contenteditable`.
-- Otos is unsandboxed, so a plain file URL on the pasteboard is directly readable
-  by the receiving app with no security-scoped bookmark.
-- Otos principles: the filesystem is the source of truth, originals are read-only,
-  and byte reads must never *accidentally* materialize a dataless cloud
-  placeholder. Writing a file **reference** reads no bytes and materializes
-  nothing; decoding pixels to the pasteboard would read bytes and could
-  materialize placeholders.
-- `MediaAssetID` already carries full filesystem identity, so the file URL is
-  derivable from identity with no Store round-trip and no byte read.
+- macOS's default representation for a copied image is uncompressed `public.tiff`; a
+  full-resolution TIFF of one large photo can be tens to hundreds of MB. Photos copies a JPEG
+  and a file URL; Finder copies file URLs; Lightroom has no copy-photo command.
+- A file URL pastes and attaches the file in Finder, Messages, Mail, AirDrop and web pages at
+  full fidelity, for a few bytes, and is the only representation that works for video.
+  Chrome and WebKit accept several pasted files, one per pasteboard item.
+- Chromium hands a page `text/plain` beside the files whenever a string is on the pasteboard,
+  and the page chooses; some web apps take the text, and chatgpt.com turns a long pasted text
+  into a file attachment. `NSURL`'s `NSPasteboardWriting` types are undocumented, and every
+  type after the first is promised, served by the writing process for as long as it runs.
+- A file promise does not paste: Finder and browsers read file URLs only, so a pasted file
+  must exist when it is pasted.
+- A receiver that reads a dataless original downloads it in its own process, on its own
+  terms: its own progress or none, its own error or a hang, and nothing Otos can report.
+  Otos can download it first, deliberately, as the user's work, through the shared
+  `MaterializationCoordinator`, and report a failure in its own terms.
+- Otos is unsandboxed, so a plain file URL on the pasteboard is directly readable by the
+  receiving app, and the pasteboard grants a sandboxed receiver access to each
+  `public.file-url` entry.
 
 ## MECE Decision Scope
 
-What this ADR owns: the pasteboard representation written when the user copies
-selected catalog assets from the media grid.
+Owned here: the pasteboard representation a Copy writes, when it claims and when it writes
+the pasteboard, and the rule that every file handed to another app is on this Mac.
 
-What it references but does not own: the selection model and the copy command
-wiring (APP-011, APP-012); asset→URL construction (`MediaAssetID.fileURL`, owned
-by the catalog model); enrichment-time byte reading and materialization (owned by
-ADR 0008/0009).
-
-Also owned here, because they are the same decision applied to another receiver:
-File ▸ Open / Open With (APP-035) and Share (APP-036) hand the current targets'
-original file URLs to LaunchServices or the system share picker and read no bytes
-in Otos. The receiving app or the share preview may download a dataless cloud
-original; that download is the receiver's act on a file the user named, exactly as
-a paste is, and is therefore deliberate rather than accidental materialization.
-Otos does not pre-materialize before handing off; if a receiver's own progress
-surface ever proves insufficient, pre-materialization is a separate decision.
-
-Drag-and-drop out of the grid uses the same representation and is decided in ADR
-0028.
-
-Adjacent decisions requiring their own ADR/spec when built: a pixel/"Copy as Image"
-representation; any export pipeline that transcodes originals.
+Referenced, not owned: which file a photo hands over and the hand-off lane that prepares it
+(ADR 0037); the selection model and the copy command wiring (APP-011, APP-012); the
+download mechanism (`FileMaterialization`, ADR 0008/0009); drag-and-drop (ADR 0028), which
+writes the same item but cannot wait for a download.
 
 ## Decision
 
-Copy writes one original **file URL** (`public.fileURL`) per selected asset, in
-display order, and nothing else. It reads no image or video bytes and adds no
-pixel, promise, or transcoded representation. It does not itself materialize a
-dataless cloud original; if the receiving app later reads the pasted file, that
-byte read (and any materialization) is the receiver's action, consistent with the
-filesystem being the source of truth.
+- **A Copy hands over files that are on this Mac.** A cloud-only original is downloaded first,
+  at interactive priority, behind the hand-off's status bar, before the pasteboard is written;
+  Share, Open and Open With do the same. The download is the user's act on the photos they
+  chose, so it is deliberate, never accidental, materialization. An original missing from its
+  folder fails the Copy with an alert; its path is never handed over.
+- **One pasteboard item per file, carrying exactly `public.file-url`,** in display order,
+  built by hand (`NSPasteboardItem.setString(_:forType: .fileURL)`), written at once, so no
+  string rides beside the file and every item outlives Otos's process. No pixel, promise or
+  transcoded representation.
+- **⌘C claims the pasteboard at the command** (`clearContents`), before any file is ready,
+  and the Copy writes only while that claim is still the pasteboard's (`changeCount`): a
+  paste while photos are prepared pastes nothing rather than what was there before, and a
+  Copy that finishes after anything else wrote the pasteboard — another app, or a newer Copy
+  — leaves it alone.
 
 ## Alternatives Considered
 
-### Alternative A — File URLs only (chosen)
+### Original file URLs, handed over as they are (the decision until 2026-11-26)
 
-Pros:
+Instant, and reads no bytes. A cloud-only original was downloaded by whichever app read it,
+with that app's progress and errors or none, and a missing original was handed over as a path
+with nothing there. Rejected by the owner after pastes that failed or stalled.
 
-- Tiny, lossless, and immune to the TIFF-size problem.
-- Works in Finder, Messages, Mail, AirDrop, and is the only option for video.
-- Reads no bytes; materializes no dataless placeholder; needs no Store query.
+### Image pixel data (TIFF/PNG), Preview-style; or file URL plus image data, Photos-style
 
-Cons:
+Pastes inline into a rich-text field. Huge and uncompressed, no video form, and Chromium hides
+image data when files are present, so the file URL would win in browsers anyway. Not built;
+an additive representation if a receiver ever needs it.
 
-- Does not paste an image into a browser `contenteditable`.
+### A file promise, or a lazy data provider
 
-Failure modes:
+A promise does not paste. A lazy `public.file-url` provider would answer on Otos's main thread
+while the file downloads, a hang of as long as the download takes.
 
-- A user expecting an inline image paste into a web text field gets nothing there.
-  Mitigated by documenting the gap and keeping a pixel representation as a clean
-  additive follow-up.
+### `NSURL` objects (`writeObjects([NSURL])`)
 
-### Alternative B — Image pixel data (TIFF/PNG), Preview-style
-
-Pros:
-
-- Pastes as an image into browsers and rich-text targets.
-
-Cons:
-
-- Huge, uncompressed payloads; reads and decodes originals on copy, which
-  materializes dataless cloud placeholders — a direct conflict with the
-  no-accidental-materialization principle. No representation for video.
-
-Failure modes:
-
-- Copying large photos or any video is impractical or impossible.
-
-### Alternative C — Both file URL and lazy pixel data on one pasteboard item
-
-Pros:
-
-- Receivers pick what they understand: files where files are wanted, pixels in a
-  browser.
-
-Cons:
-
-- Still requires decoding originals (lazily) to satisfy the pixel type, so the
-  materialization and size concerns return the moment a receiver asks for pixels;
-  more surface than the verified requirements need right now.
-
-Failure modes:
-
-- A rich-text target that prefers the file URL inserts a file link instead of an
-  inline image, surprising the user — the "two representations, one item"
-  ambiguity that warrants its own decision when actually built.
+What Otos wrote before: undocumented types, and every item after the first served by Otos's
+process on demand, so a quit or an update's relaunch left only the first.
 
 ## Consequences
 
-- Copy is instant, tiny, lossless, and works for both photos and videos into the
-  common share targets, with no byte I/O and no MainActor decode.
-- Pasting an image directly into a browser text field is not supported yet; that
-  is an accepted, documented gap.
-- The design is additive: a future pixel representation attaches more types to the
-  same pasteboard items, or a separate "Copy as Image" command, without changing
-  the selection model or the copy command path.
-
-## Retirement Proof
-
-No prior clipboard/copy behavior exists to retire. This ADR introduces the first
-pasteboard write. Asset→URL construction is `MediaAssetID.fileURL`, owned by the
-catalog model, not this ADR.
+- Copying a cloud-only photo takes as long as its download, shown as `Preparing N photos to
+  copy` with Cancel; copying photos that are on this Mac stays instant.
+- Every receiver gets a file it can read at once, and a provider that cannot deliver one is
+  reported by Otos (`Couldn’t Prepare Photos`), named by its source.
+- A paste never delivers what the clipboard held before the ⌘C, and a slow Copy never
+  overwrites a newer copy.
+- Pasting into a browser text field inserts the files, never an inline image; the accepted
+  gap is unchanged.
 
 ## Living Documentation Impact
 
-- `docs/index.md`: add this ADR to the decisions table.
-- `docs/requirements.md`: APP-012 references this ADR for the copy representation
-  and the no-materialization-on-copy property.
-- : links this ADR.
-- No existing document currently describes clipboard behavior, so nothing is
-  rewritten or deleted.
+- `docs/requirements.md`: APP-012, APP-035, APP-036, APP-051.
+- ADR 0037: what a hand-off downloads and how it fails.
+- `docs/research/2026-11-26-copy-paste-and-cloud-originals.md`.
 
 ## Reversal Plan
 
-Adding a pixel representation is additive and needs no reversal of this decision.
-Switching to pixels-only (dropping the file URL) would be a behavior change that
-reintroduces the size/video/materialization problems above and would require a new
-ADR with fresh evidence.
+Handing originals over unread again would drop the download step from the hand-off lane and
+restore its failure modes; it needs the owner's decision. Adding a pixel representation is
+additive.

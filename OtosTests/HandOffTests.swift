@@ -4,6 +4,7 @@ import Foundation
 @testable import OtosKit
 import Synchronization
 import Testing
+import UniformTypeIdentifiers
 
 /// ADR 0037: a hand-off is one full-size file per photo — the original for an
 /// unedited still or video, a rendered JPEG for an edited photo or a RAW, the trimmed range
@@ -26,9 +27,6 @@ struct HandOffTests {
         #expect(form("c.mov", video: true, EditRecipe(trimEnd: 2)) == .trimmedVideo)
     }
 
-    /// The owner's acceptance case: several photos, some edited and some not, copied and
-    /// pasted, arrive as one file per photo in display order — the edited one as its
-    /// rendered JPEG, the others as their originals.
     /// A full disk is classified by the error's typed chain — Foundation's out-of-space
     /// code, a POSIX `ENOSPC` beneath another error, AVFoundation's `diskFull` — and never
     /// by its wording.
@@ -47,40 +45,47 @@ struct HandOffTests {
         #expect(!MediaFileWriter.isDiskFull(AVError(.unknown)))
     }
 
-    /// A hand-off that failed for space says so, and never blames the original for it.
-    @Test func aHandOffThatFailedForSpaceSaysSo() {
-        #expect(HandOffFailures(outOfSpace: 0, other: 1).alertMessage(for: .openDefault)
-            == "One photo couldn’t be prepared, so nothing was handed over. Its original may be unavailable.")
-        #expect(HandOffFailures(outOfSpace: 1, other: 0).alertMessage(for: .openDefault)
-            == "There isn’t enough disk space to prepare one photo, so nothing was handed over. Free up space and try again.")
-        #expect(HandOffFailures(outOfSpace: 2, other: 1).alertMessage(for: .openDefault)
-            == "There isn’t enough disk space to prepare 2 photos, and one photo couldn’t be prepared because its "
-            + "original may be unavailable. Nothing was handed over. Free up space and try again.")
-        #expect(HandOffFailures(outOfSpace: 1, other: 1).alertMessage(for: .revealInFinder)
-            == "There isn’t enough disk space to prepare one photo, and one photo couldn’t be prepared because its "
-            + "original may be unavailable. Nothing was revealed. Free up space and try again.")
+    /// Every way a photo can fail a hand-off is classified by its type — never by its text —
+    /// into its own cause, and a cancellation is no failure at all.
+    @Test func aFailureIsClassifiedByItsType() {
+        #expect(HandOffPreparer.failure(for: CancellationError()) == nil)
+        #expect(HandOffPreparer.failure(for: ImageRenderer.RAWResourcesUnavailable(domain: "CIRAW", code: 4))
+            == .rawSupportUnavailable)
+        #expect(HandOffPreparer.failure(for: NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError))
+            == .outOfSpace)
+        #expect(HandOffPreparer.failure(for: ImageRenderer.RenderError.unreadable) == .renderFailed)
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.local) == nil)
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.unreachable) == .originalMissing)
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.notMaterialized(.requestFailed)) == .downloadFailed)
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.notMaterialized(.timedOut)) == .downloadFailed)
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.notMaterialized(.serverUnreachable))
+            == .sourceUnavailable(.serverNotAnswering))
+        #expect(HandOffPreparer.failure(for: EnsureLocalOutcome.notMaterialized(.deviceUnavailable))
+            == .sourceUnavailable(.cameraDisconnected))
     }
 
-    /// ADR 0046 §6: a source that cannot send an original is named, by the name the sidebar
-    /// shows, in its own terms; other causes keep their own wording after it. A reveal says
-    /// nothing was revealed.
-    @Test func aHandOffThatFailedOfflineNamesTheSource() {
-        let family = LibraryRootPath(rawValue: "/RemoteStaging/family")
-        let camera = LibraryRootPath(rawValue: "/DeviceStaging/eos")
-        var failures = HandOffFailures()
-        failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
-        #expect(failures.alertMessage(for: .openDefault)
+    /// The alert names the one photo's cause in its own terms (ADR 0046 §6): a full disk as
+    /// one, a folder's provider or a source by the name the sidebar shows, a RAW's missing
+    /// camera support as macOS's, never "the original may be unavailable" for all of them.
+    @Test func eachFailureSaysItsOwnCause() {
+        func message(_ cause: HandOffPreparer.PrepareError, source: String = "Pictures") -> String {
+            HandOffFailure.photo(cause, source: source).alertMessage(for: .openDefault)
+        }
+        #expect(message(.originalMissing) == "One photo’s original isn’t where Otos last saw it. Nothing was handed over.")
+        #expect(message(.downloadFailed) == "One photo couldn’t be downloaded from “Pictures”. Nothing was handed over.")
+        #expect(message(.sourceUnavailable(.serverNotAnswering), source: "Family")
             == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was handed over.")
-        #expect(failures.alertMessage(for: .revealInFinder)
-            == "“Family” isn’t answering, so one photo couldn’t be downloaded. Nothing was revealed.")
-        failures.recordUnavailable(rootPath: family, name: "Family", reason: .serverNotAnswering)
-        failures.recordUnavailable(rootPath: camera, name: "EOS R5", reason: .cameraDisconnected)
-        failures.other = 1
-        #expect(failures.count == 4)
-        #expect(failures.alertMessage(for: .openDefault)
-            == "“Family” isn’t answering, so 2 photos couldn’t be downloaded. “EOS R5” isn’t connected, so one photo "
-            + "couldn’t be copied from it. One photo couldn’t be prepared, so nothing was handed over. "
-            + "Its original may be unavailable.")
+        #expect(message(.sourceUnavailable(.cameraDisconnected), source: "EOS R5")
+            == "“EOS R5” isn’t connected, so one photo couldn’t be copied from it. Nothing was handed over.")
+        #expect(message(.rawSupportUnavailable)
+            == "macOS couldn’t download what it needs to develop one RAW photo. Nothing was handed over.")
+        #expect(message(.renderFailed) == "One photo couldn’t be rendered from its original. Nothing was handed over.")
+        #expect(message(.outOfSpace)
+            == "There isn’t enough disk space to prepare one photo. Nothing was handed over. Free up space and try again.")
+        #expect(HandOffFailure.detailsUnread.alertMessage(for: .revealInFinder)
+            == "Otos couldn’t read these photos from its catalog. Nothing was revealed.")
+        #expect(HandOffFailure.photo(.downloadFailed, source: "Pictures").alertMessage(for: .revealInFinder)
+            == "One photo couldn’t be downloaded from “Pictures”. Nothing was revealed.")
     }
 
     /// An original a source stages has no file until Otos copies it: one not yet staged is
@@ -116,12 +121,13 @@ struct HandOffTests {
         let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: source)
         let item = EditedMediaItem(id: id, isVideo: false, recipe: .neutral, sourceSize: 4)
         #expect(item.handOffForm == .original)
-        #expect(preparer.readyURL(for: item) == nil)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == nil)
+        #expect(preparer.readyURL(for: item, as: .draggedFile) == nil)
 
         await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.serverNotAnswering)) {
             try await preparer.prepare(item)
         }
-        let promise = HandOffPromise(item: item, preparer: preparer, reader: nil)
+        let promise = HandOffPromise(.item(item), preparer: preparer)
         let dropped = directory.appending(path: "Dropped/IMG_1.JPG")
         try FileManager.default.createDirectory(at: dropped.deletingLastPathComponent(), withIntermediateDirectories: true)
         func deliver() async -> (any Error)? {
@@ -142,11 +148,49 @@ struct HandOffTests {
 
         outcome.withLock { $0 = .materialized }
         #expect(try await preparer.prepare(item) == staged)
-        #expect(preparer.readyURL(for: item) == staged)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == staged)
         #expect(await deliver() == nil)
         #expect(FileManager.default.contents(atPath: dropped.path(percentEncoded: false)) == Data("jpeg".utf8))
         // A staged original is fetched once; after that it is handed over as it is.
         #expect(requests.withLock { $0 } == 4)
+    }
+
+    /// A cloud-only original is downloaded before Copy, Share or Open hands it over, so the
+    /// receiver reads a file that is there (ADR 0012). A drag and a reveal take it as it is;
+    /// a download the provider does not deliver fails with its own cause.
+    @Test func aCloudPlaceholderIsDownloadedBeforeItIsHandedOver() async throws {
+        let directory = try makeTestDirectory()
+        let id = try makeLocalMediaIDs(["cloud.jpg"])[0]
+        let downloaded = Mutex(false)
+        let delivers = Mutex(false)
+        let requests = Mutex(0)
+        let status: @Sendable (URL) -> FileMaterializationStatus = { _ in
+            downloaded.withLock { $0 } ? .materialized : .dataless
+        }
+        let source = ClosureMaterializationRequester(status: status) { _ in
+            requests.withLock { $0 += 1 }
+            guard delivers.withLock({ $0 }) else {
+                return MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 0)
+            }
+            downloaded.withLock { $0 = true }
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+        }
+        let preparer = HandOffPreparer(
+            directory: directory.appending(path: "HandOff"), materialization: source, status: status
+        )
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: .neutral, sourceSize: 4)
+
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == nil)
+        #expect(preparer.readyURL(for: item, as: .draggedFile) == id.fileURL)
+        #expect(preparer.readyURL(for: item, as: .original) == id.fileURL)
+        await #expect(throws: HandOffPreparer.PrepareError.downloadFailed) {
+            try await preparer.prepare(item)
+        }
+
+        delivers.withLock { $0 = true }
+        #expect(try await preparer.prepare(item) == id.fileURL)
+        #expect(requests.withLock { $0 } == 2)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == id.fileURL)
     }
 
     /// Reveal in Finder takes the original, never the file a hand-off gives: an edited
@@ -179,7 +223,7 @@ struct HandOffTests {
         let preparer = HandOffPreparer(directory: handOff, materialization: source)
         let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 1), sourceSize: nil)
         #expect(item.handOffForm == .renderedStill)
-        #expect(await preparer.needsPreparation(item, as: .original))
+        #expect(preparer.readyURL(for: item, as: .original) == nil)
 
         await #expect(throws: HandOffPreparer.PrepareError.sourceUnavailable(.cameraDisconnected)) {
             try await preparer.prepare(item, as: .original)
@@ -187,20 +231,19 @@ struct HandOffTests {
 
         outcome.withLock { $0 = .materialized }
         #expect(try await preparer.prepare(item, as: .original) == staged)
-        #expect(await !preparer.needsPreparation(item, as: .original))
-        #expect(await preparer.needsPreparation(item, as: .handOffFile))
-        #expect(preparer.readyURL(for: item) == nil)
+        #expect(preparer.readyURL(for: item, as: .original) == staged)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == nil)
         #expect(!FileManager.default.fileExists(atPath: handOff.path(percentEncoded: false)))
     }
 
-    /// The status bar counts only photos that take work: an original that is there takes
-    /// none, and neither does a missing one no source can send, which is handed over as the
-    /// path it is, as Finder would. An edit to render does take work.
-    @Test func onlyPhotosThatTakeWorkAreCountedAsPreparing() async throws {
+    /// One answer says whether a photo's file is ready, and the status bar counts what it
+    /// does not answer. An original that is there is ready; an edit to render is not; an
+    /// original missing from its folder is not either, and preparing it says why, for every
+    /// action, rather than handing over a path with nothing there.
+    @Test func aMissingOriginalIsNeverHandedOver() async throws {
         let directory = try makeTestDirectory()
         let root = try CatalogPath.normalizedExistingDirectoryPath(for: directory)
-        let present = directory.appending(path: "here.jpg")
-        try writeGradientJPEG(to: present)
+        try writeGradientJPEG(to: directory.appending(path: "here.jpg"))
         func item(_ name: String, _ recipe: EditRecipe = .neutral) -> EditedMediaItem {
             EditedMediaItem(
                 id: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: name)),
@@ -209,13 +252,167 @@ struct HandOffTests {
         }
         let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
 
-        #expect(await !preparer.needsPreparation(item("here.jpg"), as: .handOffFile))
-        #expect(await !preparer.needsPreparation(item("here.jpg"), as: .original))
-        #expect(await !preparer.needsPreparation(item("gone.jpg"), as: .handOffFile))
-        #expect(await !preparer.needsPreparation(item("gone.jpg"), as: .original))
-        #expect(await preparer.needsPreparation(item("here.jpg", EditRecipe(exposure: 1)), as: .handOffFile))
-        #expect(await !preparer.needsPreparation(item("here.jpg", EditRecipe(exposure: 1)), as: .original))
-        #expect(try await preparer.prepare(item("gone.jpg"), as: .original) == item("gone.jpg").id.fileURL)
+        #expect(await preparer.needsWork([item("here.jpg"), item("gone.jpg"), item("here.jpg", EditRecipe(exposure: 1))],
+                                         as: .handOffFile) == [false, true, true])
+        #expect(await preparer.needsWork([item("here.jpg", EditRecipe(exposure: 1))], as: .original) == [false])
+        for wanted in [HandOffPreparer.Wanted.handOffFile, .draggedFile, .original] {
+            await #expect(throws: HandOffPreparer.PrepareError.originalMissing) {
+                try await preparer.prepare(item("gone.jpg"), as: wanted)
+            }
+        }
+    }
+
+    /// An actor is reentrant, so two asks for one photo's file — a drag's promise and a
+    /// Copy — each joined to the same preparation get the same file, rendered once, with
+    /// nothing left behind beside it.
+    @Test func twoAsksForOnePhotoShareOnePreparation() async throws {
+        let directory = try makeTestDirectory()
+        let url = directory.appending(path: "photo.jpg")
+        try writeGradientJPEG(to: url)
+        let id = try MediaAssetID(
+            libraryRootPath: CatalogPath.normalizedExistingDirectoryPath(for: directory),
+            relativePath: MediaRelativePath(rawValue: "photo.jpg")
+        )
+        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
+
+        async let first = preparer.prepare(item)
+        async let second = preparer.prepare(item)
+        let (a, b) = try await (first, second)
+
+        #expect(a == b)
+        let folder = a.deletingLastPathComponent()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["photo.jpg"])
+    }
+
+    /// The one who cancels stops waiting at once; another ask for the same photo keeps its
+    /// preparation, and receives the file when it is made. The work runs once.
+    @Test func aCancelledAskLeavesThePreparationToTheOtherAsk() async throws {
+        let directory = try makeTestDirectory()
+        let url = directory.appending(path: "photo.jpg")
+        try writeGradientJPEG(to: url)
+        let id = try MediaAssetID(
+            libraryRootPath: CatalogPath.normalizedExistingDirectoryPath(for: directory),
+            relativePath: MediaRelativePath(rawValue: "photo.jpg")
+        )
+        let gate = DownloadGate { _ in true }
+        let preparer = HandOffPreparer(
+            directory: directory.appending(path: "HandOff"), materialization: gate.requester, status: gate.status
+        )
+        let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
+
+        let cancelled = Task { try await preparer.prepare(item) }
+        let kept = Task { try await preparer.prepare(item) }
+        try await waitUntil { try await preparer.waiterCount(for: item) == 2 }
+        try await waitUntil { gate.entered == 1 }
+
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        #expect(try await preparer.waiterCount(for: item) == 1)
+
+        gate.release()
+        #expect(try await kept.value.lastPathComponent == "photo.jpg")
+        #expect(gate.entered == 1)
+    }
+
+    /// Cancel stops the download in flight — the hand-off's work is cancelled, not only
+    /// its bar hidden — and the lane goes on to the next hand-off. ⌘C claims the pasteboard
+    /// at once, so a paste while the photo downloads pastes nothing, never what was there.
+    @Test func cancelStopsAStuckDownloadAndTheLaneGoesOn() async throws {
+        let gate = DownloadGate { $0.lastPathComponent.hasPrefix("cloud") }
+        let ids = try makeLocalMediaIDs(["cloud.jpg"])
+        let model = makeHandOffModel(gate: gate, ids: ids)
+        defer { model.handOffTask?.cancel() }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("handoff-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("copied before", forType: .string)
+        model.selectAll()
+
+        model.copyCurrentTargets(to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == nil)
+        try await waitUntil { model.handOffProgress?.total == 1 && gate.entered == 1 }
+        model.cancelHandOff()
+        try await waitUntil { model.hasSettledHandOffs }
+        #expect(model.handOffProgress == nil)
+        #expect(model.handOffAlertMessage == nil)
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])?.isEmpty ?? true)
+
+        gate.release()
+        model.copyCurrentTargets(to: pasteboard)
+        try await waitUntil { model.hasSettledHandOffs }
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] == [ids[0].fileURL])
+    }
+
+    /// The pasteboard is newest-wins: a Copy while another is still being prepared cancels
+    /// it, and only the newer one is written.
+    @Test func aNewerCopySupersedesOneStillBeingPrepared() async throws {
+        let gate = DownloadGate { $0.lastPathComponent.hasPrefix("cloud") }
+        let ids = try makeLocalMediaIDs(["cloud.jpg", "here.jpg"])
+        let model = makeHandOffModel(gate: gate, ids: ids)
+        defer { model.handOffTask?.cancel() }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("handoff-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+        model.copyCurrentTargets(to: pasteboard)
+        try await waitUntil { gate.entered == 1 }
+        _ = model.applyGridClick(hit: ids[1], modifiers: [], orderedIDs: ids)
+        model.copyCurrentTargets(to: pasteboard)
+        try await waitUntil { model.hasSettledHandOffs }
+
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] == [ids[1].fileURL])
+        #expect(model.handOffAlertMessage == nil)
+        #expect(gate.entered == 1)
+    }
+
+    /// A Copy that finishes after something else wrote the pasteboard leaves that alone:
+    /// what the person copied since is what they paste.
+    @Test func aCopyThatFinishesAfterAnotherWriteLeavesItAlone() async throws {
+        let gate = DownloadGate { $0.lastPathComponent.hasPrefix("cloud") }
+        let ids = try makeLocalMediaIDs(["cloud.jpg"])
+        let model = makeHandOffModel(gate: gate, ids: ids)
+        defer { model.handOffTask?.cancel() }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("handoff-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        model.selectAll()
+
+        model.copyCurrentTargets(to: pasteboard)
+        try await waitUntil { gate.entered == 1 }
+        pasteboard.clearContents()
+        pasteboard.setString("copied later", forType: .string)
+        gate.release()
+        try await waitUntil { model.hasSettledHandOffs }
+
+        #expect(pasteboard.string(forType: .string) == "copied later")
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])?.isEmpty ?? true)
+    }
+
+    /// A promised photo the grid held no details for is named and written only once its
+    /// details are read: an edited HEIC arrives as its rendered JPEG, under a JPEG's name,
+    /// declared as an image when the drag began. A read that failed fails the promise.
+    @Test func aPendingPromiseNamesTheFileItsDetailsCallFor() async throws {
+        let directory = try makeTestDirectory()
+        let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
+        let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: "IMG_1.HEIC"))
+        let pending = PendingHandOffItem(id: id)
+        let promise = HandOffPromise(.pending(pending), preparer: preparer)
+        #expect(promise.fileType == UTType.image.identifier)
+
+        pending.resolve(.success(EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 1), sourceSize: nil)))
+        #expect(promise.filePromiseProvider(promise, fileNameForType: UTType.image.identifier) == "IMG_1.jpg")
+
+        let unread = PendingHandOffItem(id: id)
+        let refused = HandOffPromise(.pending(unread), preparer: preparer)
+        unread.resolve(.failure(CancellationError()))
+        let delivered: (any Error)? = await withCheckedContinuation { continuation in
+            refused.operationQueue(for: refused).addOperation {
+                refused.filePromiseProvider(refused, writePromiseTo: directory.appending(path: "x.jpg")) {
+                    continuation.resume(returning: $0)
+                }
+            }
+        }
+        #expect(delivered?.localizedDescription == "Otos couldn’t read this photo from its catalog.")
     }
 
     @Test func aMixedSelectionCopiesAsOneFilePerPhoto() async throws {
@@ -273,16 +470,16 @@ struct HandOffTests {
         let preparer = HandOffPreparer(directory: directory.appending(path: "HandOff"), materialization: localOriginals)
         let item = EditedMediaItem(id: id, isVideo: false, recipe: EditRecipe(exposure: 0.5), sourceSize: nil)
 
-        #expect(preparer.readyURL(for: item) == nil)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == nil)
         let first = try await preparer.prepare(item)
         let second = try await preparer.prepare(item)
         #expect(first == second)
-        #expect(preparer.readyURL(for: item) == first)
+        #expect(preparer.readyURL(for: item, as: .handOffFile) == first)
         let source = try #require(CGImageSourceCreateWithURL(first as CFURL, nil))
         let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
         #expect(image.width == 96 && image.height == 64)
 
-        let promise = HandOffPromise(item: item, preparer: preparer, reader: nil)
+        let promise = HandOffPromise(.item(item), preparer: preparer)
         let destination = directory.appending(path: "Dropped/photo.jpg")
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -308,5 +505,111 @@ struct HandOffTests {
 
         let duration = try await AVURLAsset(url: output).load(.duration)
         #expect(abs(duration.seconds - 0.4) < 0.15)
+    }
+}
+
+/// A model whose hand-offs download through `gate`, over `ids`.
+@MainActor
+private func makeHandOffModel(gate: DownloadGate, ids: [MediaAssetID]) -> CatalogWindowViewModel {
+    let store = makeTestStore(location: .inMemory)
+    let model = CatalogWindowViewModel(
+        catalogStore: store,
+        startsStallMonitor: false,
+        startsEnrichment: false,
+        startsSourceMonitoring: false,
+        preferencesDomain: .suite(UUID().uuidString),
+        volumeCapacity: ampleVolumeCapacity,
+        trashFiles: .refusing,
+        handOffPreparer: HandOffPreparer(
+            directory: store.handOffDirectory, materialization: gate.requester, status: gate.status
+        )
+    )
+    model.applyState(CatalogWindowState(
+        title: "Hand-off",
+        libraries: [],
+        removableSources: [],
+        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
+        filterOptions: .empty,
+        resolvedSidebarSelection: .allMedia,
+        mediaEmptyState: .noMedia,
+        deviceConnectionBanner: nil
+    ))
+    model.startHandOff(store: store)
+    return model
+}
+
+/// A cloud provider a test holds: every original `isCloud` names is a placeholder until
+/// `release()`, and its download waits here until then, ending at once when its asker is
+/// cancelled, as the coordinator's does.
+private final class DownloadGate: Sendable {
+    private struct State {
+        var released = false
+        var entered = 0
+        var next: UInt64 = 0
+        var waiters: [UInt64: CheckedContinuation<Bool, Never>] = [:]
+    }
+
+    private let state = Mutex(State())
+    private let isCloud: @Sendable (URL) -> Bool
+
+    init(isCloud: @escaping @Sendable (URL) -> Bool) {
+        self.isCloud = isCloud
+    }
+
+    var entered: Int {
+        state.withLock { $0.entered }
+    }
+
+    var status: @Sendable (URL) -> FileMaterializationStatus {
+        { [self] url in
+            guard isCloud(url), !state.withLock({ $0.released }) else {
+                return FileMaterialization.status(of: url)
+            }
+            return .dataless
+        }
+    }
+
+    var requester: ClosureMaterializationRequester {
+        ClosureMaterializationRequester(status: status) { [self] _ in
+            await pass()
+                ? MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+                : .cancelled
+        }
+    }
+
+    func release() {
+        let waiting = state.withLock { state in
+            state.released = true
+            defer { state.waiters = [:] }
+            return Array(state.waiters.values)
+        }
+        waiting.forEach { $0.resume(returning: true) }
+    }
+
+    private func pass() async -> Bool {
+        let token = state.withLock { state in
+            state.next += 1
+            return state.next
+        }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let now: Bool? = state.withLock { state in
+                    state.entered += 1
+                    if state.released {
+                        return true
+                    }
+                    if Task.isCancelled {
+                        return false
+                    }
+                    state.waiters[token] = continuation
+                    return nil
+                }
+                if let now {
+                    continuation.resume(returning: now)
+                }
+            }
+        } onCancel: {
+            state.withLock { $0.waiters.removeValue(forKey: token) }?.resume(returning: false)
+        }
     }
 }

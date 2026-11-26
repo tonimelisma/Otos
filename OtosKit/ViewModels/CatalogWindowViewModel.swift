@@ -288,6 +288,9 @@ final class CatalogWindowViewModel {
         materialization: materializationCoordinator,
         undoManager: windowUndoManager
     )
+    /// What holds the keyboard, as the key window's first responder says
+    /// (`KeyboardFocusRelay`): what Edit ▸ Cut, Copy, Paste and Select All act on.
+    var keyboardFocus: KeyboardFocus = .photos
     /// The hand-off being prepared, for the status bar; nil when none is.
     var handOffProgress: HandOffProgress?
     var handOffAlertMessage: String?
@@ -296,7 +299,12 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let handOffContinuation: AsyncStream<HandOffRequest>.Continuation
     @ObservationIgnored var handOffTask: Task<Void, Never>?
     @ObservationIgnored var handOffRequested: UInt64 = 0
-    @ObservationIgnored var handOffCancelledThrough: UInt64 = 0
+    /// The hand-off the lane is working on, which Cancel and a newer Copy cancel.
+    @ObservationIgnored var handOffWork: HandOffWork?
+    /// The newest Copy submitted: an older one is superseded, never written (APP-012).
+    @ObservationIgnored var latestCopyGeneration: UInt64 = 0
+    /// The read of the details of a drag's photos the grid held none for.
+    @ObservationIgnored var dragDetailsTask: Task<Void, Never>?
     @ObservationIgnored var submittedHandOffCount = 0
     @ObservationIgnored var handledHandOffCount = 0
     /// File ▸ Export…'s remembered choices; set in `init` from the injected `preferences`.
@@ -792,7 +800,8 @@ final class CatalogWindowViewModel {
         trashFiles: MediaTrashCoordinator.FileOperations,
         trashFileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) },
         trashMarkHook: (@Sendable () async throws -> Void)? = nil,
-        trashUndoHook: (@Sendable () async -> Void)? = nil
+        trashUndoHook: (@Sendable () async -> Void)? = nil,
+        handOffPreparer: HandOffPreparer? = nil
     ) {
         self.trashMarkHook = trashMarkHook
         self.trashUndoHook = trashUndoHook
@@ -908,7 +917,8 @@ final class CatalogWindowViewModel {
             room: backgroundRoom
         )
         self.materializationCoordinator = materializationCoordinator
-        handOffPreparer = HandOffPreparer(
+        // A test hands in its own, to hold a preparation where it wants it.
+        self.handOffPreparer = handOffPreparer ?? HandOffPreparer(
             directory: catalogStore.handOffDirectory,
             materialization: materializationCoordinator
         )
@@ -1081,6 +1091,7 @@ final class CatalogWindowViewModel {
         mediaChoiceForwardingTask?.cancel()
         stackKeyForwardingTask?.cancel()
         handOffTask?.cancel()
+        dragDetailsTask?.cancel()
         exportTask?.cancel()
         immichIntentTask?.cancel()
         immichStatusTask?.cancel()

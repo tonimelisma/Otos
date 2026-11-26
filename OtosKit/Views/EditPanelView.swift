@@ -30,8 +30,6 @@ struct EditPanelView: View {
     let resetSection: @MainActor (EditSection) -> Void
     let toggleNeutralPicker: @MainActor () -> Void
     let cropActions: EditPanelCropActions
-    /// A value field gained or lost the keyboard.
-    let setEntering: @MainActor (Bool) -> Void
     let setLensCorrection: @MainActor (Bool) -> Void
     let resetControl: @MainActor (EditControl) -> Void
     let originalActions: EditPanelOriginalActions
@@ -259,7 +257,6 @@ struct EditPanelView: View {
             reset: { resetControl(control) },
             setValue: { setValue($0, control) },
             setDragging: { setDragging($0, control) },
-            setEntering: setEntering,
             enter: { text in
                 guard let facts, let position = control.position(fromEntered: text, facts: facts) else {
                     return false
@@ -510,7 +507,6 @@ private struct EditSliderRow: View {
     let reset: @MainActor () -> Void
     let setValue: @MainActor (Double) -> Void
     let setDragging: @MainActor (Bool) -> Void
-    let setEntering: @MainActor (Bool) -> Void
     /// Enters typed text; false when it is not a value.
     let enter: @MainActor (String) -> Bool
 
@@ -545,7 +541,6 @@ private struct EditSliderRow: View {
                         isEntering = false
                     }
                     .onChange(of: isEntering) { _, entering in
-                        setEntering(entering)
                         if entering {
                             entry = formattedValue
                         } else {

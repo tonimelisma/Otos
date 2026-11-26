@@ -117,8 +117,8 @@ Each control's value is a field that reads like the value. Clicking or tabbing i
 lets the exact number be typed, with a sign, a degree mark or a kelvin unit as shown.
 Return or leaving the field saves it as one step, named for the control. An out-of-range
 number clamps, text that is not a number is put back, and Escape puts back the shown value.
-While a field is being edited, Edit ▸ Cut, Copy, Paste and Select All act on its text
-(DES-093).
+While a field is being edited, Edit ▸ Cut, Copy, Paste and Select All act on its text,
+as they do in every field (DES-093).
 
 ## Crop tool
 

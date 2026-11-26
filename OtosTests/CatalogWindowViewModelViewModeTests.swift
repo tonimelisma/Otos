@@ -259,7 +259,7 @@ struct CatalogWindowViewModelViewModeTests {
         let model = makeViewModeModel(loader: FakePreviewLoader())
         model.startHandOff(store: model.catalogStore)
         defer { model.handOffTask?.cancel() }
-        let ids = makeViewModeIDs(count: 4)
+        let ids = try makeLocalMediaIDs((0 ..< 4).map { "vm-\($0).jpg" })
         model.applyState(makeViewModeState(orderedIDs: ids))
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("copy-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }

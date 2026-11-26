@@ -3,10 +3,11 @@
 - Status: Accepted; the representation is superseded in part by ADR 0037
 - Date: 2026-09-13
 
-The drag carries one writer per asset as ADR 0037 chooses it: the original's file URL for
-an unedited still that is not a RAW or an untrimmed video, a file prepared earlier in the
-launch, or a file promise that prepares an edited photo or a RAW. The selection and timing
-rules below stand.
+The drag carries one writer per asset as ADR 0037 chooses it: a pasteboard item carrying
+only the `public.file-url` of a file that is ready (an unedited still or untrimmed video's
+original, a cloud placeholder included, or a file prepared earlier in the launch; the item
+ADR 0012's Copy writes), or a file promise that prepares the photo's file when the receiver
+asks. The selection and timing rules below stand.
 
 ## Context
 

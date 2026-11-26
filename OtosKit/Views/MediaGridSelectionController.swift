@@ -156,9 +156,10 @@ extension MediaGridViewController {
 }
 
 /// Drag-out (ADR 0028). The view detected the drag; this builds one dragging item per
-/// asset — file URL writer, the on-screen tile's frame and a snapshot of it as the drag
-/// image, or the origin tile's frame for assets scrolled out of view — and starts the
-/// session with the controller's source. No byte read, no materialization.
+/// asset — the hand-off's writer (`CatalogWindowViewModel.dragWriters(for:)`), the on-screen
+/// tile's frame and a snapshot of it as the drag image, or the origin tile's frame for
+/// assets scrolled out of view — and starts the session with the controller's source. No
+/// byte read, no materialization here: a promise prepares its file when the receiver asks.
 extension MediaGridViewController {
     func beginDrag(from hit: IndexPath, event: NSEvent) {
         guard let hitID = structure.id(at: hit) else {
@@ -170,10 +171,8 @@ extension MediaGridViewController {
             orderedIDs: structure.orderedIDs
         )
         let originFrame = collectionView.layoutAttributesForItem(at: hit)?.frame ?? .zero
-        let items: [NSDraggingItem] = ids.compactMap { id in
-            guard let writer = selectionHandlers.dragWriter(id) else {
-                return nil
-            }
+        let writers = selectionHandlers.dragWriters(ids)
+        let items: [NSDraggingItem] = zip(ids, writers).map { id, writer in
             let item = NSDraggingItem(pasteboardWriter: writer)
             if let indexPath = structure.indexPath(of: id),
                let tile = collectionView.item(at: indexPath)?.view

@@ -36,7 +36,6 @@ struct ExportTests {
 
             model.beginExport()
             #expect(model.exportSheet?.title == "Export 3 Photos")
-            #expect(model.textHoldsKeyboard)
             model.confirmExport()
             #expect(model.exportSheet == nil)
             try await waitUntil { model.hasSettledExports }

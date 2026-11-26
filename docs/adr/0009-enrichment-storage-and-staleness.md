@@ -291,6 +291,16 @@ Adjacent decisions requiring separate ADRs or specs:
    it stops lower-priority admission and bounds pre-existing same-root contention
    instead of cancelling work the provider may already be performing.
 
+   That API also reports nothing about a download's end, and the ubiquitous status keys
+   are unreliable for third-party providers, so a transfer someone waits on — interactive
+   priority: the loupe, an edit, a copy — is one coordinated read instead
+   (`FileMaterialization.coordinatedRead`, on a thread of its own that its coordinator never
+   leaves): it downloads the file before its accessor runs or fails with the provider's
+   error, and the last waiter leaving stops waiting at once, while the read's thread ends
+   when the provider answers, as the provider's download goes on either way. Background, device and command
+   transfers keep the request and the arrival watch, which hold no thread per transfer
+   (`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`).
+
    Enrichment remains cursorless. Store claims priority rows through
    `priorityEnrichmentCandidates(_:)` and background rows through
    `enrichmentCandidates(limit:)`. Priority rows are the viewport and the `freshly`

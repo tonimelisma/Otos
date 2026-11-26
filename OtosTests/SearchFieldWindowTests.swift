@@ -113,6 +113,44 @@ extension AppKitWindowTests {
             return view.subviews.lazy.compactMap { clearButton(in: $0, action: action) }.first
         }
 
+        /// DES-093: what holds the keyboard is the key window's first responder. While the
+        /// toolbar search field is edited, Edit ▸ Copy and Paste act on its text; once it is
+        /// left, Copy acts on photos — and from any other window, on nothing behind it.
+        @Test func theFieldBeingEditedHoldsTheKeyboardAsText() async throws {
+            let model = CatalogWindowViewModel(
+                catalogStore: makeTestStore(location: .inMemory),
+                startsStallMonitor: false,
+                startsEnrichment: false,
+                startsSourceMonitoring: false,
+                preferencesDomain: .suite(UUID().uuidString),
+                volumeCapacity: ampleVolumeCapacity,
+                trashFiles: .refusing
+            )
+            let controller = NSHostingController(rootView: ContentView(viewModel: model))
+            controller.sceneBridgingOptions = [.toolbars]
+            let window = NSWindow(contentViewController: controller)
+            window.styleMask = [.titled, .resizable]
+            window.animationBehavior = .none
+            window.isReleasedWhenClosed = false
+            window.setFrame(NSRect(x: -4000, y: -4000, width: 1100, height: 700), display: true)
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            let field = try await waitForValue { searchField(in: window) }
+            let other = NSWindow(
+                contentRect: NSRect(x: -4000, y: -4000, width: 200, height: 100),
+                styleMask: [.titled], backing: .buffered, defer: true
+            )
+            other.isReleasedWhenClosed = false
+            let focus = KeyboardFocusRelay.RelayView.focus(of:catalogWindow:)
+
+            #expect(window.makeFirstResponder(field))
+            #expect(focus(window, window) == .text)
+            window.makeFirstResponder(nil)
+            #expect(focus(window, window) == .photos)
+            #expect(focus(other, window) == .elsewhere)
+            #expect(focus(nil, window) == .elsewhere)
+        }
+
         private func searchField(in window: NSWindow) -> NSSearchField? {
             for item in window.toolbar?.items ?? [] {
                 if let search = item as? NSSearchToolbarItem {

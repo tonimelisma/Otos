@@ -239,8 +239,6 @@ final class EditSession {
     /// The latest request for the loupe's player to show its trim UI.
     var videoTrimCommand: VideoTrimCommand?
     @ObservationIgnored var videoTrimGeneration: UInt64 = 0
-    /// An edit value field holds the keyboard: the Edit menu's text commands act on it.
-    var isEnteringEditValue = false
     /// The white balance picker is armed: the next loupe click picks a neutral point.
     var isPickingNeutral = false
     /// View ▸ Show Original (\\): the loupe shows the photo without its edit until it is
@@ -395,13 +393,6 @@ final class EditSession {
         editDraft.lensCorrection = enabled
         requestLiveEditRender()
         commitEdit(actionName: "Lens Correction")
-    }
-
-    /// A value field in the panel gained or lost the keyboard.
-    func setEnteringEditValue(_ entering: Bool) {
-        if isEnteringEditValue != entering {
-            isEnteringEditValue = entering
-        }
     }
 
     /// The Color section's white balance picker: armed, the next click on the loupe image

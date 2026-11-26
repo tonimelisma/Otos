@@ -196,16 +196,38 @@ struct GridSelectionTests {
 
     // MARK: - clipboard
 
-    @Test func writePutsFileURLsInOrderAndReturnsCount() {
+    /// One item per file, in order, each carrying only `public.file-url`: no string a
+    /// receiver could paste instead of the file (ADR 0012).
+    @Test func writePutsOneFileURLItemPerFileInOrder() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-\(UUID().uuidString)"))
-        let idA = id("/Pictures", "a.jpg")
-        let idB = id("/Pictures", "Nested/b.mov")
+        defer { pasteboard.releaseGlobally() }
+        let urls = [id("/Pictures", "a.jpg"), id("/Pictures", "Nested/b.mov")].map(\.fileURL)
 
-        let count = MediaGridClipboard.write([idA, idB], to: pasteboard)
+        let claim = MediaGridClipboard.claim(pasteboard)
+        let count = MediaGridClipboard.write(files: urls, to: pasteboard, claimed: claim)
 
         #expect(count == 2)
-        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
-        #expect(urls.map(\.path) == ["/Pictures/a.jpg", "/Pictures/Nested/b.mov"])
+        let read = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        #expect(read.map(\.path) == ["/Pictures/a.jpg", "/Pictures/Nested/b.mov"])
+        let types = pasteboard.pasteboardItems?.map(\.types) ?? []
+        #expect(types.count == 2)
+        #expect(types.allSatisfy { $0.contains(.fileURL) && !$0.contains(.string) })
+        #expect(pasteboard.string(forType: .string) == nil)
+    }
+
+    /// A Copy writes only while the pasteboard is still its claim's: whatever wrote it
+    /// since — another app, or a newer Copy — is left alone.
+    @Test func aWriteAfterSomeoneElseWroteThePasteboardLeavesItAlone() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let claim = MediaGridClipboard.claim(pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString("copied later", forType: .string)
+
+        let count = MediaGridClipboard.write(files: [id("/Pictures", "a.jpg").fileURL], to: pasteboard, claimed: claim)
+
+        #expect(count == 0)
+        #expect(pasteboard.string(forType: .string) == "copied later")
     }
 }
 

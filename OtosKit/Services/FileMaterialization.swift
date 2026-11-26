@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Synchronization
 
 /// File materialization guide
 ///
@@ -189,9 +190,10 @@ extension FileMaterialization {
     ///
     /// The consequence for the design is the important part: with no byte-level signal,
     /// Otos cannot distinguish "downloading slowly" from "stalled" through the filesystem at
-    /// all, so a 3 s `ETIMEDOUT` is not definitive. That is why interactive work persists
-    /// rather than deciding to give up on evidence that does not exist. Real progress would
-    /// require `NSFileProviderManager`'s `NSProgress`.
+    /// all, so a 3 s `ETIMEDOUT` is not definitive. That is why interactive work does not
+    /// watch at all: its coordinated read ends with the provider's own answer, success or
+    /// error. Real progress would require `NSFileProviderManager`'s `NSProgress`, which only
+    /// a provider's own extension can read.
     private nonisolated static func progressSample(
         _ url: URL,
         since start: ContinuousClock.Instant
@@ -237,8 +239,10 @@ extension FileMaterialization {
         return .inconclusive
     }
 
-    /// How hard a materialization tries, and for how long — derived from the request's
-    /// priority, so a background-only policy cannot reach interactive work. The two-strike
+    /// How hard a requested-and-watched materialization tries, and for how long: the
+    /// background's and a command's. Work a person waits on on screen takes a coordinated
+    /// read instead (`materialize(_:providers:)`), which ends with the provider's answer.
+    /// The two-strike
     /// probe exists to stop a background transfer squatting a `rootBackgroundCap` slot for two
     /// minutes — a slot interactive work never holds.
     ///
@@ -252,14 +256,11 @@ extension FileMaterialization {
         /// Abandon after two consecutive `ETIMEDOUT` probes. Background only.
         let failsFastOnProviderUnavailable: Bool
         /// `nil` polls until the caller stops waiting. The provider exposes no transfer
-        /// handle (research 2026-07-14), so watching is the only way to learn of arrival,
-        /// and a clock is the wrong thing to bound it by — demand is.
+        /// handle (research 2026-07-14), so watching is the only way to learn of arrival.
         let deadline: Duration?
         /// How often the provider request is re-asserted. `startDownloadingUbiquitousItem`
         /// returns no acknowledgement, so a saturated provider can discard queued work with
-        /// no way for us to tell; re-asserting is the only insurance available. One XPC
-        /// round trip, against an image the user is staring at — the costs are not
-        /// comparable, so interactive asks more often.
+        /// no way for us to tell; re-asserting is the only insurance available.
         let requestRetryInterval: Duration
 
         static let background = Persistence(
@@ -267,30 +268,120 @@ extension FileMaterialization {
             deadline: .seconds(120),
             requestRetryInterval: .seconds(1)
         )
-
-        /// The image in front of the user outranks everything. No deadline: bounded by the
-        /// caller going away, which `MaterializationCoordinator` signals by cancelling.
-        static let interactive = Persistence(
-            failsFastOnProviderUnavailable: false,
-            deadline: nil,
-            requestRetryInterval: .milliseconds(500)
-        )
-
-        /// `command` takes the bounded background persistence: no on-screen demand will
-        /// cancel it, so a clock is the only thing that can end a stuck provider wait.
-        static func forPriority(_ priority: MaterializationCoordinator.Priority) -> Persistence {
-            priority == .interactive ? .interactive : .background
-        }
     }
 
-    /// Downloads a request's file from its file provider as hard as its priority asks
-    /// (`Persistence.forPriority`): the executor `MaterializationCoordinator` runs for a
-    /// folder's or a card's file.
+    /// Downloads a request's file from its file provider: the executor
+    /// `MaterializationCoordinator` runs for a folder's or a card's file.
+    ///
+    /// - **Interactive** — the photo on screen, a copy, a share, an edit: a coordinated
+    ///   read (`coordinatedRead`), which Apple's file-coordination guidance and DTS name as
+    ///   the way to download a File Provider item and wait for it. It downloads before its
+    ///   accessor runs or fails with the provider's error, so it ends with the provider's own
+    ///   answer, however long the provider takes and however it fails: never a run of
+    ///   re-requests that one failed re-request could end, and never a wait nothing ends but
+    ///   the caller leaving. The caller leaving stops its wait at once.
+    /// - **Command, device and background:** a request and a watch for arrival under the
+    ///   bounded background persistence (`Persistence.background`), which holds no thread for
+    ///   the transfer: no on-screen demand will end a command, so a clock does, and a
+    ///   library's backlog needs sixteen transfers in flight, not sixteen parked threads.
     nonisolated static func materialize(
         _ request: MaterializationCoordinator.Request,
         providers: FileMaterializationProviders = .fileProvider
     ) async -> MaterializationResult {
-        await materialize(request.id.fileURL, persistence: .forPriority(request.priority), providers: providers)
+        guard request.priority == .interactive else {
+            return await materialize(request.id.fileURL, persistence: .background, providers: providers)
+        }
+        return await materializeByCoordinatedRead(request.id.fileURL, providers: providers)
+    }
+
+    /// One coordinated read of `url`, classified: the bytes arrived, the read was cancelled,
+    /// or the provider refused it. A read whose accessor ran while the file was still
+    /// dataless — the coordination finished without the download — is a failed request too,
+    /// logged as such, never taken for an arrival.
+    nonisolated static func materializeByCoordinatedRead(
+        _ url: URL,
+        providers: FileMaterializationProviders
+    ) async -> MaterializationResult {
+        let start = ContinuousClock.now
+        if providers.status(url) == .materialized {
+            return finishMaterialization(.alreadyMaterialized, url: url, start: start, rerequestCount: 0)
+        }
+        let answer = await providers.coordinatedRead(url)
+        let outcome: MaterializationOutcome
+        switch answer {
+        case .read where providers.status(url) == .materialized:
+            outcome = .materialized
+        case .read:
+            OtosLog.fileAccess.errorOperation("materialization.coordinatedRead", phase: "stillDataless", fields: [
+                "path": url.path(percentEncoded: false),
+            ])
+            outcome = .requestFailed
+        case .cancelled:
+            outcome = .cancelled
+        case let .failed(domain, code):
+            OtosLog.fileAccess.errorOperation("materialization.coordinatedRead", phase: "failed", fields: [
+                "path": url.path(percentEncoded: false), "domain": domain, "code": "\(code)",
+            ])
+            outcome = .requestFailed
+        }
+        return finishMaterialization(outcome, url: url, start: start, rerequestCount: 0)
+    }
+
+    /// A read through `NSFileCoordinator`, which downloads a dataless file before its
+    /// accessor runs (`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`). The call
+    /// blocks its thread for the whole download, so each read runs on a thread of its own,
+    /// never on the cooperative pool or the main thread, and its coordinator lives and dies on
+    /// that thread; the accessor reads nothing itself. A cancelled asker stops waiting at
+    /// once (the read's answer is taken by whichever comes first); the read's thread ends
+    /// when the provider answers, as the provider's download goes on whatever Otos waits for
+    /// (research 2026-07-14).
+    nonisolated static func coordinatedRead(of url: URL) async -> CoordinatedReadAnswer {
+        let waiter = Mutex<CheckedContinuation<CoordinatedReadAnswer, Never>?>(nil)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter.withLock { $0 = continuation }
+                let thread = Thread {
+                    let answer = readCoordinated(url)
+                    Self.takeWaiter(waiter)?.resume(returning: answer)
+                }
+                thread.name = "net.melisma.Otos.materialization.coordinatedRead"
+                thread.qualityOfService = .userInitiated
+                thread.start()
+            }
+        } onCancel: {
+            takeWaiter(waiter)?.resume(returning: .cancelled)
+        }
+    }
+
+    /// The read's waiter, once: whichever of the answer and the cancellation comes first
+    /// resumes it.
+    private nonisolated static func takeWaiter(
+        _ waiter: borrowing Mutex<CheckedContinuation<CoordinatedReadAnswer, Never>?>
+    ) -> CheckedContinuation<CoordinatedReadAnswer, Never>? {
+        waiter.withLock { stored in
+            defer { stored = nil }
+            return stored
+        }
+    }
+
+    /// One blocking coordinated read on the calling thread, classified.
+    private nonisolated static func readCoordinated(_ url: URL) -> CoordinatedReadAnswer {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var error: NSError?
+        var accessed = false
+        coordinator.coordinate(readingItemAt: url, options: [], error: &error) { _ in
+            accessed = true
+        }
+        if accessed {
+            return .read
+        }
+        guard let error else {
+            return .failed(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)
+        }
+        if error.domain == NSCocoaErrorDomain, error.code == NSUserCancelledError {
+            return .cancelled
+        }
+        return .failed(domain: error.domain, code: error.code)
     }
 
     nonisolated static func materialize(
@@ -511,6 +602,16 @@ nonisolated enum FileMaterializationProbeResult: Equatable {
     case inconclusive
 }
 
+/// How one coordinated read ended.
+nonisolated enum CoordinatedReadAnswer: Equatable, Sendable {
+    /// The accessor ran: the coordination granted the read.
+    case read
+    /// The asker stopped waiting, or the coordination was cancelled before its accessor ran.
+    case cancelled
+    /// The coordination failed with this error, by domain and code.
+    case failed(domain: String, code: Int)
+}
+
 nonisolated struct FileMaterializationProviders {
     let status: @Sendable (URL) -> FileMaterializationStatus
     let request: @Sendable (URL) throws -> Void
@@ -525,13 +626,31 @@ nonisolated struct FileMaterializationProviders {
     /// (the file could not be opened for events) leaves the re-request schedule to wake
     /// the wait.
     let changes: @Sendable (URL) -> AsyncStream<Void>
+    /// One coordinated read of the file, for work a person waits on. Production reads
+    /// through `NSFileCoordinator` on a thread of its own (`FileMaterialization.coordinatedRead`).
+    let coordinatedRead: @Sendable (URL) async -> CoordinatedReadAnswer
+
+    init(
+        status: @escaping @Sendable (URL) -> FileMaterializationStatus,
+        request: @escaping @Sendable (URL) throws -> Void,
+        probe: @escaping @Sendable (URL) async -> FileMaterializationProbeResult,
+        changes: @escaping @Sendable (URL) -> AsyncStream<Void>,
+        coordinatedRead: @escaping @Sendable (URL) async -> CoordinatedReadAnswer = FileMaterialization.coordinatedRead(of:)
+    ) {
+        self.status = status
+        self.request = request
+        self.probe = probe
+        self.changes = changes
+        self.coordinatedRead = coordinatedRead
+    }
 
     /// The file provider itself.
     static let fileProvider = FileMaterializationProviders(
         status: FileMaterialization.status(of:),
         request: FileMaterialization.requestMaterialization(of:),
         probe: FileMaterialization.probeProviderLiveness(of:),
-        changes: FileMaterialization.attributeChanges(of:)
+        changes: FileMaterialization.attributeChanges(of:),
+        coordinatedRead: FileMaterialization.coordinatedRead(of:)
     )
 }
 

@@ -13,7 +13,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
     @Test func contextClickOutsideSelectionSelectsOnlyTheHit() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
-        let ids = makeIDs(count: 4)
+        let ids = try makeIDs(count: 4)
         model.applyState(menuWindowState(ids: ids))
         let controller = MediaGridViewController()
         _ = controller.view
@@ -34,7 +34,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
     @Test func contextClickInsideSelectionKeepsIt() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
-        let ids = makeIDs(count: 4)
+        let ids = try makeIDs(count: 4)
         model.applyState(menuWindowState(ids: ids))
         let controller = MediaGridViewController()
         _ = controller.view
@@ -52,10 +52,10 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.currentTargetFileURLs == ids[0 ... 2].map(\.fileURL))
     }
 
-    @Test func modelIsBuiltSynchronouslyForFreshTargets() {
+    @Test func modelIsBuiltSynchronouslyForFreshTargets() throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
-        let ids = makeIDs(count: 2)
+        let ids = try makeIDs(count: 2)
         model.applyState(menuWindowState(ids: ids))
         _ = model.applyGridClick(hit: ids[1], modifiers: [], orderedIDs: ids)
 
@@ -74,7 +74,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
     @Test func revealUsesTheCurrentTargetsInEveryMode() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
-        let ids = makeIDs(count: 3)
+        let ids = try makeIDs(count: 3)
         model.applyState(menuWindowState(ids: ids))
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.command], orderedIDs: ids)
@@ -111,7 +111,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
     @Test func performRoutesToTheMenuBarIntents() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
-        let ids = makeIDs(count: 2)
+        let ids = try makeIDs(count: 2)
         model.applyState(menuWindowState(ids: ids))
         model.selectAll()
         _ = model.mediaItemMenuModel()
@@ -129,9 +129,9 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(opens[1].targets == ids.map(\.fileURL))
     }
 
-    @Test func compareContextTargetsTheActivatedPane() {
+    @Test func compareContextTargetsTheActivatedPane() throws {
         let model = makeMenuModel(workspace: MenuRecordingWorkspace())
-        let ids = makeIDs(count: 3)
+        let ids = try makeIDs(count: 3)
         model.applyState(menuWindowState(ids: ids))
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.command], orderedIDs: ids)
@@ -167,13 +167,8 @@ private func makeMenuModel(
     return model
 }
 
-private func makeIDs(count: Int) -> [MediaAssetID] {
-    (0 ..< count).map { index in
-        MediaAssetID(
-            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-            relativePath: MediaRelativePath(rawValue: "asset-\(index).jpg")
-        )
-    }
+private func makeIDs(count: Int) throws -> [MediaAssetID] {
+    try makeLocalMediaIDs((0 ..< count).map { "asset-\($0).jpg" })
 }
 
 private func menuWindowState(ids: [MediaAssetID]) -> CatalogWindowState {

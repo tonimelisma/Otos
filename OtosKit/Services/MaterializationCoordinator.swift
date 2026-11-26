@@ -627,10 +627,10 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
         let previous = active.effectivePriority
         active.effectivePriority = maximumPriority(in: active.waiters, fallback: active.request.priority)
         adjustEffectiveInteractive(from: previous, to: active.effectivePriority)
-        // An interactive transfer polls without a deadline, so the last waiter leaving is
-        // the only thing that ends it. Without this the poll outlives every consumer and
-        // runs for the life of the process. A command transfer is bounded, but its waiter
-        // leaving means the command was withdrawn (an undone Move to Trash), so it stops too.
+        // An interactive transfer is a coordinated read that waits as long as the provider
+        // does, so the last waiter leaving is the only thing that ends it early: cancelling
+        // its task ends its wait. A command transfer is bounded, but its waiter leaving
+        // means the command was withdrawn (an undone Move to Trash), so it stops too.
         //
         // Nothing is lost by stopping: the provider download continues regardless (we hold
         // no handle on it, research 2026-07-14), and the next request finds the file either
