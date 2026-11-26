@@ -47,6 +47,10 @@ wait for a CI notification: a green run may never send one.
   the artifact `check-logs-<run>-<attempt>`, which holds the hang dumps and every check's
   own log under `logs/check/`.
 - Each push is a full run. To reproduce, read the failure, fix it, and push once.
+- A failure that shows only sometimes is reproduced with the workflow Repeat A Suite: start
+  it with the GitHub MCP tool `actions_run_trigger` (`run_workflow`, `workflow_id`
+  `repeat.yml`, the branch as `ref`, inputs `suite` and `iterations`). It runs that suite up
+  to that many times and stops at the first failure (ADR 0044, item 19).
 - A job gets at most one re-run. "Flake" is not a root cause.
 
 ## A red `main`

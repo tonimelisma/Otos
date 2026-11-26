@@ -145,6 +145,18 @@ run_tests_with_footprint_guard() {
   for identifier in ${OTOS_ONLY_TESTING:-}; do
     args+=("-only-testing:$identifier")
   done
+  # OTOS_TEST_ITERATIONS=<n> with `check.sh --only` runs the named suites up to n times and
+  # stops at the first failure (the Repeat A Suite workflow): how a cloud session, whose
+  # only Mac is CI, reproduces a failure that shows only sometimes. It never retries a
+  # failure into a pass.
+  if [[ -n "${OTOS_TEST_ITERATIONS:-}" ]]; then
+    if [[ ! "$OTOS_TEST_ITERATIONS" =~ ^[1-9][0-9]*$ || -z "${OTOS_ONLY_TESTING:-}" ]]; then
+      echo "op=test.iterations phase=refused value=$OTOS_TEST_ITERATIONS reason=needsAPositiveCountAndOnly" >&2
+      return 1
+    fi
+    args+=(-test-iterations "$OTOS_TEST_ITERATIONS" -run-tests-until-failure)
+    echo "op=test.iterations count=$OTOS_TEST_ITERATIONS untilFailure=yes"
+  fi
   # OTOS_TEST_SHARD=<k>/<n> runs shard k of the suite (CI runs the n shards side by side,
   # ADR 0044 item 17): script/lib/test-shards.py names its filters, and the last shard
   # runs everything the others do not.

@@ -208,7 +208,10 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
       build.
     - Measured warm (run 45790357749, no queue): 5 min 54 s from trigger to gate; the
       slowest shard 5 min 44 s, of which checkout 26 s, cache restore 20 s (710 MB), gates
-      33 s, build about 70 s, a 52 s start before the first test, and its tests about 2 min.
+      33 s, build and tests about 4 min. A cached build is still about 110 s: the Swift
+      compiles replay in 6 s, and what remains is the work the store does not hold, linking
+      (19 s), the Swift driver (20 s), the asset catalog (12 s), the Core ML models (11 s)
+      and signing (6 s), by Xcode's timing summary (run 45791781722).
     - **Rejected: one build shared by artifact.** The products hold about 500 MB of Core
       ML models; uploading and downloading them costs what a cached build costs.
 
@@ -221,6 +224,13 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     every shard. The SourceKit SwiftLint rules and the guards still run on the Mac, beside
     the build (`verify.sh`). The shards check out history without file contents
     (`filter: blob:none`).
+
+19. **A suite can be run many times on CI.** The workflow Repeat A Suite (`workflow_dispatch`
+    with a suite name and a count) runs `check.sh --only <Suite>` with
+    `OTOS_TEST_ITERATIONS=<n>`, which `test.sh` passes as `-test-iterations <n>
+    -run-tests-until-failure`: it stops at the first failure and never retries one into a
+    pass. It is a cloud session's way to reproduce a failure that shows only sometimes, and
+    a diagnosis run outside the five-minute budget.
 
 ## Alternatives Considered
 

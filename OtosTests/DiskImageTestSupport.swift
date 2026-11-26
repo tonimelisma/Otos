@@ -98,7 +98,12 @@ struct MountedTestDiskImage {
                     break
                 }
                 if detach.status != busyStatus || attempt == busyDetachAttempts {
-                    Issue.record("hdiutil detach \(device) exited \(detach.status): \(detach.errorText)")
+                    let refusal = "hdiutil detach \(device) exited \(detach.status): \(detach.errorText)"
+                    if detach.status == busyStatus {
+                        Issue.record("\(refusal); held open by: \(holders(of: device))")
+                    } else {
+                        Issue.record("\(refusal)")
+                    }
                     break
                 }
             }
@@ -149,6 +154,40 @@ struct MountedTestDiskImage {
             ?? wholeDisks.map(\.entry).min { $0.diskNumber < $1.diskNumber }
     }
 
+    /// The open files on any node of `device` (`/dev/diskN`, its slices, `/dev/rdiskN`), as
+    /// `lsof` lists them with their processes: what a busy refusal names, so the refusal says
+    /// who held the disk. The likeliest holders (Spotlight's indexer, DiskArbitration's
+    /// clients) run as root, which a user's `lsof` cannot see, so a passwordless `sudo -n` is
+    /// tried first, as a CI runner allows; where it is refused, the user's own `lsof` answers
+    /// for the processes it can see, and the text says which one answered.
+    private static func holders(of device: String) -> String {
+        let node = String(device.dropFirst("/dev/".count))
+        let listers: [(label: String, executable: String, arguments: [String])] = [
+            ("sudo lsof", "/usr/bin/sudo", ["-n", "/usr/sbin/lsof", "-n", "-w"]),
+            ("lsof", "/usr/sbin/lsof", ["-n", "-w"]),
+        ]
+        var refusals: [String] = []
+        for lister in listers {
+            let listing: Run
+            do {
+                listing = try run(lister.executable, lister.arguments)
+            } catch {
+                refusals.append("\(lister.label) did not run: \(error)")
+                continue
+            }
+            guard listing.status == 0 || !listing.output.isEmpty else {
+                refusals.append("\(lister.label) exited \(listing.status): \(listing.errorText)")
+                continue
+            }
+            let lines = String(decoding: listing.output, as: UTF8.self)
+                .split(separator: "\n")
+                .filter { $0.contains("/dev/\(node)") || $0.contains("/dev/r\(node)") }
+            let found = lines.isEmpty ? "no open file on \(device)" : lines.joined(separator: " | ")
+            return "[\(lister.label)] \(found)" + (refusals.isEmpty ? "" : " (\(refusals.joined(separator: "; ")))")
+        }
+        return refusals.joined(separator: "; ")
+    }
+
     private struct Run {
         let status: Int32
         let output: Data
@@ -162,7 +201,7 @@ struct MountedTestDiskImage {
         try run("/usr/bin/hdiutil", arguments)
     }
 
-    /// Runs a tool to its end (`hdiutil`, `diskutil`).
+    /// Runs a tool to its end (`hdiutil`, `diskutil`, `lsof`).
     private static func run(_ executable: String, _ arguments: [String]) throws -> Run {
         let errorFile = FileManager.default.temporaryDirectory
             .appending(path: "otos-test-hdiutil-\(UUID().uuidString).txt", directoryHint: .notDirectory)

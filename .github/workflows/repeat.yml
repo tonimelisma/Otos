@@ -1,0 +1,73 @@
+# Runs one test suite many times on GitHub's Xcode 27 runner, stopping at its first failure
+# (script/check.sh --only with OTOS_TEST_ITERATIONS, ADR 0044 item 19). A cloud session's only
+# Mac is CI, so this is how it reproduces a failure that shows only sometimes. It is a
+# diagnosis run, started by hand, and outside the five-minute budget of a commit's check.
+name: Repeat A Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "A test suite's type name, as check.sh --only takes it"
+        required: true
+        type: string
+      iterations:
+        description: "How many times to run it, at most"
+        required: true
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repeat:
+    name: Repeat A Suite
+    runs-on: xcode-27
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Select the newest Xcode 27
+        id: xcode
+        run: |
+          set -euo pipefail
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-
+
+      # The inputs reach the shell as environment values, never as text in the script.
+      - name: Repeat the suite
+        timeout-minutes: 110
+        env:
+          SUITE: ${{ inputs.suite }}
+          OTOS_TEST_ITERATIONS: ${{ inputs.iterations }}
+          OTOS_CHECK_FAST_GATES: ubuntuJobs
+        run: |
+          set -euo pipefail
+          [[ "$SUITE" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "::error::not a suite name: $SUITE"; exit 2; }
+          script/check.sh --only "$SUITE"
+
+      - name: Upload check logs
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: repeat-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/
+          if-no-files-found: warn
+          retention-days: 14

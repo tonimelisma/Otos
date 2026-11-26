@@ -49,9 +49,8 @@ read a newer catalog. A bad migration is fixed forward (`.claude/rules/persisten
 
 ## Owner steps
 
-- The first install is by hand, from
-  `https://github.com/tonimelisma/Otos/releases/latest/download/Otos.dmg`. Once the
-  installed app runs a release, it updates itself.
+- The installed app updates itself. A fresh install on another Mac starts from
+  `https://github.com/tonimelisma/Otos/releases/latest/download/Otos.dmg`.
 - The Apple Development certificate expires yearly. The owner renews it by running
   `script/release-setup.sh` on the Mac, which re-exports the newest valid certificate into
   the environment `release`. When Xcode refuses the certificate as revoked or expired,

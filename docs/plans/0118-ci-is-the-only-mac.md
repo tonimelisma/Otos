@@ -45,9 +45,8 @@ Each step is one increment with its own PR, in this order.
    archive in a sandbox home, waits for its first grid (`op=launch.firstGrid`, never a
    timer), quits it and confirms it is gone, all before publishing anything.
    - Done when a release whose app cannot reach its window publishes nothing.
-3. **One suite, many times, on CI.** A `workflow_dispatch` workflow takes a suite name and an
-   iteration count. It runs `-run-tests-until-failure` on the runner and prints the same
-   `op=test.failure` lines. This is a cloud session's `--only`.
+3. **One suite, many times, on CI.** Landed: the workflow Repeat A Suite (ADR 0044,
+   item 19).
 4. **The weekly counts on CI.** A scheduled workflow runs `script/bench.sh compare` of
    `origin/main` against the last run's head on the runner. It then runs a sandbox tour at
    `-O` whose scorecard is kept as an artifact for trend.
