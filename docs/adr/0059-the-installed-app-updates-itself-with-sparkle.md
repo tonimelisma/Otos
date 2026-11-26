@@ -31,8 +31,8 @@ prove a commit to `.github/workflows/ci.yml`.
    is Otos's alone: it lives in the login keychain under the account `net.melisma.Otos`, not
    `generate_keys`'s default account, which every app signed that way would share. CI
    signs with the same Apple Development certificate the Mac's own installs use: the team's
-   newest one that Apple's revocation service (OCSP) accepts, checked again by the release
-   before it builds, because a revoked one still reads as valid in a keychain. An update
+   newest one that Apple's revocation service (OCSP) accepts, because a revoked one still
+   reads as valid in a keychain; the release asks the same service to explain a refusal. An update
    keeps the app's privacy permissions and Keychain items, and the build keeps
    `get-task-allow` (ADR 0030): lldb and Instruments still attach.
 3. **Only the installed app updates.** `AppUpdater` starts Sparkle only for the product
