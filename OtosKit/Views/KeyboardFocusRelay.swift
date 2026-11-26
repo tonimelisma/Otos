@@ -4,39 +4,45 @@ import SwiftUI
 /// Keyboard focus relay guide
 ///
 /// Edit ▸ Cut, Copy, Paste and Select All act on text whenever text holds the keyboard, and
-/// on photos only when the catalog window holds it (DES-093). Which one holds it is a fact
-/// AppKit keeps: the key window's first responder. While any text field is being edited —
-/// an edit value, the toolbar search field, People or Places search, a person's name, the
+/// otherwise Copy and Select All act on photos (DES-093). Whether text holds it is a fact
+/// AppKit keeps: the key window's first responder. While any text field is being edited — an
+/// edit value, the toolbar search field, People or Places search, a person's name, the
 /// Immich sign-in, the export sheet's Long Edge — its window's first responder is the field
-/// editor, an `NSText`; a selectable or editable text view is one too. So the relay reads
-/// that one fact rather than keeping a list of the fields that type text, which a new field
-/// or a field that leaves without reporting it (a panel hidden while its field is focused)
-/// silently falsifies.
+/// editor, an `NSText`; a selectable or editable text view is one too. Nothing keeps a list
+/// of the fields that type text.
 ///
-/// It follows the key window (`didBecomeKey`/`didResignKey`; `NSApplication.keyWindow` is
-/// not documented as key-value observable) and that window's `firstResponder`, which is.
-/// Both report on the main thread, and every report is classified at once and handed to
-/// the window's one intent (`CatalogWindowViewModel.setKeyboardFocus`). The relay draws
-/// nothing and takes no click; it joins the catalog window as a background view, which is
-/// how it knows which window is the catalog's.
+/// A command asks AppKit when it runs (`KeyboardFocus.live`), so what it acts on is never a
+/// stale record. The relay keeps the record SwiftUI's menu needs to enable Cut and Paste
+/// (`CatalogWindowViewModel.keyboardFocus`): it follows the key window
+/// (`didBecomeKey`/`didResignKey`, and the app becoming or ceasing to be active;
+/// `NSApplication.keyWindow` is not documented as key-value observable) and that window's
+/// `firstResponder`, which is. Every report arrives on the main thread and is handed to the
+/// window's one intent (`setKeyboardFocus`). The relay draws nothing and takes no click.
+/// Which window holds the keyboard decides nothing: the key window's identity is not a record
+/// that can be kept reliably across activation, popovers and sheets
+/// (`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`).
 nonisolated enum KeyboardFocus: Equatable, Sendable {
-    /// The catalog window is key and no text holds its keyboard: Copy and Select All act on
-    /// photos.
+    /// No text holds the keyboard: Copy and Select All act on photos.
     case photos
     /// Text holds the key window's keyboard: the Edit menu's text commands act on it.
     case text
-    /// Another window is key — a sheet, Settings, an alert — with no text holding its
-    /// keyboard, or no window is: nothing acts on photos behind it.
-    case elsewhere
 
-    /// The focus for a key window and its first responder: text wherever text holds it,
-    /// photos only in the catalog window.
-    static func of(keyWindowIsCatalog: Bool?, firstResponderIsText: Bool) -> KeyboardFocus {
-        guard let keyWindowIsCatalog else { return .elsewhere }
-        if firstResponderIsText {
-            return .text
+    static func of(firstResponderIsText: Bool) -> KeyboardFocus {
+        firstResponderIsText ? .text : .photos
+    }
+
+    /// What holds the keyboard now, as AppKit says it.
+    @MainActor
+    static var live: KeyboardFocus {
+        of(firstResponderIsText: NSApp.keyWindow?.firstResponder is NSText)
+    }
+
+    /// The name the log gives it.
+    var diagnosticName: String {
+        switch self {
+        case .photos: "photos"
+        case .text: "text"
         }
-        return keyWindowIsCatalog ? .photos : .elsewhere
     }
 }
 
@@ -75,7 +81,10 @@ struct KeyboardFocusRelay: NSViewRepresentable {
                 return
             }
             // Delivered on the main queue, which is the main actor's.
-            keyObservations = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+            keyObservations = [
+                NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+            ].map { name in
                 center.addObserver(forName: name, object: nil, queue: .main) { @Sendable [weak self] _ in
                     MainActor.assumeIsolated {
                         self?.update()
@@ -92,7 +101,7 @@ struct KeyboardFocusRelay: NSViewRepresentable {
             if key !== watched {
                 watch(key)
             }
-            let focus = Self.focus(of: key, catalogWindow: window)
+            let focus = KeyboardFocus.of(firstResponderIsText: key?.firstResponder is NSText)
             guard focus != reported else { return }
             reported = focus
             report(focus)
@@ -106,14 +115,6 @@ struct KeyboardFocusRelay: NSViewRepresentable {
                     self?.update()
                 }
             }
-        }
-
-        /// What holds the keyboard of `key`, given the catalog window.
-        static func focus(of key: NSWindow?, catalogWindow: NSWindow?) -> KeyboardFocus {
-            KeyboardFocus.of(
-                keyWindowIsCatalog: key.map { $0 === catalogWindow },
-                firstResponderIsText: key?.firstResponder is NSText
-            )
         }
     }
 }

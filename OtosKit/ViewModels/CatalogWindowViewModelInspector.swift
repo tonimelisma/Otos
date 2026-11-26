@@ -1,3 +1,4 @@
+import AppKit
 import CoreLocation
 import Foundation
 import MapKit
@@ -54,17 +55,15 @@ extension CatalogWindowViewModel {
 
     // MARK: - Edit session
 
-    /// Text holds the keyboard: any field being edited or text view focused in the key
-    /// window. Edit ▸ Cut, Copy, Paste and Select All then act on it through the responder
-    /// chain.
+    /// Text holds the keyboard, as the relay last reported it: what enables Edit ▸ Cut and
+    /// Paste. A command itself asks AppKit when it runs (`KeyboardFocus.live`).
     var textHoldsKeyboard: Bool {
         keyboardFocus == .text
     }
 
-    /// The catalog window holds the keyboard and no text does: Copy and Select All act on
-    /// photos. Never behind a sheet or from another window.
-    var photosHoldKeyboard: Bool {
-        keyboardFocus == .photos
+    /// Edit ▸ Copy is available: text holds the keyboard, or photos are targeted.
+    var canCopy: Bool {
+        textHoldsKeyboard || hasMediaChoiceTarget
     }
 
     /// The key window's first responder changed what holds the keyboard
@@ -72,7 +71,32 @@ extension CatalogWindowViewModel {
     func setKeyboardFocus(_ focus: KeyboardFocus) {
         guard focus != keyboardFocus else { return }
         keyboardFocus = focus
-        OtosLog.ui.debugOperation("keyboardFocus", phase: "changed", fields: ["focus": "\(focus)"])
+        OtosLog.ui.debugOperation("keyboardFocus", phase: "changed", fields: ["focus": focus.diagnosticName])
+    }
+
+    /// Edit ▸ Copy (⌘C): the text that holds the keyboard when the command runs, else the
+    /// current targets (`copyCurrentTargets`).
+    func copyCommand(focus: KeyboardFocus = .live) {
+        OtosLog.ui.noticeOperation("editCommand", phase: "copy", fields: [
+            "route": focus.diagnosticName, "targets": "\(targetIDs(.current).count)",
+        ])
+        switch focus {
+        case .text:
+            NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        case .photos:
+            copyCurrentTargets()
+        }
+    }
+
+    /// Edit ▸ Select All (⌘A): the text that holds the keyboard when the command runs, else
+    /// every photo shown.
+    func selectAllCommand(focus: KeyboardFocus = .live) {
+        switch focus {
+        case .text:
+            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        case .photos:
+            selectAll()
+        }
     }
 
     /// What `editSession` reads of this window and the intents it calls on it, each this

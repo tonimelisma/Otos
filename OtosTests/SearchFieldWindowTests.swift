@@ -115,7 +115,8 @@ extension AppKitWindowTests {
 
         /// DES-093: what holds the keyboard is the key window's first responder. While the
         /// toolbar search field is edited, Edit ▸ Copy and Paste act on its text; once it is
-        /// left, Copy acts on photos — and from any other window, on nothing behind it.
+        /// left, Copy acts on photos, and stays available while photos are targeted whatever
+        /// the relay last recorded.
         @Test func theFieldBeingEditedHoldsTheKeyboardAsText() async throws {
             let model = CatalogWindowViewModel(
                 catalogStore: makeTestStore(location: .inMemory),
@@ -136,19 +137,11 @@ extension AppKitWindowTests {
             window.makeKeyAndOrderFront(nil)
             defer { window.close() }
             let field = try await waitForValue { searchField(in: window) }
-            let other = NSWindow(
-                contentRect: NSRect(x: -4000, y: -4000, width: 200, height: 100),
-                styleMask: [.titled], backing: .buffered, defer: true
-            )
-            other.isReleasedWhenClosed = false
-            let focus = KeyboardFocusRelay.RelayView.focus(of:catalogWindow:)
 
             #expect(window.makeFirstResponder(field))
-            #expect(focus(window, window) == .text)
+            #expect(KeyboardFocus.of(firstResponderIsText: window.firstResponder is NSText) == .text)
             window.makeFirstResponder(nil)
-            #expect(focus(window, window) == .photos)
-            #expect(focus(other, window) == .elsewhere)
-            #expect(focus(nil, window) == .elsewhere)
+            #expect(KeyboardFocus.of(firstResponderIsText: window.firstResponder is NSText) == .photos)
         }
 
         private func searchField(in window: NSWindow) -> NSSearchField? {

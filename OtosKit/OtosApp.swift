@@ -108,6 +108,8 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
     private var machineConditions: MachineConditionsMonitor?
 
     func applicationWillFinishLaunching(_: Notification) {
+        // Before anything opens a file: 256 is too few for Otos and the frameworks it hosts.
+        OpenFileLimit.raise()
         backgroundReading = BackgroundReading.begin()
         metricKit = MetricKitRecorder.start(
             folder: Self.applicationSupportFolder.appending(
@@ -282,12 +284,12 @@ public struct OtosApp: App {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!catalogViewModel.undoMenuState.canRedo)
             }
-            // While text holds the keyboard — any field being edited or text view focused in
-            // the key window, as its first responder says (`KeyboardFocusRelay`) — Cut, Copy,
-            // Paste and Select All act on it through the responder chain, as in any text
-            // field (Keyboards: respect standard shortcuts). Otherwise, in the catalog window,
-            // Copy and Select All act on photos; behind a sheet or in another window, they
-            // act on nothing (DES-093).
+            // Cut, Copy, Paste and Select All act on text whenever text holds the keyboard —
+            // any field being edited or text view focused in the key window — through the
+            // responder chain, as in any text field (Keyboards: respect standard shortcuts);
+            // otherwise Copy and Select All act on photos (DES-093). Which one is asked of
+            // AppKit when the command runs (`KeyboardFocus.live`), never taken from a record of
+            // it; the record (`keyboardFocus`) only enables Cut and Paste.
             CommandGroup(replacing: .pasteboard) {
                 Button("Cut") {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
@@ -295,18 +297,10 @@ public struct OtosApp: App {
                 .keyboardShortcut("x", modifiers: .command)
                 .disabled(!catalogViewModel.textHoldsKeyboard)
                 Button("Copy") {
-                    switch catalogViewModel.keyboardFocus {
-                    case .text:
-                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-                    case .photos:
-                        catalogViewModel.copyCurrentTargets()
-                    case .elsewhere:
-                        break
-                    }
+                    catalogViewModel.copyCommand()
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(!catalogViewModel.textHoldsKeyboard
-                    && !(catalogViewModel.photosHoldKeyboard && catalogViewModel.hasMediaChoiceTarget))
+                .disabled(!catalogViewModel.canCopy)
                 Button("Paste") {
                     NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                 }
@@ -314,22 +308,13 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.textHoldsKeyboard)
                 Divider()
                 Button("Select All") {
-                    switch catalogViewModel.keyboardFocus {
-                    case .text:
-                        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                    case .photos:
-                        catalogViewModel.selectAll()
-                    case .elsewhere:
-                        break
-                    }
+                    catalogViewModel.selectAllCommand()
                 }
                 .keyboardShortcut("a", modifiers: .command)
-                .disabled(catalogViewModel.keyboardFocus == .elsewhere)
                 Button("Deselect All") {
                     catalogViewModel.deselectAll()
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!catalogViewModel.photosHoldKeyboard)
             }
             // Edit ▸ Find (⌘F), as in Photos: focuses the toolbar search field (ADR 0048).
             CommandGroup(replacing: .textEditing) {

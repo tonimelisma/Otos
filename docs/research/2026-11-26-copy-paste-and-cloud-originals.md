@@ -168,3 +168,32 @@ means the path is gone, which is a fact.
 - Copy a cloud-only photo from a OneDrive folder and paste it into Chrome: the bar reads
   `Preparing 1 photo to copy`, the file arrives, and `op=materialization.coordinatedRead`
   logs no failure. Open a cloud-only photo in the loupe the same way.
+
+## After v1.0.2: what the owner's Mac logged (2026-11-26, read-only)
+
+The owner reported that ⌘C on a grid photo beeped or did nothing and a paste gave the old
+clipboard, and that the Activity surface said Apple Intelligence was not responding while
+Apple Intelligence worked. Read from his Mac's unified log, Otos's own `lsof`, and macOS's
+model-service log, with the installed v1.0.2:
+
+- **No Copy reached the hand-off.** Over the minutes he tried, there is no `op=ui.copy` and
+  no `op=handOff.submit` line. The relay's record of which window held the keyboard read
+  `elsewhere` at 10:17:07, when he selected a photo in the catalog window, and from 10:17:14
+  while he scrolled it until 10:18:40; it read `photos` only for a few seconds after each
+  activation. Copy was enabled only for `photos`, so it was disabled: the beep. The key
+  window's identity across activation, popovers and sheets is not a record that can be kept
+  reliably, so nothing decides on it now: Copy is available whenever photos are targeted,
+  and a command asks AppKit what holds the keyboard when it runs (`KeyboardFocus.live`).
+- **Apple Intelligence did not fail; Otos ran out of open files.** Every description request
+  since the log's start (2026-11-25 21:55, seven sessions) failed with
+  `LanguageModelError -1` / `ModelManagerError 1026`, none written. macOS's model service,
+  inside Otos's process, logged: `Failed to open lock file for ClientDomain:
+  com.apple.UnifiedAssetFramework | SetIdentifier:com.apple.MobileAsset.UAF.FM.Overrides …
+  Error: Too many open files` (`com.apple.MobileAssetError.AutoAsset` 6583). Otos's soft
+  limit was the 256 a Mac app starts with (`ulimit -n`, `launchctl limit maxfiles`: 256 /
+  unlimited); `lsof` counted about 127 entries 40 s after a background launch, mapped
+  frameworks included, steady, so no runaway leak in that window: the model service's files
+  on top of Otos's bursts crossed 256. Otos now raises the limit at launch (ARC-073).
+- Public reports of error 1026 (<https://developer.apple.com/forums/thread/807145>) describe
+  it only as a model-service failure cured by updates or restarts; none names its cause, so
+  the lock-file line above is the evidence.
