@@ -55,7 +55,7 @@ pinned="$(awk '/XCRemoteSwiftPackageReference "Sparkle" \*\/ = \{/ { inside = 1 
 
 # The owner's one-time setup (script/release-setup.sh), against a generated checkout and
 # fakes for gh, security, openssl and generate_keys: it sets the four secrets,
-# exports only the team's identity, commits the public key by pull request, builds and
+# exports only the team's newest certificate that is not revoked, commits the public key by pull request, builds and
 # installs nothing, and never prints a secret value.
 cases=$((cases + 1))
 setup_work="$(mktemp -d)"
@@ -100,11 +100,20 @@ EOF
 echo "$1" >> "$FAKE/calls/security"
 case "$1" in
   find-identity)
+    # The export keychain's listing without -v has every identity, a valid one twice.
+    [[ "${2:-}" == -v ]] || echo '  1) CCCC3333 "Apple Development: Owner (X3)" (CSSMERR_TP_CERT_REVOKED)'
     echo '  1) AAAA1111 "Apple Development: Other (X1)"'
-    echo '  2) BBBB2222 "Apple Development: Owner (X2)"' ;;
+    echo '  2) BBBB2222 "Apple Development: Owner (X2)"'
+    echo '  3) CCCC3333 "Apple Development: Owner (X3)"'
+    echo '  4) DDDD4444 "Apple Development: Owner (X4)"' ;;
   find-certificate)
-    printf 'SHA-1 hash: AAAA1111\n-----BEGIN CERTIFICATE-----\nOTHERTEAM\n-----END CERTIFICATE-----\n'
-    printf 'SHA-1 hash: BBBB2222\n-----BEGIN CERTIFICATE-----\nOWNERTEAM\n-----END CERTIFICATE-----\n' ;;
+    printf 'SHA-1 hash: AAAA1111\n-----BEGIN CERTIFICATE-----\nOTHERTEAM 2026\n-----END CERTIFICATE-----\n'
+    printf 'SHA-1 hash: BBBB2222\n-----BEGIN CERTIFICATE-----\nOWNERTEAM 2024\n-----END CERTIFICATE-----\n'
+    printf 'SHA-1 hash: CCCC3333\n-----BEGIN CERTIFICATE-----\nOWNERTEAM 2026 REVOKED\n-----END CERTIFICATE-----\n'
+    printf 'SHA-1 hash: DDDD4444\n-----BEGIN CERTIFICATE-----\nOWNERTEAM 2025\n-----END CERTIFICATE-----\n' ;;
+  verify-cert)
+    while [[ $# -gt 0 ]]; do [[ "$1" == -c ]] && ! grep -q REVOKED "$2" && exit 0; shift; done
+    exit 1 ;;
   export) while [[ $# -gt 0 ]]; do [[ "$1" == -o ]] && printf 'P12BYTES' > "$2"; shift; done ;;
   delete-identity) echo "deleted $3" >> "$FAKE/calls/deleted" ;;
 esac
@@ -112,7 +121,12 @@ EOF
   cat > "$w/bin/openssl" << 'EOF'
 #!/usr/bin/env bash
 case "$1" in
-  x509) grep -q OWNERTEAM && echo "subject=UID=1, CN=Apple Development: Owner, OU=TEAM123456" || echo "subject=OU=OTHERTEAM0" ;;
+  x509)
+    pem="$(cat)"
+    case "$3" in
+      -subject) [[ "$pem" == *OWNERTEAM* ]] && echo "subject=UID=1, CN=Apple Development: Owner, OU=TEAM123456" || echo "subject=OU=OTHERTEAM0" ;;
+      -startdate) echo "notBefore=Mar  5 12:00:00 $(printf '%s' "$pem" | grep -oE '20[0-9]{2}') GMT" ;;
+    esac ;;
   rand) [[ "$2" == -base64 ]] && echo "P12PASSWORDSECRETVALUE" || echo "0123abcd" ;;
 esac
 EOF
@@ -131,8 +145,11 @@ EOF
   [[ "$(cat "$w/secrets/OTOS_CERTIFICATE_PASSWORD")" == P12PASSWORDSECRETVALUE ]] || exit 14
   ! grep -qE 'PRIVATESEEDSECRETVALUE|P12PASSWORDSECRETVALUE|UDEyQllURVM' "$w/out" || exit 15
   grep -q "environments/release" "$w/calls/gh" || exit 16
-  grep -q "deleted AAAA1111" "$w/calls/deleted" && ! grep -q "deleted BBBB2222" "$w/calls/deleted" || exit 17
-  grep -q 'phase=certificate identity=BBBB2222' "$w/out" || exit 18
+  # The newest of the team's certificates that the revocation check accepts, and only it.
+  for other in AAAA1111 BBBB2222 CCCC3333; do grep -q "deleted $other" "$w/calls/deleted" || exit 17; done
+  ! grep -q "deleted DDDD4444" "$w/calls/deleted" || exit 17
+  grep -q 'phase=certificate identity=DDDD4444$' "$w/out" || exit 18
+  grep -q 'phase=certificate identity=CCCC3333 state=revokedOrExpired' "$w/out" || exit 23
   [[ "$(git -C "$w/remote.git" show chore/sparkle-update-key:Otos.xcodeproj/project.pbxproj | grep -c 'OTOS_SPARKLE_PUBLIC_ED_KEY = "PUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEYPUBLICKEY=";')" == 2 ]] || exit 19
   grep -q 'phase=done next=.*releases/latest/download/Otos.dmg' "$w/out" || exit 20
   [[ "$(git -C "$w/checkout" symbolic-ref --short HEAD)" == main ]] || exit 21

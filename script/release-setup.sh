@@ -5,9 +5,10 @@
 # 1. Makes Otos's EdDSA update key in the login keychain with Sparkle's generate_keys, from
 #    Sparkle's release archive, or uses the one already there.
 # 2. Creates the repository's environment `release` and sets its four secrets with the owner's
-#    own `gh` login: the update key, the Apple Development certificate of the team in
-#    ~/.config/otos/development-team (only that identity, exported from the login keychain;
-#    macOS asks to allow the export), a random password for that export, and the team ID.
+#    own `gh` login: the update key, the team's newest Apple Development certificate that
+#    Apple's revocation service accepts (team from ~/.config/otos/development-team; only that
+#    identity, exported from the login keychain; macOS asks to allow the export), a random
+#    password for that export, and the team ID.
 # 3. Commits the public key as OTOS_SPARKLE_PUBLIC_ED_KEY and opens its pull request, which
 #    merges once CI passes.
 # It builds and installs nothing: CI builds every release, and the first install is the disk
@@ -83,23 +84,41 @@ secret OTOS_SPARKLE_PRIVATE_KEY "$work/sparkle.key"
 printf '%s' "$TEAM" > "$work/team"
 secret OTOS_DEVELOPMENT_TEAM "$work/team"
 
-# The team's Apple Development identity: the one whose certificate's organizational unit is
-# the team. The login keychain exports every identity at once, so they go into a keychain of
-# this run's own, every other identity is deleted there, and that keychain is exported.
-chosen=""
-while read -r sha; do
-  "$SECURITY" find-certificate -a -Z -p "$LOGIN_KEYCHAIN" > "$work/certs.pem"
-  subject="$(awk -v sha="$sha" '
+# The team's Apple Development identity: of those whose certificate's organizational unit is
+# the team, the newest that Apple's revocation service (OCSP) still accepts for code signing.
+# A revoked or expired one can still read as valid in the login keychain, and Xcode on the
+# release runner refuses it. The login keychain exports every identity at once, so they go
+# into a keychain of this run's own, every other identity is deleted there, and that keychain
+# is exported.
+"$SECURITY" find-certificate -a -Z -p "$LOGIN_KEYCHAIN" > "$work/certs.pem"
+certificate_of() { # <sha-1>: its PEM
+  awk -v sha="$1" '
     /^SHA-1 hash:/ { keep = ($3 == sha) }
     keep && /BEGIN CERTIFICATE/ { inside = 1 }
     keep && inside { print }
-    keep && /END CERTIFICATE/ { exit }' "$work/certs.pem" | "$OPENSSL" x509 -noout -subject 2> /dev/null || true)"
-  if [[ "$subject" == *"OU=$TEAM"* || "$subject" == *"OU = $TEAM"* ]]; then
+    keep && /END CERTIFICATE/ { exit }' "$work/certs.pem"
+}
+chosen=""
+chosen_start=0
+while read -r sha; do
+  certificate_of "$sha" > "$work/candidate.pem"
+  subject="$("$OPENSSL" x509 -noout -subject < "$work/candidate.pem" 2> /dev/null || true)"
+  [[ "$subject" == *"OU=$TEAM"* || "$subject" == *"OU = $TEAM"* ]] || continue
+  if ! "$SECURITY" verify-cert -q -c "$work/candidate.pem" -p codeSign -R ocsp -R require > /dev/null 2>&1; then
+    say "phase=certificate identity=$sha state=revokedOrExpired"
+    continue
+  fi
+  start="$("$OPENSSL" x509 -noout -startdate < "$work/candidate.pem" | sed 's/^notBefore=//')"
+  start="$(/usr/bin/env python3 -I -c '
+import calendar, sys, time
+print(calendar.timegm(time.strptime(" ".join(sys.argv[1].split()), "%b %d %H:%M:%S %Y %Z")))
+' "$start")" || refuse "reason=certificateDateUnreadable identity=$sha"
+  if ((start > chosen_start)); then
     chosen="$sha"
-    break
+    chosen_start="$start"
   fi
 done < <("$SECURITY" find-identity -v -p codesigning "$LOGIN_KEYCHAIN" | awk '/"Apple Development/ { print $2 }')
-[[ -n "$chosen" ]] || refuse "reason=noAppleDevelopmentIdentity team=$TEAM"
+[[ -n "$chosen" ]] || refuse "reason=noValidAppleDevelopmentIdentity team=$TEAM detail=\"make one in Xcode, Settings, Accounts, Manage Certificates, then run this again\""
 "$OPENSSL" rand -base64 24 | tr -d '\n' > "$work/p12-password"
 kc="$work/export.keychain-db"
 kc_password="$("$OPENSSL" rand -hex 16)"
@@ -107,9 +126,11 @@ kc_password="$("$OPENSSL" rand -hex 16)"
 "$SECURITY" create-keychain -p "$kc_password" "$kc"
 "$SECURITY" unlock-keychain -p "$kc_password" "$kc"
 "$SECURITY" import "$work/all.p12" -k "$kc" -P "$(cat "$work/p12-password")" > /dev/null
+# Every identity, the invalid ones too (`-v` would hide a revoked one, and it would be
+# exported); find-identity lists a valid one twice.
 while read -r sha; do
   [[ "$sha" == "$chosen" ]] || "$SECURITY" delete-identity -Z "$sha" "$kc" > /dev/null
-done < <("$SECURITY" find-identity -v "$kc" | awk '/^ *[0-9]+\)/ { print $2 }')
+done < <("$SECURITY" find-identity "$kc" | awk '/^ *[0-9]+\)/ && !seen[$2]++ { print $2 }')
 "$SECURITY" export -k "$kc" -t identities -f pkcs12 -P "$(cat "$work/p12-password")" -o "$work/identity.p12" > /dev/null
 "$SECURITY" delete-keychain "$kc"
 base64 < "$work/identity.p12" | tr -d '\n' > "$work/identity.p12.base64"

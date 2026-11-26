@@ -91,11 +91,23 @@ jobs:
           security set-keychain-settings -lut 3600 "$kc"
           security unlock-keychain -p "$pw" "$kc"
           security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
-          rm -f "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/cert.pem"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
           security list-keychains -d user -s "$kc" "$HOME/Library/Keychains/login.keychain-db"
           identity="$(security find-identity -v -p codesigning "$kc" | awk '/Apple Development/ { print $2; exit }')"
           [ -n "$identity" ] || { echo "::error::no Apple Development identity in OTOS_CERTIFICATE_P12"; exit 1; }
+          # Xcode refuses a certificate Apple has revoked, though the keychain lists it as valid:
+          # ask Apple's revocation service first, so a stale secret says what to do.
+          security find-certificate -a -Z -p "$kc" | awk -v sha="$identity" '
+            /^SHA-1 hash:/ { keep = ($3 == sha) }
+            keep && /BEGIN CERTIFICATE/ { inside = 1 }
+            keep && inside { print }
+            keep && /END CERTIFICATE/ { exit }' > "$RUNNER_TEMP/cert.pem"
+          if ! security verify-cert -q -c "$RUNNER_TEMP/cert.pem" -p codeSign -R ocsp -R require; then
+            echo "::error::The certificate in OTOS_CERTIFICATE_P12 is revoked or expired. Run script/release-setup.sh on the Mac again: it exports the newest valid one."
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/cert.pem"
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
           echo "keychain=$kc" >> "$GITHUB_OUTPUT"
 
@@ -115,4 +127,4 @@ jobs:
           KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
         run: |
           [ -z "$KEYCHAIN" ] || security delete-keychain "$KEYCHAIN" || true
-          rm -f "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/cert.pem"
