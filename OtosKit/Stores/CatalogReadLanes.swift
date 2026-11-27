@@ -414,7 +414,7 @@ extension CatalogReads where Lane == WindowLane {
 /// Reads only the background owners ask for.
 extension CatalogReads where Lane == BackgroundLane {
     /// What each owner's work has left, for the Activity popover (ADR 0058).
-    func enrichmentLeft(videoFaces: VideoFacesAdmission) async throws -> Int {
+    func enrichmentLeft(videoFaces: VideoFacesAdmission) async throws -> EnrichmentLeft {
         try await store.enrichmentLeft(videoFaces: videoFaces, lane: lane)
     }
 

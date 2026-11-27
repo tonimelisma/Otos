@@ -1456,6 +1456,14 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     }
 }
 
+nonisolated extension MediaAsset {
+    /// Its tile shows a placeholder until a thumbnail is made: none yet, and rendering has not
+    /// found that none can be. The Swift twin of `EnrichmentClaimGateway.placeholderSQL`.
+    var showsPlaceholder: Bool {
+        thumbnailPath == nil && renderedSourceMTimeSeconds == nil
+    }
+}
+
 /// The narrow detail value a visible grid tile needs after structure publishes
 /// only identities. It intentionally omits filename and capture-date facts so the
 /// thumbnail boundary cannot accidentally keep rendering removed labels.

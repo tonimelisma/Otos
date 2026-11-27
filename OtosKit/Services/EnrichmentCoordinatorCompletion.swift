@@ -22,22 +22,29 @@ extension EnrichmentCoordinator {
         }
         switch outcome {
         case let .complete(result):
-            await recordCompletedEnrichment(result, id: id)
+            // The read that the ledger paced the row for has landed: the row is no longer
+            // held back, which the Activity board counts (`EnrichmentSchedule.parkedRows`).
+            schedule.endPacing(id)
+            await recordCompletedEnrichment(result, work: work)
         case let .facesUnread(result, unread):
             // The products are written; the faces stay owed, and are not read again until
             // the ledger's pacing passes, or for every video until the model's backoff does.
             // Not `.transient`: the bytes were read, and the row is no unreadable source.
             let now = ContinuousClock.now
-            schedule.pace(id, sourceSize: work.sourceSize, cause: .facesUnread, now: now)
+            schedule.pace(
+                id, sourceSize: work.sourceSize, cause: .facesUnread, now: now,
+                showsFirstThumbnail: work.showsFirstThumbnail && result.shownThumbnailPath == nil
+            )
             if unread == .model {
                 schedule.holdVideoFaces(now: now)
             }
-            await recordCompletedEnrichment(result, id: id)
+            await recordCompletedEnrichment(result, work: work)
             await recordVisibleThumbnailLifecycle(phase: "videoFacesUnread", id: id, fields: ["unread": "\(unread)"])
         case let .hashed(result):
             // A digest alone changes nothing the user sees, so it is written at once rather
             // than batched with products; the write releases the row's claim.
             readyClaims[id] = nil
+            schedule.endPacing(id)
             // The write gives the claim back, and a digest that moved nothing announces
             // nothing: the coordinator counts its own release.
             claimInputsRevision &+= 1
@@ -57,7 +64,7 @@ extension EnrichmentCoordinator {
                 // answer does.
                 schedule.pace(
                     id, sourceSize: work.sourceSize, cause: .sentOnlyWhenOpened, now: ContinuousClock.now,
-                    holdingClaim: record.ownsStoreClaim
+                    holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
                 )
                 await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
                 return
@@ -68,7 +75,8 @@ extension EnrichmentCoordinator {
                 sourceSize: work.sourceSize,
                 captureLocalTime: work.captureLocalTime,
                 isVideo: work.isVideo,
-                isDeviceStaging: work.isDeviceStaging
+                isDeviceStaging: work.isDeviceStaging,
+                showsFirstThumbnail: work.showsFirstThumbnail
             )
             // The ready claim's Store claim passes to the demand, held like a routed row's when
             // the hand-off has no slot for it.
@@ -90,7 +98,7 @@ extension EnrichmentCoordinator {
             readyClaims[id] = nil
             schedule.pace(
                 id, sourceSize: work.sourceSize, cause: .serverDidNotAnswer, now: ContinuousClock.now,
-                holdingClaim: record.ownsStoreClaim
+                holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
             )
             await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
         case .rawResourcesUnavailable:
@@ -100,7 +108,7 @@ extension EnrichmentCoordinator {
             readyClaims[id] = nil
             schedule.pace(
                 id, sourceSize: work.sourceSize, cause: .rawSupportUnavailable, now: ContinuousClock.now,
-                holdingClaim: record.ownsStoreClaim
+                holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
             )
             await recordVisibleThumbnailLifecycle(phase: "rawResourcesUnavailable", id: id)
         case .transient:
@@ -286,10 +294,23 @@ extension EnrichmentCoordinator {
         pendingApply.removeAll(keepingCapacity: true)
         // The apply gives every row's claim back.
         claimInputsRevision &+= 1
+        // The rows of the batch whose tile gets its first thumbnail from it; counted only when
+        // every result applied, since a partial apply does not say which rows it left out and
+        // a row is never counted shown that was not (ADR 0058).
+        let firstThumbnails = batchIDs.filter { pendingFirstThumbnails.contains($0) }
+        pendingFirstThumbnails.subtract(firstThumbnails)
         let outcome = await store.applyEnrichmentBatch(batch)
         activity.wrote(batch.count)
         if case let .applied(count) = outcome {
-            activity.finished(count)
+            if count == batch.count {
+                activity.finished(count)
+                firstThumbnailsShown += firstThumbnails.count
+            } else {
+                // Which rows were left out is not said, so neither kind counts a row it
+                // cannot prove: the rows that would have shown a first thumbnail are left out
+                // of both.
+                activity.finished(max(count - firstThumbnails.count, 0))
+            }
         }
         OtosLog.metadata.notice(
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
@@ -359,7 +380,8 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func recordCompletedEnrichment(_ result: EnrichmentResult, id: MediaAssetID) async {
+    private func recordCompletedEnrichment(_ result: EnrichmentResult, work: EnrichWork) async {
+        let id = work.id
         await recordVisibleThumbnailLifecycle(
             phase: "generated",
             id: id,
@@ -371,6 +393,11 @@ extension EnrichmentCoordinator {
         readyClaims[id] = nil
         pendingApply.append(result)
         pendingApplyClaimIDs.insert(id)
+        if work.showsFirstThumbnail, result.shownThumbnailPath != nil {
+            pendingFirstThumbnails.insert(id)
+        } else {
+            pendingFirstThumbnails.remove(id)
+        }
         scheduleApplyFlushIfNeeded()
     }
 

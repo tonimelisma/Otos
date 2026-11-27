@@ -54,16 +54,20 @@ struct ActivityBoardTests {
         /// What its work has left, which the board reads once its work moves.
         private var left: Int?
 
+        /// How many of what is left wait out a failure.
+        private var parked = 0
+
         /// Sets what is left as a pass that wrote `finished` items' results would leave it,
-        /// alongside whatever else moved the owed set.
-        func count(_ left: Int, finished: Int = 0) {
+        /// alongside whatever else moved the owed set, `parked` of it waiting out a failure.
+        func count(_ left: Int, finished: Int = 0, parked: Int = 0) {
             self.left = left
+            self.parked = parked
             activity.wrote(max(finished, 1))
             activity.finished(finished)
         }
 
-        func progress() async -> WorkProgress? {
-            left.map { activity.progress(left: $0) }
+        func progress(for _: ActivityKind) async -> WorkProgress? {
+            left.map { activity.progress(left: $0, parked: parked) }
         }
     }
 
@@ -185,40 +189,105 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
-    /// An owner at rest that says what stops its work is stuck on it; a backoff wake alone is
-    /// no trouble; once nothing stops it, it is up to date. A working owner's troubles ride
-    /// along with its work.
-    @Test func anOwnerIsStuckOnWhatItSaysStopsItAndUpToDateWithoutIt() async {
-        let clock = TestClock()
-        let board = ActivityBoard(now: { clock.now })
+    /// An owner at rest that says what stops its work waits on it; a backoff wake alone is no
+    /// trouble; once nothing stops it, it is up to date.
+    @Test func anOwnerWaitsOnWhatItSaysStopsItAndIsUpToDateWithoutIt() async {
+        let board = ActivityBoard()
         let enrichment = ScriptedOwner("enrichment")
         let places = ScriptedOwner("placeNames")
         let published = Published(board)
         await board.watch(
-            [.init(kind: .readingPhotos, owner: enrichment), .init(kind: .namingPlaces, owner: places)], room: nil
+            [.init(kind: .showingPhotos, owner: enrichment), .init(kind: .namingPlaces, owner: places)], room: nil
         )
         _ = await published.newest { $0.watching }
 
-        let downloads = OwnerTrouble(.downloadsFailed, count: 3)
-        await enrichment.stop([downloads, OwnerTrouble(.diskFull, count: 0)])
+        let provider = OwnerTrouble(.providerNotAnswering)
+        await enrichment.stop([provider, OwnerTrouble(.diskFull, count: 0)])
         await places.backOff(OwnerWake(kind: .backoff, at: ContinuousClock.now.advanced(by: .seconds(60))))
         board.ring()
-        let stuck = await published.newest { $0.entries.first?.state == .stuck }
-        #expect(stuck.entries == [
-            ActivityEntry(kind: .readingPhotos, state: .stuck, troubles: [downloads]),
+        let waiting = await published.newest { $0.entries.first?.state == .waiting }
+        #expect(waiting.entries == [
+            ActivityEntry(kind: .showingPhotos, state: .waiting, troubles: [provider]),
             ActivityEntry(kind: .namingPlaces, state: .upToDate),
         ], "a counted trouble that stops nothing is none, and a wake alone is no trouble")
 
+        await enrichment.stop([])
+        board.ring()
+        let upToDate = await published.newest { $0.entries.allSatisfy { $0.state == .upToDate } }
+        #expect(upToDate.entries.flatMap(\.troubles).isEmpty)
+        await board.shutdown()
+    }
+
+    /// A kind whose every item left waits out a failure waits, and keeps waiting while its
+    /// owner retries them — busy, moving nothing — with what stopped it still said, so the
+    /// row neither flickers to working nor drops its reason; it works again only once an item
+    /// finishes and work it can move is left. A working kind's troubles ride along.
+    @Test func aRetryThatMovesNothingKeepsAKindWaitingUntilAnItemFinishes() async {
+        let clock = TestClock()
+        let board = ActivityBoard(now: { clock.now })
+        let enrichment = ScriptedOwner("enrichment")
+        let published = Published(board)
+        await board.watch([.init(kind: .showingPhotos, owner: enrichment)], room: nil)
+        _ = await published.newest { $0.watching }
+
+        let provider = OwnerTrouble(.providerNotAnswering)
+        await enrichment.stop([provider])
+        await enrichment.count(10, parked: 10)
+        board.ring()
+        let retry = await enrichment.begin()
+        let parked = await published.newest { $0.entries.first?.progress?.parked == 10 }
+        #expect(parked.entries.first?.state == .waiting, "busy with parked items alone is no work")
+
+        // The retry is running; its owner no longer says what stopped it, and it moves nothing.
+        await enrichment.stop([])
+        await enrichment.count(10, parked: 9)
+        board.ring()
+        let retrying = await published.newest { $0.entries.first?.progress?.parked == 9 }
+        #expect(retrying.entries.first == ActivityEntry(
+            kind: .showingPhotos, state: .waiting, troubles: [provider],
+            progress: ActivityProgress(done: 0, total: 10, parked: 9)
+        ), "a retry keeps the kind waiting, and what stopped it is still said")
+
         let started = clock.now
-        let request = await enrichment.begin()
-        let working = await published.newest { $0.isWorking(.readingPhotos) }
-        #expect(working.entries.first == ActivityEntry(kind: .readingPhotos, state: .working(since: started), troubles: [downloads]))
+        await enrichment.stop([provider])
+        await enrichment.count(8, finished: 2)
+        board.ring()
+        let moving = await published.newest { $0.isWorking(.showingPhotos) }
+        #expect(moving.entries.first == ActivityEntry(
+            kind: .showingPhotos, state: .working(since: started), troubles: [provider],
+            progress: ActivityProgress(done: 2, total: 10)
+        ))
 
         await enrichment.stop([])
-        await enrichment.end(covering: request)
-        let upToDate = await published.newest { $0.entries.allSatisfy { $0.state == .upToDate } }
-        let troubles = upToDate.entries.flatMap(\.troubles)
-        #expect(troubles.isEmpty)
+        await enrichment.count(0, finished: 8)
+        await enrichment.end(covering: retry)
+        let settled = await published.newest { $0.entries.first?.state == .upToDate }
+        #expect(settled.entries.first?.progress == nil)
+        await board.shutdown()
+    }
+
+    /// An owner that is only a kind's detail — the downloads behind the photos to show —
+    /// never makes the kind work; its run is the working kind's line while the run is
+    /// background work.
+    @Test func aDetailOwnerSaysHowTheWorkGoesButNeverWhetherItWorks() async {
+        let board = ActivityBoard()
+        let enrichment = ScriptedOwner("enrichment")
+        let downloads = ScriptedOwner("materialization")
+        let published = Published(board)
+        await board.watch(
+            [.init(kind: .showingPhotos, owner: enrichment), .init(kind: .showingPhotos, owner: downloads, isDetail: true)],
+            room: nil
+        )
+        _ = await published.newest { $0.watching }
+
+        let alone = await downloads.begin()
+        await enrichment.stop([OwnerTrouble(.providerNotAnswering)])
+        board.ring()
+        let detailOnly = await published.newest { !$0.entries.isEmpty && $0.entries[0].troubles.count == 1 }
+        #expect(detailOnly.entries.first?.state == .waiting, "a download alone does not make the kind work")
+        await enrichment.stop([])
+        await downloads.end(covering: alone)
+        _ = await published.newest { $0.entries.first?.state == .upToDate }
         await board.shutdown()
     }
 }
@@ -232,7 +301,7 @@ extension ActivityBoardTests {
         let board = ActivityBoard()
         let enrichment = ScriptedOwner("enrichment")
         let published = Published(board)
-        await board.watch([.init(kind: .readingPhotos, owner: enrichment)], room: nil)
+        await board.watch([.init(kind: .showingPhotos, owner: enrichment)], room: nil)
         _ = await published.newest { $0.watching }
 
         await enrichment.count(100, finished: 7)
@@ -283,7 +352,7 @@ struct ActivityPresentationTests {
     /// Nothing runs or waits: the popover says so in its header alone, with no row.
     @Test func withEverythingUpToDateThePopoverListsNoRow() {
         let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .upToDate), ActivityEntry(kind: .namingPlaces, state: .upToDate),
+            ActivityEntry(kind: .showingPhotos, state: .upToDate), ActivityEntry(kind: .namingPlaces, state: .upToDate),
         ]))
         #expect(presentation.line == "Up to date")
         #expect(presentation.lineDetail == nil)
@@ -293,13 +362,16 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == nil)
     }
 
-    /// Only what runs or waits is listed, each named by what it does, with what stops it in a
-    /// sentence; the rest is one line. The line names the work that has run longest.
-    @Test func thePopoverListsWhatRunsOrWaitsAndSaysWhatStopsIt() {
+    /// Only what the user would notice is listed, each named by what it does with how many
+    /// items it has left. An item failing on its own is never said: a row whose items all
+    /// wait says only that they are tried again. The line names the work that has run longest.
+    @Test func thePopoverListsWhatRunsOrWaitsAndSaysOnlyWhatTheUserWouldNotice() {
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .stuck, troubles: [
-                OwnerTrouble(.downloadsFailed, count: 11), OwnerTrouble(.serverDidNotAnswer, count: 2999),
-            ]),
+            ActivityEntry(
+                kind: .showingPhotos, state: .waiting,
+                troubles: [OwnerTrouble(.downloadsFailed, count: 11), OwnerTrouble(.serverDidNotAnswer, count: 114)],
+                progress: ActivityProgress(done: 0, total: 125, parked: 125)
+            ),
             ActivityEntry(kind: .findingPeople, state: .working(since: now.addingTimeInterval(-600))),
             ActivityEntry(kind: .namingPlaces, state: .upToDate),
             ActivityEntry(kind: .preparingSearch, state: .working(since: now.addingTimeInterval(-3600))),
@@ -310,12 +382,9 @@ struct ActivityPresentationTests {
         #expect(presentation.lineDetail == "and 3 more")
         #expect(presentation.lineStatus == .working)
         #expect(presentation.header == "Working on 2 things")
-        #expect(presentation.rows.map(\.title) == ["Making thumbnails", "Finding people", "Preparing search", "Describing photos"])
+        #expect(presentation.rows.map(\.title) == ["Showing photos", "Finding people", "Preparing search", "Describing photos"])
         #expect(presentation.rows.map(\.details) == [
-            [
-                "11 items didn’t download. Otos will try again.",
-                "The server didn’t answer for 2,999 items. Otos will try again.",
-            ],
+            ["125 photos and videos left", "Otos will try these again later."],
             ["8,412 photos to check"],
             [],
             ["Paused in Low Power Mode.", "Apple Intelligence isn’t responding. Otos will try again."],
@@ -329,8 +398,8 @@ struct ActivityPresentationTests {
     /// stops it.
     @Test func withNothingWorkingTheLineSaysWhatWaitsAndWhy() {
         let one = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .upToDate),
-            ActivityEntry(kind: .describingPhotos, state: .stuck, troubles: [OwnerTrouble(.appleIntelligenceNotResponding)]),
+            ActivityEntry(kind: .showingPhotos, state: .upToDate),
+            ActivityEntry(kind: .describingPhotos, state: .waiting, troubles: [OwnerTrouble(.appleIntelligenceNotResponding)]),
         ]))
         #expect(one.line == "Describing photos")
         #expect(one.lineDetail == "Apple Intelligence isn’t responding")
@@ -339,10 +408,10 @@ struct ActivityPresentationTests {
         #expect(one.footer == "Everything else is up to date")
 
         let two = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .paused(.thermal)),
-            ActivityEntry(kind: .namingPlaces, state: .stuck, troubles: [OwnerTrouble(.placeNamesFailed)]),
+            ActivityEntry(kind: .showingPhotos, state: .paused(.thermal)),
+            ActivityEntry(kind: .namingPlaces, state: .waiting, troubles: [OwnerTrouble(.placeNamesFailed)]),
         ]))
-        #expect(two.line == "Making thumbnails")
+        #expect(two.line == "Showing photos")
         #expect(two.lineDetail == "and 1 more")
         #expect(two.header == "Waiting on 2 things")
         #expect(two.rows.map(\.details) == [
@@ -351,15 +420,76 @@ struct ActivityPresentationTests {
         #expect(two.footer == nil, "nothing else is watched")
     }
 
-    /// Every cause reads as a sentence that says what is wrong and what happens next or what
-    /// to do; a count is exact and singular for one.
-    @Test func everyTroubleSaysWhatIsWrongAndWhatHappensNext() {
-        let texts = OwnerTrouble.Cause.allCases.map { ActivityPresentation.troubleText(OwnerTrouble($0, count: 1)) }
+    /// What the user can fix comes first, on the line too, whatever else works.
+    @Test func whatNeedsTheUserComesFirst() {
+        let presentation = ActivityPresentation.map(
+            ActivitySnapshot(watching: true, entries: [
+                ActivityEntry(kind: .findingPeople, state: .working(since: now)),
+                ActivityEntry(kind: .describingPhotos, state: .waiting, troubles: [OwnerTrouble(.appleIntelligenceOff)]),
+            ]),
+            accounts: [ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .signedOut))]
+        )
+        #expect(presentation.lineStatus == .needsYou)
+        #expect(presentation.line == "Describing photos")
+        #expect(presentation.lineDetail == "and 2 more")
+        #expect(presentation.header == "Working on 1 thing")
+        #expect(presentation.rows.map(\.status) == [.working, .needsYou, .needsYou])
+        #expect(presentation.rows.map(\.action) == [nil, nil, .openSettings("Open Settings…")])
+        #expect(presentation.rows.last?.details == ["You’re signed out of this account. Sign in again in Settings."])
+    }
+
+    /// `Reading details` is listed only while it works, and names the line only when nothing
+    /// else works: the user sees nothing missing of it.
+    @Test func readingDetailsIsListedOnlyWhileItWorks() {
+        let working = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .findingPeople, state: .working(since: now)),
+            ActivityEntry(
+                kind: .readingDetails, state: .working(since: now.addingTimeInterval(-60)),
+                progress: ActivityProgress(done: 3, total: 1056)
+            ),
+        ]))
+        #expect(working.line == "Finding people")
+        #expect(working.rows.map(\.title) == ["Finding people", "Reading details"])
+        #expect(working.rows.last?.details == ["1,053 photos and videos left"])
+
+        let alone = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(kind: .readingDetails, state: .working(since: now)),
+        ]))
+        #expect(alone.line == "Reading details", "the line never says up to date while work runs")
+
+        let waiting = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(
+                kind: .readingDetails, state: .waiting, troubles: [OwnerTrouble(.serverDidNotAnswer, count: 114)],
+                progress: ActivityProgress(done: 0, total: 114, parked: 114)
+            ),
+        ]))
+        #expect(waiting.rows.isEmpty)
+        #expect(waiting.line == "Up to date")
+    }
+
+    /// Only what the user would notice reads as a sentence, saying what is wrong and what
+    /// happens next or what to do; a source is named as the sidebar names it.
+    @Test func onlyWhatTheUserWouldNoticeIsSaid() {
+        let said = OwnerTrouble.Cause.allCases.filter { cause in
+            ActivityPresentation.troubleText(OwnerTrouble(cause, count: 1)) != nil
+        }
+        #expect(said.allSatisfy { $0.standing == .needsYou || $0.standing == .unavailable })
+        #expect(OwnerTrouble.Cause.allCases.filter { $0.standing == .needsYou || $0.standing == .unavailable } == said)
+        let texts = said.compactMap { ActivityPresentation.troubleText(OwnerTrouble($0)) }
         #expect(texts.allSatisfy { $0.hasSuffix(".") && !$0.localizedCaseInsensitiveContains("waiting") })
-        #expect(ActivityPresentation.troubleText(OwnerTrouble(.downloadsFailed, count: 1)) == "1 item didn’t download. Otos will try again.")
+        #expect(Set(texts).count == texts.count, "no two causes read alike")
         #expect(ActivityPresentation.troubleText(OwnerTrouble(.appleIntelligenceOff))
             == "Turn on Apple Intelligence in System Settings to describe photos.")
-        #expect(Set(texts).count == texts.count, "no two causes read alike")
+
+        let roll = LibraryRootPath(rawValue: "/Users/a/OneDrive/Camera Roll")
+        let family = LibraryRootPath(rawValue: "/Users/a/OneDrive/Family")
+        let names = [roll: "Camera Roll", family: "Family"]
+        #expect(ActivityPresentation.troubleText(OwnerTrouble(.providerNotAnswering, sources: [roll]), sourceNames: names)
+            == "“Camera Roll” isn’t answering. Otos will try again.")
+        #expect(ActivityPresentation.troubleText(OwnerTrouble(.providerNotAnswering, sources: [roll, family]), sourceNames: names)
+            == "“Camera Roll” and “Family” aren’t answering. Otos will try again.")
+        #expect(ActivityPresentation.troubleText(OwnerTrouble(.providerNotAnswering, sources: [roll]))
+            == "The cloud provider isn’t answering. Otos will try again.")
     }
 
     @Test func accountsAreListedOnlyWhileTheySyncOrWait() {
@@ -372,9 +502,10 @@ struct ActivityPresentationTests {
         let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: accounts)
         #expect(presentation.rows.map(\.title) == ["Syncing Immich: Home", "Syncing Immich: Cabin", "Syncing Immich: Old"])
         #expect(presentation.rows.map(\.details) == [
-            [], ["The server isn’t answering. Otos will try again."], ["You’re signed out of this account."],
+            [], ["The server isn’t answering. Otos will try again."],
+            ["You’re signed out of this account. Sign in again in Settings."],
         ])
-        #expect(presentation.line == "Syncing Immich: Home")
+        #expect(presentation.line == "Syncing Immich: Old", "a signed-out account needs the user")
         #expect(presentation.footer == "Everything else is up to date")
     }
 
@@ -406,60 +537,51 @@ struct ActivityPresentationTests {
         #expect(offline.map(\.bar) == [nil])
     }
 
-    /// Each row says how far its stretch is in its own words, with an exact bar while it works;
-    /// a waiting row keeps its count above what stops it and draws no bar, since its work does
-    /// not move; downloads say their bytes and what they are for.
-    @Test func eachRowSaysHowFarItIsWithABarOnlyWhileItWorks() {
+    /// Each row says how many items it has left, in its own words, with an exact bar while it
+    /// works; a waiting or paused row keeps its count and draws no bar, since its work does not
+    /// move; the downloads the photos to show wait on are that row's line, with their bytes
+    /// when every size is on record.
+    @Test func eachRowSaysWhatIsLeftWithABarOnlyWhileItWorks() {
+        let run = TransferRun(done: 214, total: 1020, bytesDone: 3_200_000_000, bytesTotal: 9_800_000_000)
         let snapshot = ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .readingPhotos, state: .working(since: now), progress: ActivityProgress(done: 12408, total: 52310)),
-            ActivityEntry(kind: .downloadingOriginals, state: .working(since: now), progress: ActivityProgress(
-                done: 214, total: 1020, bytesDone: 3_200_000_000, bytesTotal: 9_800_000_000, purpose: .background
-            )),
+            ActivityEntry(
+                kind: .showingPhotos, state: .working(since: now),
+                progress: ActivityProgress(done: 12408, total: 52310), transfers: run
+            ),
             ActivityEntry(kind: .findingPeople, state: .working(since: now), progress: ActivityProgress(done: 40112, total: 52310)),
             ActivityEntry(kind: .namingPlaces, state: .working(since: now), progress: ActivityProgress(done: 310, total: 1204)),
             ActivityEntry(kind: .preparingSearch, state: .working(since: now), progress: ActivityProgress(done: 0, total: 1)),
             ActivityEntry(
-                kind: .describingPhotos, state: .stuck, troubles: [OwnerTrouble(.appleIntelligenceNotResponding)],
-                progress: ActivityProgress(done: 8900, total: 47000)
+                kind: .describingPhotos, state: .waiting, troubles: [OwnerTrouble(.appleIntelligenceNotResponding)],
+                progress: ActivityProgress(done: 8900, total: 47000, parked: 38100)
             ),
             ActivityEntry(kind: .findingDuplicates, state: .working(since: now), progress: ActivityProgress(done: 21000, total: 52310)),
         ])
         let presentation = ActivityPresentation.map(snapshot)
         let gigabytes = { (value: Double) in Int64(value * 1_000_000_000).formatted(.byteCount(style: .file)) }
         #expect(presentation.rows.map(\.details) == [
-            ["12,408 of 52,310 photos and videos"],
-            ["214 of 1,020 · \(gigabytes(3.2)) of \(gigabytes(9.8))", "Needed to make thumbnails"],
-            ["40,112 of 52,310 checked"],
-            ["310 of 1,204 places"],
-            ["0 of 1 photo or video"],
-            ["8,900 of 47,000 photos", "Apple Intelligence isn’t responding. Otos will try again."],
-            ["21,000 of 52,310 photos compared"],
+            ["39,902 photos and videos left", "Downloading 214 of 1,020 · \(gigabytes(3.2)) of \(gigabytes(9.8))"],
+            ["12,198 photos and videos to check"],
+            ["894 places left"],
+            ["1 photo or video left"],
+            ["38,100 photos left", "Apple Intelligence isn’t responding. Otos will try again."],
+            ["31,310 photos to compare"],
         ])
         typealias Bar = ActivityPresentation.Bar
         #expect(presentation.rows.map(\.bar) == [
-            Bar(done: 12408, total: 52310), Bar(done: 214, total: 1020), Bar(done: 40112, total: 52310), Bar(done: 310, total: 1204),
+            Bar(done: 12408, total: 52310), Bar(done: 40112, total: 52310), Bar(done: 310, total: 1204),
             Bar(done: 0, total: 1), nil, Bar(done: 21000, total: 52310),
         ])
         let paused = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
             ActivityEntry(kind: .findingPeople, state: .paused(.thermal), progress: ActivityProgress(done: 310, total: 1204)),
         ]))
-        #expect(paused.rows.map(\.details).first?.first == "310 of 1,204 checked")
+        #expect(paused.rows.map(\.details).first?.first == "894 photos and videos to check")
         #expect(paused.rows.map(\.bar) == [nil], "a paused row draws no bar")
         #expect(presentation.rows.allSatisfy { !$0.details.joined().contains("%") }, "no percentage, only counts")
-    }
-
-    /// A download says what it is for, the most pressing purpose first; a run whose sizes are
-    /// not all on record shows no bytes; a stretch with nothing counted shows no bar.
-    @Test func aDownloadSaysWhatItIsForAndNoBytesItCannotSum() {
-        let opened = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
-            ActivityEntry(kind: .downloadingOriginals, state: .working(since: now), progress: ActivityProgress(
-                done: 0, total: 1, purpose: .openedItem
-            )),
-            ActivityEntry(kind: .findingPeople, state: .working(since: now), progress: ActivityProgress(done: 0, total: 0)),
-        ]))
-        #expect(opened.rows.map(\.details) == [["0 of 1", "For the photo you opened"], []])
-        #expect(opened.rows.map(\.bar) == [ActivityPresentation.Bar(done: 0, total: 1), nil])
-        #expect(ActivityPresentation.purposeText(.request) == "For what you asked Otos to do")
+        #expect(
+            ActivityPresentation.transfersText(TransferRun(done: 0, total: 1, bytesDone: nil, bytesTotal: nil)) == "Downloading 0 of 1",
+            "a run whose sizes are not all on record shows no bytes"
+        )
     }
 
     @Test func theDuplicatesBarSaysItIsStillLookingOnlyWhileNothingWouldMove() {

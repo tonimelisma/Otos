@@ -1,11 +1,15 @@
 import SwiftUI
 
 // The sidebar's Activity line and its popover (ADR 0058, `docs/design/activity.md`,
-// DES-124): the one place the window says the status of the background work — working,
-// waiting on something, or up to date. The line sits at the sidebar's foot at one fixed height
-// in every state (DES-053); a click, Space or Return opens a read-only popover (DES-041) listing
-// the work that runs or waits, each with how far it is (an exact count, and a determinate
-// bar while it works), what stops it, and one line for everything else.
+// DES-124): the one place the window says the status of the background work — something
+// needs the user, working, waiting on something, or up to date. The line sits at the
+// sidebar's foot at one fixed height in every state (DES-053); a click, Space or Return opens
+// a popover (DES-041) listing the work that runs or waits, each with how much is left (an
+// exact count, and a determinate bar while it works), what stops it, what the user can do
+// about it, and one line for everything else. A row draws one indicator: its bar while it
+// works, a spinner only while it works with nothing counted (HIG Progress indicators: never
+// both, never switching between them), a warning while it needs the user, and none while it
+// waits, whose words say why.
 // Passive: every string comes from `ActivityPresentation`.
 
 struct ActivityLine: View {
@@ -71,8 +75,9 @@ struct ActivityLine: View {
     }
 }
 
-/// A status's 16 pt glyph: a small spinner while working (DES-072), a pause while waiting, a
-/// checkmark when up to date, nothing while unknown.
+/// A status's 16 pt glyph: a warning while something needs the user, a small spinner while
+/// working (DES-072), a pause while waiting, a checkmark when up to date, nothing while
+/// unknown.
 struct ActivityStatusGlyph: View {
     let status: ActivityPresentation.Status?
 
@@ -81,6 +86,9 @@ struct ActivityStatusGlyph: View {
     var body: some View {
         Group {
             switch status {
+            case .needsYou:
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Color.orange)
             case .working:
                 ProgressView()
                     .controlSize(.small)
@@ -146,10 +154,18 @@ struct ActivityPopover: View {
                             }
                         }
                         Spacer(minLength: 8)
-                        ActivityStatusGlyph(status: row.status)
+                        ActivityStatusGlyph(status: trailingStatus(row))
                             .onBodyLine()
                     }
                     .accessibilityElement(children: .combine)
+                    // The row's act stays its own control, outside the row VoiceOver reads as
+                    // one element, aligned under its words.
+                    if case let .openSettings(title) = row.action {
+                        SettingsLink {
+                            Text(title)
+                        }
+                        .padding(.leading, 24)
+                    }
                 }
             }
             if let footer = presentation.footer {
@@ -160,5 +176,16 @@ struct ActivityPopover: View {
         }
         .padding(16)
         .frame(width: 320, alignment: .leading)
+    }
+
+    /// A row's one indicator at its trailing edge: the warning while it needs the user, the
+    /// spinner while it works with no bar, and nothing otherwise — a working row's bar is its
+    /// indicator, and a waiting row's words say why it waits.
+    private func trailingStatus(_ row: ActivityPresentation.Row) -> ActivityPresentation.Status? {
+        switch row.status {
+        case .needsYou: .needsYou
+        case .working: row.bar == nil ? .working : nil
+        case .waiting, .upToDate: nil
+        }
     }
 }

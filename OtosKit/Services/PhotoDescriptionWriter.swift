@@ -429,9 +429,11 @@ actor PhotoDescriptionWriter: QuiescentOwner {
 
     /// The stills owed a description, those waiting out a failure included: the count behind
     /// `Describing photos` (ADR 0058).
-    func progress() async -> WorkProgress? {
+    func progress(for _: ActivityKind) async -> WorkProgress? {
+        // While the model is stopped no still can be described: every one left is parked.
+        let parked = modelStop == nil ? failedUntil.count : Int.max
         do {
-            return try await activity.progress(left: store.backgroundReads.photoDescriptionsLeft())
+            return try await activity.progress(left: store.backgroundReads.photoDescriptionsLeft(), parked: parked)
         } catch {
             WorkProgress.logFailure(owner: "descriptions", error)
             return nil

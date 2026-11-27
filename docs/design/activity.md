@@ -1,12 +1,13 @@
 # Activity
 
-The surface that says what Otos's background work is doing — working, or stuck and why —
-and never when it ran (ADR 0058,
-DES-124). Most of Otos's work runs unasked, over hours on a large cloud library: reading each
-photo, downloading originals, finding faces, naming places, preparing search, describing
-photos, looking for duplicates, syncing an Immich account. None of it belongs to a sidebar
-selection, so no bar at the bottom of the content pane can own it (DES-040). It has one
-place: a line at the foot of the sidebar, and the popover it opens.
+The surface that answers what a user asks of Otos's background work — is everything here
+yet, is something wrong that I can fix, is Otos busy — and nothing else (ADR 0058, DES-124;
+the HIG review is `docs/research/2026-11-27-activity-and-the-hig.md`). Most of Otos's work
+runs unasked, over hours on a large cloud library: showing each photo, finding faces, naming
+places, preparing search, describing photos, looking for duplicates, reading details, syncing
+an Immich account. None of it belongs to a sidebar selection, so no bar at the bottom of the
+content pane can own it (DES-040). It has one place: a line at the foot of the sidebar, and
+the popover it opens. It never says when work ran.
 
 ## L1 primary fact
 
@@ -25,8 +26,9 @@ checkmark.
 | State | Glyph | L2 (`body`) | L3 (`subheadline`) |
 | --- | --- | --- | --- |
 | Before the window's work is watched (the first grid has not painted) | none | blank | blank |
-| Something working | small spinner (DES-072) | the one that has worked longest (`Finding people`) | `and 2 more` (the popover's other rows), or none |
-| Nothing working, something paused or stuck | `pause.circle`, secondary | what waits (`Describing photos`) | `and 1 more`; for one row alone, the first sentence of what stops it (`Apple Intelligence isn’t responding`) |
+| Something needs the user, whatever else works | `exclamationmark.triangle`, orange | what it stops (`Describing photos`) | `and 2 more`; for one row alone, the first sentence of what to do (`Turn on Apple Intelligence in System Settings to describe photos`) |
+| Something working | small spinner (DES-072) | the one that has worked longest (`Finding people`); `Reading details` only when nothing else works | `and 2 more` (the popover's other rows), or none |
+| Nothing working, something paused or waiting | `pause.circle`, secondary | what waits (`Describing photos`) | `and 1 more`; for one row alone, the first sentence of what stops it (`Apple Intelligence isn’t responding`) |
 | Nothing working or waiting | `checkmark`, secondary | `Up to date` | none |
 
 The line names the work that started first, so a short job that starts beside a long one
@@ -36,64 +38,70 @@ and 2 more`.
 
 ## The popover
 
-Read-only inspection (DES-041), 320 pt wide, anchored to the line's trailing edge: the L1
-header, then one row for each piece of work that works, is paused or is stuck, in a fixed
+Inspection (DES-041), 320 pt wide, anchored to the line's trailing edge: the L1 header, then
+one row for each piece of work that works, is paused, waits or needs the user, in a fixed
 order, each Immich account after, then `Everything else is up to date` in L3 when anything
 watched is not listed. With nothing working or waiting, the header alone. A row is the work's
-glyph, what it does (L2), how far it is (L3), for a download what it is for (L3), each thing
-that stops it as its own L3 line, a determinate bar under them, and the status's glyph at the
-trailing edge, level with the name:
+glyph, what it does (L2), how many items it has left (L3), the downloads it waits on (L3),
+each problem the user would notice as its own L3 line, a determinate bar under them, and one
+indicator at the trailing edge, level with the name:
 
-| Status | L3 | Trailing glyph |
-| --- | --- | --- |
-| Working | how far it is, then what stops some of its items, if anything | small spinner |
-| Paused | how far it is, the machine condition (`Paused while memory is low.`, `Paused while the Mac cools down.`, `Paused in Low Power Mode.`), then what stops it | `pause.circle` |
-| Stuck | how far it is, then what stops it | `pause.circle` |
+| Status | L3 | Bar | Trailing |
+| --- | --- | --- | --- |
+| Working | what is left, the downloads it waits on, then a source that is not available for some of its items | yes, while counted | none (the bar is its indicator); a small spinner only with nothing counted |
+| Paused | what is left, the machine condition (`Paused while memory is low.`, `Paused while the Mac cools down.`, `Paused in Low Power Mode.`), then what stops it | none | none |
+| Waiting | what is left, then what stops it, or `Otos will try these again later.` when its items wait out their own failures | none | none |
+| Needs you | what is left, then what to do; an account's row carries `Open Settings…` | none | `exclamationmark.triangle`, orange |
 
-What stops work is said in sentences: what is wrong, then what happens next or what to do
-(HIG, Progress indicators: a stalled process says what the problem is and what people can do
-about it). Its owner names the cause (`OwnerTrouble`, ADR 0058); nothing says only
-"waiting".
+A row draws one indicator, never two and never switching between a spinner and a bar (HIG
+Progress indicators). The row's one act — `Open Settings…`, where a signed-out account signs
+in again — is its own control under its words; everything else in the popover is read-only.
 
-| Cause | L3 |
-| --- | --- |
-| Downloads failed | `11 items didn’t download. Otos will try again.` |
-| Disk full | `The disk is almost full. Otos will go on when there’s room.` |
-| A server did not answer | `The server didn’t answer for 2,999 items. Otos will try again.` |
-| A source sends originals only when opened | `The server sends 12 items only when you open them. Otos will try again.` |
-| Faces unread | `Faces in 3 items couldn’t be read. Otos will try again.` |
-| Face model missing | `The face finder couldn’t start. Otos will try again.` |
-| Apple Intelligence off | `Turn on Apple Intelligence in System Settings to describe photos.` |
-| Mac not eligible | `This Mac can’t run Apple Intelligence.` |
-| Model not ready | `Apple Intelligence isn’t ready yet. Otos will try again.` |
-| Model service failing | `Apple Intelligence isn’t responding. Otos will try again.` |
-| Model busy | `Apple Intelligence is busy. Otos will try again.` |
-| Descriptions failed | `4 items couldn’t be described. Otos will try again.` |
-| Cloud provider failing | `The cloud provider isn’t answering. Otos will try again.` |
-| Place names failed | `Place names couldn’t be looked up. Otos will try again.` |
-| Search failed | `Search couldn’t be updated. Otos will try again.` |
-| Account offline | `The server isn’t answering. Otos will try again.` |
-| Account signed out | `You’re signed out of this account.` |
+A row stays in its state through its work's retries: a row that waits keeps waiting, with what
+stopped it, until an item finishes (ADR 0058). A retry that fails changes nothing on screen.
+
+## Problems
+
+A problem is said only when the user would notice it (`OwnerTrouble.Standing`); people expect
+work to succeed and need to hear when it does not (HIG Feedback), and an error says what can
+fix it (HIG Writing).
+
+| Standing | Said | Cause | L3 |
+| --- | --- | --- | --- |
+| Needs you | first, on the line too | Disk full | `The disk is almost full. Free up space, and Otos will go on.` |
+| | | Apple Intelligence off | `Turn on Apple Intelligence in System Settings to describe photos.` |
+| | | Account signed out | `You’re signed out of this account. Sign in again in Settings.` with `Open Settings…` |
+| Unavailable | on the row it stops | A cloud provider failing | `“Camera Roll” isn’t answering. Otos will try again.` — the libraries named as the sidebar names them; `The cloud provider isn’t answering. Otos will try again.` when a name is not known |
+| | | Face model missing | `The face finder couldn’t start. Otos will try again.` |
+| | | Mac not eligible | `This Mac can’t run Apple Intelligence.` |
+| | | Model not ready | `Apple Intelligence isn’t ready yet. Otos will try again.` |
+| | | Model service failing | `Apple Intelligence isn’t responding. Otos will try again.` |
+| | | Model busy | `Apple Intelligence is busy. Otos will try again.` |
+| | | Place names failed | `Place names couldn’t be looked up. Otos will try again.` |
+| | | Search failed | `Search couldn’t be updated. Otos will try again.` |
+| | on the account's row | Account offline | `The server isn’t answering. Otos will try again.` |
+| Retried | never | One download, one ranged read a server did not answer, one RAW's camera support, one item's faces, one description | — the item stays counted as left; a row whose items all wait says `Otos will try these again later.` |
+| User work only | never, and not counted | An item whose source sends its original only for the user's work (ADR 0046 §4) | — |
 
 No row shows a time: the surface answers "is it done, working, or stuck", not "when"
 (owner, 2026-11-21).
 
 ## Progress
 
-Every row says how far its work is (owner, 2026-11-26: "each should give the actual progress",
+Every row says how much is left (owner, 2026-11-26: "each should give the actual progress",
 "shouldn't each of these have a progress bar?"). A user looking at background work asks what
-it is doing, how far it has come, why it runs when that is not obvious, and what stops it;
-the row answers each, in that order.
+it is doing, how much is left, why it runs when that is not obvious, and what stops it; the
+row answers each, in that order.
 
 | Work | L3 | Counted from |
 | --- | --- | --- |
-| Making thumbnails | `12,408 of 52,310 photos and videos` | the rows enrichment's claims still owe |
-| Downloading photos | `214 of 1,020 · 3.2 GB of 9.8 GB`, then `Needed to make thumbnails`, `For the photo you opened` or `For what you asked Otos to do` | the current run of downloads and their catalog sizes; no bytes when one has no size on record |
-| Finding people | `40,112 of 52,310 checked` | People's unchecked tally |
-| Naming places | `310 of 1,204 places` | the map cells with no name in the user's language |
-| Preparing search | `30,002 of 52,310 photos and videos` | the items owed a search embedding |
-| Describing photos | `8,900 of 47,000 photos` | the stills owed a description |
-| Looking for duplicates | `21,000 of 52,310 photos compared` | the stills owed a render signature, which the groups are built from |
+| Showing photos | `1,056 photos and videos left`, then `Downloading 214 of 1,020 · 3.2 GB of 9.8 GB` while background downloads let them be read | the rows enrichment's claims still owe whose tile shows a placeholder; the downloads' current run and their catalog sizes, no bytes when one has no size on record |
+| Finding people | `12,198 photos and videos to check` | People's unchecked tally |
+| Naming places | `894 places left` | the map cells with no name in the user's language |
+| Preparing search | `22,308 photos and videos left` | the items owed a search embedding |
+| Describing photos | `38,100 photos left` | the stills owed a description |
+| Looking for duplicates | `31,310 photos to compare` | the stills owed a render signature, which the groups are built from |
+| Reading details | `1,053 photos and videos left` | the rest of the rows enrichment's claims owe, less those only the user's work can read |
 | Syncing Immich: Home, listing | `18,400 photos and videos so far`, no bar | the assets the pass's stream has listed: the stream names no total ahead of its end, and the server's own statistics need not count what it lists |
 | Syncing Immich: Home, images | `2,100 of 6,000 thumbnails` | the rows tried of those owed the server's images when the fetch began, counted over the walk's own index; with no count, `2,100 thumbnails so far` and no bar |
 
@@ -103,39 +111,43 @@ HIG review (Progress indicators):
   is a COUNT over the predicate the work's own walk reads, and what is done is the items its
   owner wrote, counted as it writes them. So every working row has a bar. No row shows a
   percentage, a remaining time or a rate.
-- **The numbers are the stretch's.** `done` is what the work's owner finished since the work
-  began, `total` is `done` plus what is left now. The bar moves only as the owner finishes
-  items; when new photos arrive the total steps up, which is the truth, and done stays. An item
-  that stops being owed for another reason — its facts changed again, its file gone — lowers
-  the total and is never counted done: a row whose owner wrote nothing reads `0 of …`.
-- **A bar only while the work moves.** A paused or stuck row keeps its count, with what stops
+- **The words say what is left; the bar, the stretch.** The L3 count is what is left, the
+  number a user reads at a glance. The bar is the stretch's: `done` is what the work's owner
+  finished since the work began, `total` is `done` plus what is left now. The bar moves only as
+  the owner finishes items; when new photos arrive the total steps up, which is the truth, and
+  done stays. An item that stops being owed for another reason — its facts changed again, its
+  file gone — lowers the total and is never counted done.
+- **A bar only while the work moves.** A paused or waiting row keeps its count, with what stops
   it under the count, and draws no bar: a bar says work is progressing, and it is not (owner,
   2026-11-26: "Whatever the problem the status needs to be right! It cant give a progress bar
-  if theres none"). Its pause glyph says it waits.
-- **Say why when it is not obvious.** Downloads are a means, not an outcome: the row says
-  what they are for. A file still downloading cannot be measured from its provider, so the
-  bar moves as each one finishes.
+  if theres none").
+- **Keep the indicator steady.** A row's state follows its items, not its owner's every wake:
+  retries of items that wait out a failure keep it waiting, so its bar does not flicker in and
+  out (owner, 2026-11-27).
+- **Say why when it is not obvious.** Downloads are a means, not an outcome: they are the line
+  of the row whose photos they let show, never a row. A file still downloading cannot be
+  measured from its provider, so the run moves as each one finishes.
 - **The line stays one line.** The sidebar's line keeps its fixed height and names the work;
   the counts and bars are the popover's.
 
 VoiceOver reads each row as one element: its name, its count, its bar's value and what stops
-it.
+it; a row's act is its own control after it.
 
 ## Names
 
-Each row says what the work does, in words a user knows (DES-035); a user cannot tell
-reading a photo from re-reading its details, or finding a face from recognizing its person,
-so each pair is one row.
+Each row says what the work does for the user, in words a user knows (DES-035): an outcome
+they would notice missing. A user cannot tell finding a face from recognizing its person, so
+that pair is one row.
 
 | Work | Row and line |
 | --- | --- |
-| Thumbnails, previews, each item's details and its digest, read again after Otos learned to read more | `Making thumbnails`: what the user sees of it |
-| Originals from a cloud provider | `Downloading photos` |
+| A first thumbnail for each photo or video still showing a placeholder, and the downloads that lets it be read | `Showing photos` |
 | Faces in stills and video frames, put together into people | `Finding people` |
 | Countries and towns | `Naming places` |
 | What search reads in each photo | `Preparing search` |
 | Descriptions | `Describing photos` |
 | Duplicate groups | `Looking for duplicates` |
+| Everything else read of items that already show a thumbnail — details, digests, a better rendering — and details read again after Otos learned to read more | `Reading details`: listed only while it works, last, never with a problem |
 | An Immich account | `Syncing Immich: Home`; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
@@ -161,5 +173,6 @@ A scope whose result is still being built says so in its own bar (DES-125), so t
 | --- | --- |
 | `Working on N things` / `Waiting on N things` / `Up to date` | popover L1 |
 | what a piece of work does | L2 |
-| how far it is, what a download is for, what stops it, `and N more`, `Everything else is up to date` | L3 |
+| what is left, the downloads it waits on, what stops it, `and N more`, `Everything else is up to date` | L3 |
+| `Open Settings…` | a row's act |
 | `Still looking for duplicates` | duplicates bar L3 |

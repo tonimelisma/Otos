@@ -829,7 +829,8 @@ struct EnrichmentCoordinatorTests {
             isVideo: false,
             captureLocalTime: nil,
             isDeviceStaging: true,
-            scope: .metadata
+            scope: .metadata,
+            showsFirstThumbnail: false
         )
 
         let access = await coordinator.byteAccess(for: work)
@@ -946,7 +947,8 @@ struct EnrichmentCoordinatorTests {
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
         let work = EnrichmentCoordinator.EnrichWork(
             id: id, url: id.fileURL, sourceSize: 1024, sourceMTimeSeconds: nil,
-            isVideo: false, captureLocalTime: nil, isDeviceStaging: true, scope: .metadata
+            isVideo: false, captureLocalTime: nil, isDeviceStaging: true, scope: .metadata,
+            showsFirstThumbnail: false
         )
 
         #expect(await coordinator.byteAccess(for: work).localURL == id.fileURL)

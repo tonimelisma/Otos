@@ -114,9 +114,9 @@ actor PreviewFaceReader: QuiescentOwner {
 
     /// The photos and videos not yet checked for faces: the count behind `Finding people`
     /// (ADR 0058).
-    func progress() async -> WorkProgress? {
+    func progress(for _: ActivityKind) async -> WorkProgress? {
         do {
-            return try await activity.progress(left: store.backgroundReads.facesLeft())
+            return try await activity.progress(left: store.backgroundReads.facesLeft(), parked: retries.parked)
         } catch {
             WorkProgress.logFailure(owner: "previewFaces", error)
             return nil
@@ -491,6 +491,14 @@ nonisolated struct PreviewFaceRetries: Sendable {
             troubles.append(OwnerTrouble(.facesUnread, count: failed))
         }
         return troubles
+    }
+
+    /// The stills whose read failed and that wait to be read again, or are being read again:
+    /// every one is still unchecked, until its read lands (`read`). While the model waits, no
+    /// still can be read, which the board reads as every one parked (`Int.max`, bounded by
+    /// what is left).
+    var parked: Int {
+        modelNotBefore == nil ? stills.count : Int.max
     }
 
     /// Keeps only the stills still owed faces.

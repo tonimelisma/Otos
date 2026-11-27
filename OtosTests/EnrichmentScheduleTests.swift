@@ -181,6 +181,37 @@ struct EnrichmentScheduleTests {
         #expect(schedule.troubles(at: start.advanced(by: .seconds(3600))).isEmpty, "every wait has passed")
     }
 
+    /// The rows held back, apart by whether their tile shows a placeholder: a paced row counts
+    /// while its wait runs, or once passed while a claim holds it, until its read lands; a row only the user's
+    /// work can read is no work left, counted apart.
+    @Test func parkedRowsCountEveryHeldRowUntilItsReadLands() {
+        var schedule = EnrichmentSchedule(retrySchedule: .production)
+        schedule.pace(id("a.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start, showsFirstThumbnail: true)
+        schedule.pace(id("b.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start)
+        schedule.pace(id("c.jpg"), sourceSize: 100, cause: .sentOnlyWhenOpened, now: start)
+        let expected = ParkedRows(
+            showing: ParkedRows.Counts(parked: 1, userWorkOnly: 0), details: ParkedRows.Counts(parked: 1, userWorkOnly: 1)
+        )
+        let none: (MediaAssetID) -> Bool = { _ in false }
+        #expect(schedule.parkedRows(at: start, isClaimed: none) == expected)
+        let later = start.advanced(by: .seconds(3600))
+        #expect(schedule.troubles(at: later).isEmpty)
+        #expect(
+            schedule.parkedRows(at: later) { _ in true } == expected,
+            "a row claimed again and being read is still held back"
+        )
+        #expect(
+            schedule.parkedRows(at: later, isClaimed: none) == ParkedRows(),
+            "a due row no claim holds may be owed no longer, and is not counted"
+        )
+
+        schedule.endPacing(id("a.jpg"))
+        #expect(
+            schedule.parkedRows(at: start, isClaimed: none).showing == ParkedRows.Counts(),
+            "a row whose read landed is held back no longer"
+        )
+    }
+
     /// ENR-009: success clears the row's ledger entry.
     @Test func materializationSuccessClearsTheLedgerEntry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)

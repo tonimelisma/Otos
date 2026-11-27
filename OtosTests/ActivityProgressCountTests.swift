@@ -23,7 +23,11 @@ struct ActivityProgressCountTests {
 
     @Test func enrichmentsCountIsEveryRowItsWalkOwes() async throws {
         let (store, ids, _) = try await catalogOfThreeStills()
-        #expect(try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted) == ids.count, "every new row owes its products")
+        #expect(
+            try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted)
+                == EnrichmentLeft(total: ids.count, withoutThumbnail: ids.count),
+            "every new row owes its products, and its tile shows a placeholder"
+        )
     }
 
     @Test func eachCountEqualsWhatItsWalkReadsAndFallsAsWorkIsWritten() async throws {
@@ -39,6 +43,12 @@ struct ActivityProgressCountTests {
                 contentHash: nil
             )
         })
+
+        #expect(
+            try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted)
+                == EnrichmentLeft(total: ids.count, withoutThumbnail: 0),
+            "a row with its thumbnail still owes its digest, but no longer shows a placeholder"
+        )
 
         let signatures = try await store.backgroundReads.renderSignatureCandidates(limit: 100).candidates
         #expect(signatures.count == ids.count)
@@ -72,10 +82,10 @@ struct ActivityProgressCountTests {
             )
         })
         let refresher = RenderSignatureRefresher(store: store, thumbnailDirectory: nil)
-        #expect(await refresher.progress() == .counted(completed: 0, left: ids.count), "nothing written yet")
+        #expect(await refresher.progress(for: .findingDuplicates) == .counted(completed: 0, left: ids.count), "nothing written yet")
         await refresher.start()
         _ = try await refresher.untilQuiescent()
-        #expect(await refresher.progress() == .counted(completed: ids.count, left: 0))
+        #expect(await refresher.progress(for: .findingDuplicates) == .counted(completed: ids.count, left: 0))
         await refresher.shutdown()
         await store.shutdown()
     }

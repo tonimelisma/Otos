@@ -19,35 +19,46 @@ import OSLog
 // wait makes its owner work, which rings the board. A round that changes what the board shows
 // publishes one snapshot (`.bufferingNewest(1)`, newest wins) and logs it.
 //
-// A kind is one outcome the user owns (`ActivityKind`); several owners can serve one kind (the
-// duplicate groups and the render signatures they compare), and the kind works while any of
-// them does. Bookkeeping owners — the projection, the People gallery's tally, the derived
-// folder's launch tidy — are not watched: they are machinery, never an outcome (DES-035).
-// Immich accounts report their own status (`ImmichAccountStatus`, with a persisted last
-// sync), which the presentation reads beside this board's snapshot.
+// A kind is one outcome the user would notice missing (`ActivityKind`): the photos still to
+// show, people, places, search, descriptions, duplicates, and — listed only while it works —
+// the details read of items that already show. Several owners can serve one kind (the
+// duplicate groups and the render signatures they compare), and one owner can serve two
+// (enrichment counts the photos still to show and the details still to read apart). An owner
+// can also be a kind's detail only (`Watched.isDetail`): the downloads that let photos show
+// are the row's line, never whether it works. Bookkeeping owners — the projection, the People
+// gallery's tally, the derived folder's launch tidy — are not watched: they are machinery,
+// never an outcome (DES-035). Immich accounts report their own status
+// (`ImmichAccountStatus`, with a persisted last sync), which the presentation reads beside
+// this board's snapshot.
 //
-// Each kind that works or is stopped also carries its progress (`ActivityProgress`): the one
-// owner of the kind that counts its work (`QuiescentOwner.progress`) is asked how much it has
-// finished and how much is left — the items it wrote, counted as it writes them, and an exact
-// COUNT over the predicate its walk reads — or a run of downloads counted as it goes. It is
-// asked again only when its work has moved (`OwnerWork`), so a round woken by anything else
-// reads no count. A stretch of work keeps its start: `done` is what the owner finished since
-// the stretch began and `total` is that plus what is left, so the bar moves only as the owner
-// finishes items. An item that leaves the owed set for another reason (its facts unsettled
-// again, its row gone) lowers the total and is never counted as done. A failed count
-// publishes nothing new; the stretch's start ends when the kind is up to date.
+// Each kind that works or waits also carries its progress (`ActivityProgress`): the owner of
+// the kind that counts its work (`QuiescentOwner.progress(for:)`) is asked how much it has
+// finished, how much is left, and how many of those wait out a failure (`parked`) — the
+// items it wrote, counted as it writes them, and an exact COUNT over the predicate its walk
+// reads. It is asked again only when its work has moved (`OwnerWork`), so a round woken by
+// anything else reads no count. A stretch of work keeps its start: `done` is what the owner
+// finished since the stretch began and `total` is that plus what is left, so the bar moves
+// only as the owner finishes items. An item that leaves the owed set for another reason (its
+// facts unsettled again, its row gone) lowers the total and is never counted as done. A failed
+// count publishes nothing new; the stretch's start ends when the kind is up to date.
+//
+// A kind works while an owner of it moves its work: busy, with items left that are not
+// parked. Busy alone is not enough: an owner retrying parked items is busy, and a retry that
+// fails moves nothing. A kind that cannot move waits, and keeps waiting through its owners'
+// retries until it has finished an item more than when it began to wait — a fact its count
+// reports, never a time — or nothing of it works or waits, so the row neither flickers
+// between working and waiting nor drops what stopped it while a retry runs.
 //
 // The loop holds the board weakly across its waits and ends with it; `shutdown()` ends it at
 // teardown.
 
-/// One background outcome the Activity surface names (DES-035: the user's nouns). Declared
-/// in the order the popover lists them.
+/// One background outcome the Activity surface names (DES-035: the user's nouns): something
+/// the user would notice missing. Declared in the order the popover lists them.
 nonisolated enum ActivityKind: String, CaseIterable, Sendable {
-    /// Thumbnails, previews and each item's details, read when it arrives and read again after
-    /// Otos learned to read more (`EnrichmentCoordinator`, `MetadataRefresher`).
-    case readingPhotos
-    /// Originals fetched from a cloud provider (`MaterializationCoordinator`).
-    case downloadingOriginals
+    /// The photos and videos whose tile still shows a placeholder, until their first thumbnail
+    /// is made (`EnrichmentCoordinator`), and the downloads of originals that lets
+    /// (`MaterializationCoordinator`, a detail of this row).
+    case showingPhotos
     /// Faces found in stills and video frames, and put together into people
     /// (`PreviewFaceReader`, `PeopleAssignment`).
     case findingPeople
@@ -60,16 +71,23 @@ nonisolated enum ActivityKind: String, CaseIterable, Sendable {
     /// The duplicate groups and the render signatures they compare (`DuplicatesProjection`,
     /// `RenderSignatureRefresher`).
     case findingDuplicates
+    /// Everything else enrichment reads of items that already show a thumbnail — their
+    /// details, digests, a better rendering — and what it reads again after Otos learned to
+    /// read more (`EnrichmentCoordinator`, `MetadataRefresher`). Listed only while it works,
+    /// last, and never with a problem: the user sees nothing missing.
+    case readingDetails
 }
 
-/// How far one kind's current stretch of work is: `done` of `total` items, exact, with its
-/// downloads' bytes and purpose when it is a run of transfers.
+/// How far one kind's current stretch of work is: `done` of `total` items, exact, and how
+/// many of the items left wait out a failure (`parked`).
 nonisolated struct ActivityProgress: Equatable, Sendable {
     let done: Int
     let total: Int
-    var bytesDone: Int64?
-    var bytesTotal: Int64?
-    var purpose: TransferRun.Purpose?
+    var parked = 0
+
+    var left: Int {
+        total - done
+    }
 }
 
 /// What one kind is doing, as of the board's last round.
@@ -79,20 +97,26 @@ nonisolated struct ActivityEntry: Equatable, Sendable {
         case working(since: Date)
         /// Every owner working for it waits on the machine's conditions (ADR 0057).
         case paused(BackgroundHold)
-        /// Nothing of it works, and something stops work it owes (`troubles`).
-        case stuck
-        /// Nothing of it works or is stopped.
+        /// Its work cannot move: something stops it (`troubles`), or every item it has left
+        /// waits out a failure. It stays waiting through its owners' retries until an item
+        /// finishes (`ActivityBoard`), so a retry that fails changes nothing the user sees.
+        case waiting
+        /// Nothing of it works or waits.
         case upToDate
     }
 
     let kind: ActivityKind
     let state: State
     /// What stops work it owes, in its owners' order, whatever its state: a kind can work on
-    /// some items while others wait out a failure.
+    /// some items while others wait out a failure. While it waits, the last that stopped it
+    /// stand through its owners' retries.
     var troubles: [OwnerTrouble] = []
     /// How far its current stretch is, once its counting owner has answered; nil while it is
     /// up to date or no count is known.
     var progress: ActivityProgress?
+    /// The run of background downloads its work waits on, while it works: the row's detail,
+    /// never a row of its own (a download is a means, not an outcome).
+    var transfers: TransferRun?
 }
 
 /// What the board shows: every watched kind, in `ActivityKind` order. `watching` is false
@@ -116,6 +140,9 @@ actor ActivityBoard {
     struct Watched {
         let kind: ActivityKind
         let owner: any QuiescentOwner
+        /// The owner only says how the kind's work goes (its downloads), never whether it
+        /// works: the owner it serves says that.
+        var isDetail = false
     }
 
     private var watched: [Watched] = []
@@ -128,6 +155,14 @@ actor ActivityBoard {
     /// Each watched owner's work as of its last successful count, by its index in `watched`:
     /// the count is read again only once this has moved.
     private var countedAt: [Int: OwnerWork] = [:]
+    /// Each watched owner's last count, by its index: whether its own work for its kind can
+    /// move (items left that are not parked), or that it reports a run of transfers.
+    private var lastCount: [Int: WorkProgress] = [:]
+    /// The kinds that wait, each with what it had done when it began to: it waits until it has
+    /// done more, or nothing works or waits.
+    private var waitingAt: [ActivityKind: Int] = [:]
+    /// What stopped each waiting kind last, said while its owners retry.
+    private var heldTroubles: [ActivityKind: [OwnerTrouble]] = [:]
     private var published = ActivitySnapshot()
     private let now: @Sendable () -> Date
     private let doorbell: AsyncStream<Void>.Continuation
@@ -181,15 +216,15 @@ actor ActivityBoard {
     /// in one step.
     private func round() async {
         let owners = watched
-        var statuses: [(ActivityKind, OwnerStatus)] = []
+        var statuses: [(index: Int, kind: ActivityKind, status: OwnerStatus)] = []
         var counts: [Counted] = []
         for (index, entry) in owners.enumerated() {
             var status = await entry.owner.status
             status.troubles = await OwnerTrouble.stopping(entry.owner.troubles())
-            statuses.append((entry.kind, status))
+            statuses.append((index, entry.kind, status))
             // Counted only while it works or something stops it, and only once its work moved.
             guard !status.isQuiescent || !status.troubles.isEmpty, countedAt[index] != status.work else { continue }
-            if let progress = await entry.owner.progress() {
+            if let progress = await entry.owner.progress(for: entry.kind) {
                 counts.append(Counted(index: index, kind: entry.kind, work: status.work, progress: progress))
             }
         }
@@ -209,62 +244,114 @@ actor ActivityBoard {
     private func endStretch(of kind: ActivityKind) {
         stretchStarts[kind] = nil
         progressByKind[kind] = nil
+        waitingAt[kind] = nil
+        heldTroubles[kind] = nil
         for (index, entry) in watched.enumerated() where entry.kind == kind {
             countedAt[index] = nil
+            lastCount[index] = nil
         }
     }
 
     /// A count applied to its kind's stretch: what the owner finished since the stretch began,
-    /// of that and what is left; a run of downloads is its own tally.
+    /// of that and what is left. A run of downloads is the kind's detail, not its count.
     private func record(_ counted: Counted) {
         countedAt[counted.index] = counted.work
-        switch counted.progress {
-        case let .counted(completed, left):
-            let start = stretchStarts[counted.kind] ?? completed
-            stretchStarts[counted.kind] = start
-            let done = max(completed - start, 0)
-            progressByKind[counted.kind] = ActivityProgress(done: done, total: done + left)
-        case let .transfers(run):
-            progressByKind[counted.kind] = ActivityProgress(
-                done: run.done, total: run.total, bytesDone: run.bytesDone, bytesTotal: run.bytesTotal, purpose: run.purpose
-            )
+        lastCount[counted.index] = counted.progress
+        guard case let .counted(completed, left, parked) = counted.progress else { return }
+        let start = stretchStarts[counted.kind] ?? completed
+        stretchStarts[counted.kind] = start
+        let done = max(completed - start, 0)
+        progressByKind[counted.kind] = ActivityProgress(done: done, total: done + left, parked: parked)
+    }
+
+    /// Whether an owner that is not quiescent moves its kind's work: one with no count of its
+    /// own (the duplicate groups, People's assignment, a metadata refresh) does, one that
+    /// counts does while it has items left that are not parked, and one that reports
+    /// transfers never does by itself (the work they serve says so).
+    private func moves(_ index: Int) -> Bool {
+        guard !watched[index].isDetail else { return false }
+        return switch lastCount[index] {
+        case nil: true
+        case let .counted(_, left, parked): left > parked
+        case .transfers: false
         }
     }
 
-    /// One round's facts applied: a kind works while any of its owners is not quiescent, and
-    /// is paused while every one of those waits on a hold; a kind none of whose owners works is
-    /// stuck while something stops work it owes, and up to date otherwise. A backoff wake alone
-    /// is no trouble: an owner that waits out a failure says which (`QuiescentOwner.troubles`).
-    private func apply(_ statuses: [(ActivityKind, OwnerStatus)], counts: [Counted], at moment: Date) {
-        var byKind: [ActivityKind: [OwnerStatus]] = [:]
-        for (kind, status) in statuses {
-            byKind[kind, default: []].append(status)
-        }
+    /// One round's facts applied. A kind works while one of its owners moves its work
+    /// (`moves`), and is paused while every one of those waits on a hold. A kind none of whose
+    /// owners moves its work waits while something stops it or items it has left are parked,
+    /// and it keeps waiting — through its owners' retries, which make them busy without moving
+    /// anything — until it has finished an item more than when it began to wait, or nothing of
+    /// it works or waits. Otherwise it is up to date. A backoff wake alone is no trouble: an
+    /// owner that waits out a failure says which (`QuiescentOwner.troubles`).
+    private func apply(
+        _ statuses: [(index: Int, kind: ActivityKind, status: OwnerStatus)],
+        counts: [Counted],
+        at moment: Date
+    ) {
         for counted in counts {
             record(counted)
         }
         var entries: [ActivityEntry] = []
         for kind in ActivityKind.allCases {
-            guard let owners = byKind[kind] else { continue }
-            let busy = owners.filter { !$0.isQuiescent }
-            // A stretch of work keeps its start through a pause; it ends when nothing works.
-            workingSince[kind] = busy.isEmpty ? nil : workingSince[kind] ?? moment
-            let troubles = owners.flatMap(\.troubles)
+            let owners = statuses.filter { $0.kind == kind }
+            guard !owners.isEmpty else { continue }
+            let progress = progressByKind[kind]
+            let troubles = owners.flatMap(\.status.troubles)
+            let blocked = !troubles.isEmpty || (progress?.parked ?? 0) > 0
+            let busy = owners.contains { !$0.status.isQuiescent && !watched[$0.index].isDetail }
+            if let since = waitingAt[kind], (progress?.done ?? 0) > since {
+                waitingAt[kind] = nil
+            }
+            let moving = owners.filter { !$0.status.isQuiescent && moves($0.index) }
             let state: ActivityEntry.State
-            if let since = workingSince[kind] {
-                let holds = busy.map(\.heldBy)
+            if waitingAt[kind] != nil {
+                state = busy || blocked ? .waiting : .upToDate
+            } else if !moving.isEmpty {
+                let holds = moving.map(\.status.heldBy)
                 state = if holds.allSatisfy({ $0 != nil }), let hold = holds.first ?? nil {
                     .paused(hold)
                 } else {
-                    .working(since: since)
+                    .working(since: workingSince[kind] ?? moment)
+                }
+            } else if blocked {
+                waitingAt[kind] = progress?.done ?? 0
+                state = .waiting
+            } else {
+                state = .upToDate
+            }
+            switch state {
+            case let .working(since):
+                workingSince[kind] = since
+            case .paused:
+                break
+            case .waiting, .upToDate:
+                workingSince[kind] = nil
+            }
+            var said = troubles
+            if state == .waiting {
+                if said.isEmpty {
+                    said = heldTroubles[kind] ?? []
+                } else {
+                    heldTroubles[kind] = said
                 }
             } else {
-                state = troubles.isEmpty ? .upToDate : .stuck
+                heldTroubles[kind] = nil
             }
             if state == .upToDate {
                 endStretch(of: kind)
             }
-            entries.append(ActivityEntry(kind: kind, state: state, troubles: troubles, progress: progressByKind[kind]))
+            var transfers: TransferRun?
+            if case .working = state {
+                for owner in owners where !owner.status.isQuiescent {
+                    if case let .transfers(run) = lastCount[owner.index], run.purpose == .background {
+                        transfers = run
+                    }
+                }
+            }
+            entries.append(ActivityEntry(
+                kind: kind, state: state, troubles: said, progress: progressByKind[kind], transfers: transfers
+            ))
         }
         let snapshot = ActivitySnapshot(watching: true, entries: entries)
         guard snapshot != published else { return }
@@ -279,8 +366,11 @@ actor ActivityBoard {
                 guard case let .paused(hold) = entry.state else { return nil }
                 return "\(entry.kind.rawValue)(\(hold.rawValue))"
             }.joined(separator: ","),
+            "waiting": entries.compactMap { entry -> String? in
+                entry.state == .waiting ? entry.kind.rawValue : nil
+            }.joined(separator: ","),
             "progress": entries.compactMap { entry -> String? in
-                entry.progress.map { "\(entry.kind.rawValue)(\($0.done)/\($0.total))" }
+                entry.progress.map { "\(entry.kind.rawValue)(\($0.done)/\($0.total) parked=\($0.parked))" }
             }.joined(separator: ","),
             "troubles": entries.flatMap { entry in
                 entry.troubles.map { "\(entry.kind.rawValue)(\($0.cause.rawValue)=\($0.count.map { "\($0)" } ?? "all"))" }

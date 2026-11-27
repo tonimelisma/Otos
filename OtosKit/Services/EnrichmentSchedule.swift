@@ -336,7 +336,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging,
                 attemptCount: keepsWait ? work.attemptCount : 0,
-                retryNotBefore: keepsWait ? work.retryNotBefore : nil
+                retryNotBefore: keepsWait ? work.retryNotBefore : nil,
+                showsFirstThumbnail: work.showsFirstThumbnail
             )
             if record.hold == .pacing {
                 record.hold = .transferSlot
@@ -468,7 +469,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging,
                 attemptCount: attemptCount,
-                retryNotBefore: notBefore
+                retryNotBefore: notBefore,
+                showsFirstThumbnail: work.showsFirstThumbnail
             ),
             ownsStoreClaim: record.ownsStoreClaim,
             isInFlight: false,
@@ -514,7 +516,8 @@ nonisolated struct EnrichmentSchedule: Sendable {
             isVideo: work.isVideo,
             isDeviceStaging: work.isDeviceStaging,
             attemptCount: attemptCount,
-            retryNotBefore: now.advanced(by: delay)
+            retryNotBefore: now.advanced(by: delay),
+            showsFirstThumbnail: work.showsFirstThumbnail
         )
     }
 
@@ -550,15 +553,53 @@ nonisolated struct EnrichmentSchedule: Sendable {
         sourceSize: Int64?,
         cause: OwnerTrouble.Cause,
         now: ContinuousClock.Instant,
-        holdingClaim: Bool = false
+        holdingClaim: Bool = false,
+        showsFirstThumbnail: Bool = false
     ) {
         retryLedger[id] = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
             attemptCount: (retryLedger[id]?.attemptCount ?? 0) + 1,
             sourceSize: sourceSize,
             cause: cause,
-            holdsStoreClaim: holdingClaim
+            holdsStoreClaim: holdingClaim,
+            showsFirstThumbnail: showsFirstThumbnail
         )
+    }
+
+    /// The row's read landed: the ledger no longer paces it. A row the ledger paces stays
+    /// there until then, so the ledger's entries are the rows held back now.
+    mutating func endPacing(_ id: MediaAssetID) {
+        retryLedger[id] = nil
+    }
+
+    /// The rows that wait out a failure before they are read again, or are being read again,
+    /// apart by whether their tile still shows a placeholder: the pacing ledger's rows it holds
+    /// back now — not yet due, holding their Store claim, or claimed again and being read
+    /// (`isClaimed`) — since a row stays in the ledger until its next read lands; transfers
+    /// parked after failing or turned away by the free-space floor; and transfers that failed
+    /// before and wait for, or are in, their next attempt. A due entry whose row no claim holds
+    /// is not counted: its row may no longer be owed at all (gone, or its facts written another
+    /// way), and nothing would remove it. `userWorkOnly` counts the ledger's rows whose source
+    /// sends them only for the user's work: no background read can do them, so they are no
+    /// work left at all (`OwnerTrouble.Standing.userWorkOnly`).
+    func parkedRows(at now: ContinuousClock.Instant, isClaimed: (MediaAssetID) -> Bool) -> ParkedRows {
+        var rows = ParkedRows()
+        for (id, entry) in retryLedger where entry.notBefore > now || entry.holdsStoreClaim || isClaimed(id) {
+            if entry.cause.standing == .userWorkOnly {
+                rows.add(\.userWorkOnly, showsFirstThumbnail: entry.showsFirstThumbnail)
+            } else {
+                rows.add(\.parked, showsFirstThumbnail: entry.showsFirstThumbnail)
+            }
+        }
+        for record in parked.values
+            where !record.work.isDeviceStaging && (record.hold == .pacing || record.hold == .freeSpace)
+        {
+            rows.add(\.parked, showsFirstThumbnail: record.work.showsFirstThumbnail)
+        }
+        for record in materializations.values where !record.work.isDeviceStaging && record.work.attemptCount > 0 {
+            rows.add(\.parked, showsFirstThumbnail: record.work.showsFirstThumbnail)
+        }
+        return rows
     }
 
     /// What stops rows at `now`, by cause, in `OwnerTrouble.Cause` order: rows the ledger
@@ -758,5 +799,27 @@ private extension EnrichmentCoordinator.DownloadWork {
             return true
         }
         return retryNotBefore <= now
+    }
+}
+
+/// Rows enrichment holds back, by kind of work they owe (`EnrichmentSchedule.parkedRows`):
+/// those whose tile still shows a placeholder (`showing…`) and the rest (`details…`).
+nonisolated struct ParkedRows: Equatable, Sendable {
+    struct Counts: Equatable, Sendable {
+        /// Rows waiting out a failure, or being tried again.
+        var parked = 0
+        /// Rows only the user's work can read (ADR 0046 §4).
+        var userWorkOnly = 0
+    }
+
+    var showing = Counts()
+    var details = Counts()
+
+    mutating func add(_ count: WritableKeyPath<Counts, Int>, showsFirstThumbnail: Bool) {
+        if showsFirstThumbnail {
+            showing[keyPath: count] += 1
+        } else {
+            details[keyPath: count] += 1
+        }
     }
 }

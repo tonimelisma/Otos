@@ -97,15 +97,18 @@ extension BackgroundOwnerSet {
     func activityOwners() async -> [ActivityBoard.Watched] {
         var owners = await projection.activityOwners()
         if starts.starts(.enrichment), let enrichment {
+            // One walk serves two outcomes, each counted apart; the downloads it waits on are
+            // the detail of the photos still to show.
             owners += [
-                .init(kind: .readingPhotos, owner: enrichment),
-                .init(kind: .downloadingOriginals, owner: materialization),
+                .init(kind: .showingPhotos, owner: enrichment),
+                .init(kind: .showingPhotos, owner: materialization, isDetail: true),
+                .init(kind: .readingDetails, owner: enrichment),
             ]
         }
         let named: [(BackgroundOwner, ActivityKind, (any QuiescentOwner)?)] = [
             (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .findingPeople, previewFaces),
             (.placeNames, .namingPlaces, placeNames), (.searchIndex, .preparingSearch, searchIndex),
-            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .readingPhotos, metadata),
+            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .readingDetails, metadata),
         ]
         for (owner, kind, running) in named where starts.starts(owner) {
             if let running {

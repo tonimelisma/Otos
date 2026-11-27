@@ -75,15 +75,22 @@ nonisolated enum EnrichmentClaimGateway {
     /// How many rows of one root (bound) are owed under `claim`: the claim query's rows,
     /// claimed or not, through the same root index, since a claimed row is still in flight
     /// (`CatalogStore.enrichmentLeft`).
+    ///
+    /// Two counts in one statement: every row owed, and those of them whose tile shows a
+    /// placeholder (`placeholderSQL`), the rows `Showing photos` counts.
     static func leftSQL(_ claim: EnrichmentClaim) -> String {
         """
-        SELECT COUNT(*) FROM media_asset INDEXED BY \(rootIndexName(claim))
+        SELECT COUNT(*), COALESCE(SUM(\(placeholderSQL)), 0) FROM media_asset INDEXED BY \(rootIndexName(claim))
         WHERE library_root_id = ?
           AND (\(stalenessSQLPredicate(claim)))\(backgroundScope(claim))
           AND trash_path IS NULL
           AND awaiting_presence = 0
         """
     }
+
+    /// A row whose tile shows a placeholder until a thumbnail is made: none yet, and rendering
+    /// has not found that none can be (the SQL twin of `MediaAsset.showsPlaceholder`).
+    static let placeholderSQL = "thumbnail_path IS NULL AND rendered_source_mtime IS NULL"
 
     static func unclaimedPriorityIDs(
         _ priorityIDs: [MediaAssetID],

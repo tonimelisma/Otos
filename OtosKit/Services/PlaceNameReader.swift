@@ -150,7 +150,7 @@ actor PlaceNameReader: QuiescentOwner {
 
     /// The map cells with no name in the user's language: the count behind `Naming places`
     /// (ADR 0058).
-    func progress() async -> WorkProgress? {
+    func progress(for _: ActivityKind) async -> WorkProgress? {
         let language = PlaceNameLanguage(locale())
         do {
             return try await activity.progress(left: store.backgroundReads.unnamedPlaceCellCount(language: language))

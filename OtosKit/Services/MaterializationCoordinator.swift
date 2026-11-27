@@ -509,16 +509,18 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
             && inFlightByID.values.allSatisfy { $0.effectivePriority == .background }
     }
 
-    /// What stops downloads now: a provider whose failures opened its breaker, until it closes.
+    /// What stops downloads now: the libraries whose provider's failures opened their breaker,
+    /// until it closes, named so the surface can say which.
     func troubles() async -> [OwnerTrouble] {
         let now = clock.now
-        return breakerOpenUntilByRoot.values.contains { $0 > now } ? [OwnerTrouble(.providerNotAnswering)] : []
+        let open = breakerOpenUntilByRoot.filter { $0.value > now }.keys.sorted { $0.rawValue < $1.rawValue }
+        return open.isEmpty ? [] : [OwnerTrouble(.providerNotAnswering, sources: open)]
     }
 
     /// The current run of downloads: how many finished of how many asked, their bytes, and
-    /// what the most pressing of them is for. The count behind `Downloading photos`
-    /// (ADR 0058); nil while nothing is pending or in flight.
-    func progress() async -> WorkProgress? {
+    /// what the most pressing of them is for: the line `Showing photos` says of the
+    /// downloads it waits on (ADR 0058); nil while nothing is pending or in flight.
+    func progress(for _: ActivityKind) async -> WorkProgress? {
         let asked = pendingByID.values.map { ($0.request, $0.effectivePriority) }
             + inFlightByID.values.map { ($0.request, $0.effectivePriority) }
         guard !asked.isEmpty else { return nil }

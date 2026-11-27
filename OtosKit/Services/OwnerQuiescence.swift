@@ -207,15 +207,47 @@ nonisolated struct OwnerTrouble: Equatable, Sendable {
         case placeNamesFailed
         /// A pass over the search index failed.
         case searchFailed
+
+        var standing: Standing {
+            switch self {
+            case .diskFull, .appleIntelligenceOff: .needsYou
+            case .faceModelUnavailable, .appleIntelligenceUnsupported, .appleIntelligenceNotReady,
+                 .appleIntelligenceNotResponding, .appleIntelligenceBusy, .providerNotAnswering,
+                 .placeNamesFailed, .searchFailed: .unavailable
+            case .downloadsFailed, .serverDidNotAnswer, .rawSupportUnavailable, .facesUnread,
+                 .descriptionsFailed: .retried
+            case .sentOnlyWhenOpened: .userWorkOnly
+            }
+        }
+    }
+
+    /// How the Activity surface treats a cause (`docs/design/activity.md`, Problems): it says
+    /// what the user would notice, and nothing else (HIG Feedback: people need to know when
+    /// something does not succeed, not every retry on the way).
+    nonisolated enum Standing: Equatable, Sendable {
+        /// The user can fix it, and nothing moves until they do: always said, first.
+        case needsYou
+        /// A source or service the work needs is not available: said, on the row it stops.
+        case unavailable
+        /// One item failed and is tried again on its own: never said. The item stays in its
+        /// work's count, parked (`WorkProgress.counted`'s `parked`), and the log names it.
+        case retried
+        /// No background work can do it: its source sends it only for the user's work (ADR
+        /// 0046 §4). Never said and never counted as work left.
+        case userWorkOnly
     }
 
     let cause: Cause
     /// How many items it stops; nil when it stops the owner's work as a whole.
     let count: Int?
+    /// The sources it is about, when it is one source's (a cloud provider that stopped
+    /// answering), so the surface names them; empty otherwise.
+    let sources: [LibraryRootPath]
 
-    init(_ cause: Cause, count: Int? = nil) {
+    init(_ cause: Cause, count: Int? = nil, sources: [LibraryRootPath] = []) {
         self.cause = cause
         self.count = count
+        self.sources = sources
     }
 
     /// The troubles that stop something: a counted one that stops no item is none.
@@ -383,9 +415,10 @@ final nonisolated class OwnerActivity {
         finishedItems += count
     }
 
-    /// What the owner reports to Activity once it has counted `left` (`WorkProgress.counted`).
-    func progress(left: Int) -> WorkProgress {
-        .counted(completed: finishedItems, left: left)
+    /// What the owner reports to Activity once it has counted `left`, `parked` of them waiting
+    /// out a failure (`WorkProgress.counted`).
+    func progress(left: Int, parked: Int = 0) -> WorkProgress {
+        .counted(completed: finishedItems, left: left, parked: min(parked, left))
     }
 
     /// The fact, when the owner holds no other work (`holdsWork`) and this bookkeeping owes
@@ -512,7 +545,11 @@ nonisolated enum WorkProgress: Equatable, Sendable {
     /// COUNT over the predicate its walk reads). An item can leave `left` for a reason that is
     /// no work of the owner's — its facts unsettled again, its row gone — so only `completed`
     /// says what was done.
-    case counted(completed: Int, left: Int)
+    ///
+    /// `parked` is how many of `left` wait out a failure before they are tried again (or are
+    /// being tried again): work that cannot move now, so a kind whose every item left is
+    /// parked does not work, whatever its owner's retries do (`ActivityBoard`).
+    case counted(completed: Int, left: Int, parked: Int = 0)
     /// A run of transfers counted as it goes.
     case transfers(TransferRun)
 
@@ -574,10 +611,11 @@ nonisolated protocol QuiescentOwner: Actor {
     /// Whether a pass that succeeded has answered every request in `mark`, and nothing the
     /// owner holds beyond what its mark counts is in flight.
     func covers(_ mark: OwnerMark) -> Bool
-    /// What its work has left, read only while it works or something stops it: nil for an
-    /// owner whose kind another owner counts (`ActivityKind`'s owners), or when the count
-    /// fails.
-    func progress() async -> WorkProgress?
+    /// What its work for `kind` has left, read only while it works or something stops it: nil
+    /// for an owner whose kind another owner counts (`ActivityKind`'s owners), or when the count
+    /// fails. One owner can serve two kinds (enrichment: the photos still to show, and the
+    /// details still to read), each counted apart.
+    func progress(for kind: ActivityKind) async -> WorkProgress?
 }
 
 extension QuiescentOwner {
@@ -585,7 +623,7 @@ extension QuiescentOwner {
         false
     }
 
-    func progress() async -> WorkProgress? {
+    func progress(for _: ActivityKind) async -> WorkProgress? {
         nil
     }
 

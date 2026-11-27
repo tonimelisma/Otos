@@ -480,6 +480,13 @@ nonisolated struct DigestStanding: Equatable, Sendable {
 /// claimed under and its staleness at that moment (ADR 0018). Carried rather than
 /// re-derived downstream: a later re-derivation reads root kind from a possibly-staler
 /// cache and can disagree with the predicate the row was actually claimed under.
+/// What enrichment's walk still owes (`CatalogStore.enrichmentLeft`): every row, claimed or
+/// not, and those of them whose tile shows a placeholder (`MediaAsset.showsPlaceholder`).
+nonisolated struct EnrichmentLeft: Equatable, Sendable {
+    var total = 0
+    var withoutThumbnail = 0
+}
+
 nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let asset: MediaAsset
     let scope: EnrichmentScope
@@ -11522,22 +11529,24 @@ extension CatalogStore {
     /// (`claimedEnrichmentCandidates`): a fixed library's every product, an Immich account's
     /// metadata and a video's faces, a camera's metadata, and a card's every product, its
     /// metadata included.
-    func enrichmentLeft(videoFaces: VideoFacesAdmission, lane: CatalogReadLane) async throws -> Int {
+    func enrichmentLeft(videoFaces: VideoFacesAdmission, lane: CatalogReadLane) async throws -> EnrichmentLeft {
         let (library, account, metadataFirst) = roots.enrichableRootIDsByFirstClaim()
         let cards = Set(roots.enrichableCardRootIDs())
         let sources: [(rootID: Int64, claim: EnrichmentClaim)] =
             library.sorted().map { ($0, EnrichmentClaim.library.admitting(videoFaces)) }
                 + account.sorted().map { ($0, EnrichmentClaim.account.admitting(videoFaces)) }
                 + metadataFirst.sorted().map { ($0, cards.contains($0) ? EnrichmentClaim.products : .metadata) }
-        guard !sources.isEmpty else { return 0 }
+        guard !sources.isEmpty else { return EnrichmentLeft() }
         return try await reader(for: lane).readFreeingConnection { db in
-            var left = 0
+            var left = EnrichmentLeft()
             for source in sources {
-                left += try Int.fetchOne(
+                guard let row = try Row.fetchOne(
                     db,
                     sql: EnrichmentClaimGateway.leftSQL(source.claim),
                     arguments: [source.rootID]
-                ) ?? 0
+                ) else { continue }
+                left.total += row[0] as Int
+                left.withoutThumbnail += row[1] as Int
             }
             return left
         }
