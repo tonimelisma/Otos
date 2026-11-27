@@ -830,7 +830,7 @@ struct EnrichmentCoordinatorTests {
             captureLocalTime: nil,
             isDeviceStaging: true,
             scope: .metadata,
-            showsFirstThumbnail: false
+            purpose: .info
         )
 
         let access = await coordinator.byteAccess(for: work)
@@ -948,7 +948,7 @@ struct EnrichmentCoordinatorTests {
         let work = EnrichmentCoordinator.EnrichWork(
             id: id, url: id.fileURL, sourceSize: 1024, sourceMTimeSeconds: nil,
             isVideo: false, captureLocalTime: nil, isDeviceStaging: true, scope: .metadata,
-            showsFirstThumbnail: false
+            purpose: .info
         )
 
         #expect(await coordinator.byteAccess(for: work).localURL == id.fileURL)

@@ -81,39 +81,52 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
 
    Every owner that arms a backoff wake reports the failure it waits out; a wake alone is
    never read as a trouble, because a wake says when, not why. Enrichment's pacing ledger
-   records the cause of each row it paces (`RetryLedgerEntry.cause`) and whether its tile
-   shows a placeholder, and keeps the row until its read lands, so its entries are the rows
+   records the cause of each row it paces (`RetryLedgerEntry.cause`) and the outcome it was
+   claimed for, and keeps the row until its read lands, so its entries are the rows
    held back now. Every cause is logged at a session's end (`op=owners.trouble`) and on each
    board change, said or not.
-4. **Outcomes the user would notice missing, in the user's words.** `ActivityKind` names
-   outcomes (DES-035), each said as what it does: `Showing photos` (the rows whose tile still
-   shows a placeholder, counted by enrichment, with the background downloads it waits on as
-   its line), `Finding people` (faces found and put together into people), `Naming places`,
-   `Preparing search`, `Describing photos`, `Looking for duplicates` (the groups and the render
-   signatures they compare), and `Reading details` — everything else enrichment reads of items
-   that already show a thumbnail (details, digests, a better rendering), and what a metadata
-   refresh reads again. `Reading details` is listed only while it works, last, never with a
-   problem, and names the line only when nothing else works: the user sees nothing missing of
-   it, but the line never says up to date while work runs. It replaced `Making thumbnails`,
-   which counted an Immich account's details — items already showing the server's thumbnails —
-   as thumbnails still to make (owner, 2026-11-27: "it doesn't make any sense"). Downloads are a
-   means, not an outcome, so they are no row. A user cannot tell finding a face from
-   recognizing its person, so that pair is one kind. `BackgroundOwnerSet.activityOwners()` is
-   the one map from owner to kind; one owner can serve two kinds (enrichment), each counted
-   apart (`QuiescentOwner.progress(for:)`). The projection's publications, the People gallery's
-   tally and the derived folder's launch tidy are machinery and are not watched. Work that has
-   its own surface — an import, Move to Trash, export, reorganization, a pane's download — is
-   not listed (one fact, one owner).
+4. **Outcomes the user would notice missing, named for what Otos does.** `ActivityKind` names
+   outcomes (DES-035), each said as a verb and the thing Otos makes, so the user knows what it
+   does and where to find what it gives them (HIG Writing: "Choose words that are easily
+   understood and convey the right thing"; Progress indicators: "Avoid vague terms"):
+   - `Making thumbnails`: thumbnails and previews made or remade, with the background
+     downloads it waits on as its line. Never an Immich account's thumbnails: the account's
+     sync brings them, and says so on its own row.
+   - `Reading photo info`: the details the Info pane shows — dates, camera, lens, place — read
+     from each file or an account's server, and read again by a metadata refresh.
+   - `Scanning for faces`: faces detected in stills' previews and videos' frames, then grouped
+     into people. Most of the work is detection, which "finding people" overclaimed; Apple's
+     Photos counts the same work as photos "scanned".
+   - `Looking up place names`, counted in the map's areas (`locations`), never in photos.
+   - `Indexing for search`: what search compares a query with, made for each item — no label
+     is identified, which "detecting" would claim.
+   - `Writing descriptions`.
+   - `Finding duplicates`: the groups, the render signatures they compare and the digests that
+     tell exact copies apart.
+
+   Enrichment is one walk serving four of these; each owed row is filed under exactly one
+   (`EnrichmentPurpose`: a thumbnail, a video's faces, the photo info, the digest, the first
+   that applies), alike in Swift at the claim and in SQL in the count
+   (`EnrichmentClaimGateway.purposeSQL`). The owner rejected names that hid the work —
+   `Showing photos`, `Finding people`, `Reading details` for three unrelated jobs (2026-11-27:
+   "Reading details is also incredibly obscure") — and `Making thumbnails` while it counted an
+   account's details as thumbnails still to make ("it doesn't make any sense"). Downloads are a
+   means, not an outcome, so they are no row. `BackgroundOwnerSet.activityOwners()` is the one
+   map from owner to kind; one owner can serve several kinds, each counted and stopped apart
+   (`QuiescentOwner.progress(for:)`, `troubles(for:)`), and several owners can count one kind
+   (a still's faces and a video's), which the board sums. The projection's publications, the
+   People gallery's tally and the derived folder's launch tidy are machinery and are not
+   watched. Work that has its own surface — an import, Move to Trash, export, reorganization, a
+   pane's download — is not listed (one fact, one owner).
 5. **Every row says how much is left, exactly** (owner, 2026-11-26: "each should give the
    actual progress", "shouldn't each of these have a progress bar?"). Each kind has one owner
-   that counts its work (`QuiescentOwner.progress(for:)`, `WorkProgress.counted`): the items it
-   has finished, counted at each write the catalog accepted (`OwnerActivity.finished`; for
-   `Showing photos`, the rows whose first thumbnail a batch wrote, counted only when the whole
-   batch applied), what is left, an exact COUNT over the very predicate its walk reads, through
-   the same partial index — enrichment's claims per root (and of those, the rows with a
-   placeholder, `EnrichmentClaimGateway.placeholderSQL`), People's unchecked tally, unnamed place
-   cells, owed search embeddings, owed descriptions, owed render signatures — and how many of
-   those are parked. The board asks again only when that owner's work has moved (`OwnerWork`),
+   that counts its work, or several whose counts it sums (`QuiescentOwner.progress(for:)`,
+   `WorkProgress.counted`): the items each has finished, counted at each write the catalog
+   accepted (`OwnerActivity.finished`; enrichment counts the rows of a fully applied batch by
+   the outcome each was claimed for), what is left, an exact COUNT over the very predicate its
+   walk reads, through the same partial index — enrichment's claims per root, by outcome; the
+   stills not yet checked for faces; unnamed place cells; owed search embeddings; owed
+   descriptions; owed render signatures — and how many of those are parked. The board asks again only when that owner's work has moved (`OwnerWork`),
    so a round woken by anything else reads no count. A stretch of work keeps its start: `done`
    is what the owner finished since then and `total` is that plus what is left, which the bar
    draws; the row says what is left (`39,902 photos and videos left`), the number a user reads

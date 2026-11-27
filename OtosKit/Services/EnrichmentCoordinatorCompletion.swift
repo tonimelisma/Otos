@@ -33,7 +33,7 @@ extension EnrichmentCoordinator {
             let now = ContinuousClock.now
             schedule.pace(
                 id, sourceSize: work.sourceSize, cause: .facesUnread, now: now,
-                showsFirstThumbnail: work.showsFirstThumbnail && result.shownThumbnailPath == nil
+                purpose: .faces
             )
             if unread == .model {
                 schedule.holdVideoFaces(now: now)
@@ -48,7 +48,11 @@ extension EnrichmentCoordinator {
             // The write gives the claim back, and a digest that moved nothing announces
             // nothing: the coordinator counts its own release.
             claimInputsRevision &+= 1
-            await handleApplyOutcome(store.applyContentHash(result), batchCount: 1)
+            let applied = await store.applyContentHash(result)
+            if applied == .applied(count: 1) {
+                finishedByPurpose[work.purpose, default: 0] += 1
+            }
+            await handleApplyOutcome(applied, batchCount: 1)
         case .notMaterialized:
             let locality = await materializationRequester.locality(of: id)
             // Read again after the await: a shutdown or another completion may have settled
@@ -64,7 +68,7 @@ extension EnrichmentCoordinator {
                 // answer does.
                 schedule.pace(
                     id, sourceSize: work.sourceSize, cause: .sentOnlyWhenOpened, now: ContinuousClock.now,
-                    holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
+                    holdingClaim: record.ownsStoreClaim, purpose: work.purpose
                 )
                 await recordVisibleThumbnailLifecycle(phase: "userWorkOnly", id: id)
                 return
@@ -76,7 +80,7 @@ extension EnrichmentCoordinator {
                 captureLocalTime: work.captureLocalTime,
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging,
-                showsFirstThumbnail: work.showsFirstThumbnail
+                purpose: work.purpose
             )
             // The ready claim's Store claim passes to the demand, held like a routed row's when
             // the hand-off has no slot for it.
@@ -98,7 +102,7 @@ extension EnrichmentCoordinator {
             readyClaims[id] = nil
             schedule.pace(
                 id, sourceSize: work.sourceSize, cause: .serverDidNotAnswer, now: ContinuousClock.now,
-                holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
+                holdingClaim: record.ownsStoreClaim, purpose: work.purpose
             )
             await recordVisibleThumbnailLifecycle(phase: "unanswered", id: id)
         case .rawResourcesUnavailable:
@@ -108,7 +112,7 @@ extension EnrichmentCoordinator {
             readyClaims[id] = nil
             schedule.pace(
                 id, sourceSize: work.sourceSize, cause: .rawSupportUnavailable, now: ContinuousClock.now,
-                holdingClaim: record.ownsStoreClaim, showsFirstThumbnail: work.showsFirstThumbnail
+                holdingClaim: record.ownsStoreClaim, purpose: work.purpose
             )
             await recordVisibleThumbnailLifecycle(phase: "rawResourcesUnavailable", id: id)
         case .transient:
@@ -294,22 +298,18 @@ extension EnrichmentCoordinator {
         pendingApply.removeAll(keepingCapacity: true)
         // The apply gives every row's claim back.
         claimInputsRevision &+= 1
-        // The rows of the batch whose tile gets its first thumbnail from it; counted only when
-        // every result applied, since a partial apply does not say which rows it left out and
-        // a row is never counted shown that was not (ADR 0058).
-        let firstThumbnails = batchIDs.filter { pendingFirstThumbnails.contains($0) }
-        pendingFirstThumbnails.subtract(firstThumbnails)
+        // The purpose each row of the batch was claimed for; counted only when every result
+        // applied, since a partial apply does not say which rows it left out and a row is
+        // never counted done that was not (ADR 0058).
+        let purposes = batchIDs.compactMap { pendingPurposes.removeValue(forKey: $0) }
         let outcome = await store.applyEnrichmentBatch(batch)
         activity.wrote(batch.count)
         if case let .applied(count) = outcome {
+            activity.finished(count)
             if count == batch.count {
-                activity.finished(count)
-                firstThumbnailsShown += firstThumbnails.count
-            } else {
-                // Which rows were left out is not said, so neither kind counts a row it
-                // cannot prove: the rows that would have shown a first thumbnail are left out
-                // of both.
-                activity.finished(max(count - firstThumbnails.count, 0))
+                for purpose in purposes {
+                    finishedByPurpose[purpose, default: 0] += 1
+                }
             }
         }
         OtosLog.metadata.notice(
@@ -393,11 +393,7 @@ extension EnrichmentCoordinator {
         readyClaims[id] = nil
         pendingApply.append(result)
         pendingApplyClaimIDs.insert(id)
-        if work.showsFirstThumbnail, result.shownThumbnailPath != nil {
-            pendingFirstThumbnails.insert(id)
-        } else {
-            pendingFirstThumbnails.remove(id)
-        }
+        pendingPurposes[id] = work.purpose
         scheduleApplyFlushIfNeeded()
     }
 

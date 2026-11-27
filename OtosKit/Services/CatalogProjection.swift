@@ -2144,7 +2144,7 @@ extension CatalogProjection: QuiescentOwner {
             owners.append(.init(kind: .findingDuplicates, owner: duplicatesProjection))
         }
         if let peopleAssignment {
-            owners.append(.init(kind: .findingPeople, owner: peopleAssignment))
+            owners.append(.init(kind: .scanningFaces, owner: peopleAssignment))
         }
         return owners
     }

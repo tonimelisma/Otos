@@ -112,7 +112,7 @@ actor PreviewFaceReader: QuiescentOwner {
         retries.troubles(at: ContinuousClock.now)
     }
 
-    /// The photos and videos not yet checked for faces: the count behind `Finding people`
+    /// The stills not yet checked for faces: their share of `Scanning for faces`
     /// (ADR 0058).
     func progress(for _: ActivityKind) async -> WorkProgress? {
         do {

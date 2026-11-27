@@ -3,9 +3,9 @@
 The surface that answers what a user asks of Otos's background work — is everything here
 yet, is something wrong that I can fix, is Otos busy — and nothing else (ADR 0058, DES-124;
 the HIG review is `docs/research/2026-11-27-activity-and-the-hig.md`). Most of Otos's work
-runs unasked, over hours on a large cloud library: showing each photo, finding faces, naming
-places, preparing search, describing photos, looking for duplicates, reading details, syncing
-an Immich account. None of it belongs to a sidebar selection, so no bar at the bottom of the
+runs unasked, over hours on a large cloud library: making thumbnails, reading photo info,
+scanning for faces, looking up place names, indexing for search, writing descriptions,
+finding duplicates, syncing an Immich account. None of it belongs to a sidebar selection, so no bar at the bottom of the
 content pane can own it (DES-040). It has one place: a line at the foot of the sidebar, and
 the popover it opens. It never says when work ran.
 
@@ -26,14 +26,14 @@ checkmark.
 | State | Glyph | L2 (`body`) | L3 (`subheadline`) |
 | --- | --- | --- | --- |
 | Before the window's work is watched (the first grid has not painted) | none | blank | blank |
-| Something needs the user, whatever else works | `exclamationmark.triangle`, orange | what it stops (`Describing photos`) | `and 2 more`; for one row alone, the first sentence of what to do (`Turn on Apple Intelligence in System Settings to describe photos`) |
-| Something working | small spinner (DES-072) | the one that has worked longest (`Finding people`); `Reading details` only when nothing else works | `and 2 more` (the popover's other rows), or none |
-| Nothing working, something paused or waiting | `pause.circle`, secondary | what waits (`Describing photos`) | `and 1 more`; for one row alone, the first sentence of what stops it (`Apple Intelligence isn’t responding`) |
+| Something needs the user, whatever else works | `exclamationmark.triangle`, orange | what it stops (`Writing descriptions`) | `and 2 more`; for one row alone, the first sentence of what to do (`Turn on Apple Intelligence in System Settings to describe photos`) |
+| Something working | small spinner (DES-072) | the one that has worked longest (`Scanning for faces`) | `and 2 more` (the popover's other rows), or none |
+| Nothing working, something paused or waiting | `pause.circle`, secondary | what waits (`Writing descriptions`) | `and 1 more`; for one row alone, the first sentence of what stops it (`Apple Intelligence isn’t responding`) |
 | Nothing working or waiting | `checkmark`, secondary | `Up to date` | none |
 
 The line names the work that started first, so a short job that starts beside a long one
 changes only the count. Clicking it, or Space / Return on it with Full Keyboard Access, opens
-the popover; it is disabled while nothing is known. VoiceOver reads `Activity, Finding people,
+the popover; it is disabled while nothing is known. VoiceOver reads `Activity, Scanning for faces,
 and 2 more`.
 
 ## The popover
@@ -95,15 +95,15 @@ row answers each, in that order.
 
 | Work | L3 | Counted from |
 | --- | --- | --- |
-| Showing photos | `1,056 photos and videos left`, then `Downloading 214 of 1,020 · 3.2 GB of 9.8 GB` while background downloads let them be read | the rows enrichment's claims still owe whose tile shows a placeholder; the downloads' current run and their catalog sizes, no bytes when one has no size on record |
-| Finding people | `12,198 photos and videos to check` | People's unchecked tally |
-| Naming places | `894 places left` | the map cells with no name in the user's language |
-| Preparing search | `22,308 photos and videos left` | the items owed a search embedding |
-| Describing photos | `38,100 photos left` | the stills owed a description |
-| Looking for duplicates | `31,310 photos to compare` | the stills owed a render signature, which the groups are built from |
-| Reading details | `1,053 photos and videos left` | the rest of the rows enrichment's claims owe, less those only the user's work can read |
-| Syncing Immich: Home, listing | `18,400 photos and videos so far`, no bar | the assets the pass's stream has listed: the stream names no total ahead of its end, and the server's own statistics need not count what it lists |
-| Syncing Immich: Home, images | `2,100 of 6,000 thumbnails` | the rows tried of those owed the server's images when the fetch began, counted over the walk's own index; with no count, `2,100 thumbnails so far` and no bar |
+| Making thumbnails | `1,056 photos and videos left`, then `Downloading 214 of 1,020 · 3.2 GB of 9.8 GB` while background downloads let them be read | the rows enrichment's claims owe a thumbnail made or remade (`EnrichmentPurpose.thumbnail`); never an Immich account's, whose sync brings them; the downloads' current run and their catalog sizes, no bytes when one has no size on record |
+| Reading photo info | `1,053 photos and videos left` | the rows owed the details the Info pane shows (`EnrichmentPurpose.info`), less those only the user's work can read |
+| Scanning for faces | `12,198 photos and videos to scan` | the stills not yet checked for faces, and the videos enrichment owes their faces (`EnrichmentPurpose.faces`) |
+| Looking up place names | `894 locations to look up` | the map's areas (cells of nearby photos) with no name in the user's language: never a count of photos |
+| Indexing for search | `22,308 photos and videos left` | the items owed a search embedding |
+| Writing descriptions | `38,100 photos left` | the stills owed a description |
+| Finding duplicates | `31,310 photos and videos to compare` | the stills owed a render signature, which the groups are built from, and the files owed the digest that tells exact copies apart (`EnrichmentPurpose.copies`) |
+| Syncing “Home”, listing | `18,400 photos and videos so far`, no bar | the assets the pass's stream has listed: the stream names no total ahead of its end, and the server's own statistics need not count what it lists |
+| Syncing “Home”, images | `2,100 of 6,000 thumbnails` | the rows tried of those owed the server's images when the fetch began, counted over the walk's own index; with no count, `2,100 thumbnails so far` and no bar |
 
 HIG review (Progress indicators):
 
@@ -135,20 +135,22 @@ it; a row's act is its own control after it.
 
 ## Names
 
-Each row says what the work does for the user, in words a user knows (DES-035): an outcome
-they would notice missing. A user cannot tell finding a face from recognizing its person, so
-that pair is one row.
+Each row is a verb and the thing Otos makes, in words a user knows (DES-035; HIG Writing:
+"Choose words that are easily understood and convey the right thing"; Progress indicators:
+"Avoid vague terms like loading"), so it says what Otos does and the user can find what it
+gives them in the app. Each piece of enrichment's work is filed under the one row whose
+outcome it serves (`EnrichmentPurpose`), never under a row of its own.
 
 | Work | Row and line |
 | --- | --- |
-| A first thumbnail for each photo or video still showing a placeholder, and the downloads that lets it be read | `Showing photos` |
-| Faces in stills and video frames, put together into people | `Finding people` |
-| Countries and towns | `Naming places` |
-| What search reads in each photo | `Preparing search` |
-| Descriptions | `Describing photos` |
-| Duplicate groups | `Looking for duplicates` |
-| Everything else read of items that already show a thumbnail — details, digests, a better rendering — and details read again after Otos learned to read more | `Reading details`: listed only while it works, last, never with a problem |
-| An Immich account | `Syncing Immich: Home`; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account |
+| A thumbnail and preview made for each photo or video, or remade when its file changed or a RAW is developed, and the downloads that let it be read | `Making thumbnails` |
+| The details the Info pane shows — dates, camera, lens, place — read from each file, or from an account's server, and read again after Otos learned to read more | `Reading photo info` |
+| Faces detected in stills' previews and videos' frames, then grouped into people | `Scanning for faces` |
+| Towns and countries for the map's areas | `Looking up place names` |
+| What search compares a query with, made for each item | `Indexing for search` |
+| A description of each still, written by Apple Intelligence | `Writing descriptions` |
+| Fingerprints of each still and digests of each file, compared into duplicate groups | `Finding duplicates` |
+| An Immich account | `Syncing “Home”`, the account's sidebar glyph; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
 bar), Move to Trash (the trash status bar), export and reorganization (their sheets and

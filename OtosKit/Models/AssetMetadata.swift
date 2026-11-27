@@ -263,6 +263,58 @@ nonisolated enum EnrichmentClaim: Hashable, Sendable, CaseIterable {
     }
 }
 
+/// What an owed row's enrichment gives the user, as the Activity surface names it (ADR 0058):
+/// each row owed under a claim is filed under exactly one, the first that applies.
+///
+/// - `thumbnail`: a thumbnail made or remade — the rendering a library or a card owes, or, on
+///   a root first read for its metadata, a tile that still shows a placeholder. Never an
+///   Immich account's row: the account's sync brings its thumbnails from the server.
+/// - `faces`: a video's faces (a still's are read from its preview, `PreviewFaceReader`).
+/// - `info`: the details the Info pane shows — dates, camera, lens, place — read from the
+///   file, or from an account's server in ranges.
+/// - `copies`: the file's digest, which tells exact copies apart (duplicates).
+///
+/// `EnrichmentClaimGateway.purposeSQL` is the SQL twin the Activity counts read; the two file
+/// every row alike.
+nonisolated enum EnrichmentPurpose: CaseIterable, Sendable {
+    case thumbnail
+    case faces
+    case info
+    case copies
+
+    /// The purpose `asset`, owed under `claim`, is filed under; `isAccount` for an Immich
+    /// account's row. A row owed nothing any rule here names (an account's original made
+    /// local and claimed for its rendering) is a thumbnail: that is what its work makes.
+    static func of(_ asset: MediaAsset, claim: EnrichmentClaim, isAccount: Bool) -> EnrichmentPurpose {
+        let owesThumbnail = claim.renders ? asset.renderingStale : asset.showsPlaceholder
+        if !isAccount, owesThumbnail {
+            return .thumbnail
+        }
+        if claim.readsVideoFaces, asset.videoFacesStale {
+            return .faces
+        }
+        if asset.metadataStale {
+            return .info
+        }
+        if claim.renders, asset.hashStale {
+            return .copies
+        }
+        return .thumbnail
+    }
+}
+
+nonisolated extension EnrichmentClaim {
+    /// Rows claimed under it are rendered and digested (a library, a card's second pass).
+    var renders: Bool {
+        self == .library || self == .products
+    }
+
+    /// Rows claimed under it are read for a video's faces.
+    var readsVideoFaces: Bool {
+        self == .library || self == .account
+    }
+}
+
 /// Whether a claim may hand out a video's faces. Held while the face model cannot be
 /// loaded (`EnrichmentSchedule.holdVideoFaces`): no video can be read for them then, so
 /// none is claimed for them. Process state the scheduler owns, passed to each claim as a

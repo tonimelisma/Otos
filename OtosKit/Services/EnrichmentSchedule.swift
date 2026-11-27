@@ -337,7 +337,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 isDeviceStaging: work.isDeviceStaging,
                 attemptCount: keepsWait ? work.attemptCount : 0,
                 retryNotBefore: keepsWait ? work.retryNotBefore : nil,
-                showsFirstThumbnail: work.showsFirstThumbnail
+                purpose: work.purpose
             )
             if record.hold == .pacing {
                 record.hold = .transferSlot
@@ -470,7 +470,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
                 isDeviceStaging: work.isDeviceStaging,
                 attemptCount: attemptCount,
                 retryNotBefore: notBefore,
-                showsFirstThumbnail: work.showsFirstThumbnail
+                purpose: work.purpose
             ),
             ownsStoreClaim: record.ownsStoreClaim,
             isInFlight: false,
@@ -517,7 +517,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
             isDeviceStaging: work.isDeviceStaging,
             attemptCount: attemptCount,
             retryNotBefore: now.advanced(by: delay),
-            showsFirstThumbnail: work.showsFirstThumbnail
+            purpose: work.purpose
         )
     }
 
@@ -554,7 +554,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         cause: OwnerTrouble.Cause,
         now: ContinuousClock.Instant,
         holdingClaim: Bool = false,
-        showsFirstThumbnail: Bool = false
+        purpose: EnrichmentPurpose = .thumbnail
     ) {
         retryLedger[id] = RetryLedgerEntry(
             notBefore: now.advanced(by: retrySchedule.ledgerPacing),
@@ -562,7 +562,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
             sourceSize: sourceSize,
             cause: cause,
             holdsStoreClaim: holdingClaim,
-            showsFirstThumbnail: showsFirstThumbnail
+            purpose: purpose
         )
     }
 
@@ -573,7 +573,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
     }
 
     /// The rows that wait out a failure before they are read again, or are being read again,
-    /// apart by whether their tile still shows a placeholder: the pacing ledger's rows it holds
+    /// by the purpose each was claimed for (`EnrichmentPurpose`): the pacing ledger's rows it holds
     /// back now — not yet due, holding their Store claim, or claimed again and being read
     /// (`isClaimed`) — since a row stays in the ledger until its next read lands; transfers
     /// parked after failing or turned away by the free-space floor; and transfers that failed
@@ -586,39 +586,43 @@ nonisolated struct EnrichmentSchedule: Sendable {
         var rows = ParkedRows()
         for (id, entry) in retryLedger where entry.notBefore > now || entry.holdsStoreClaim || isClaimed(id) {
             if entry.cause.standing == .userWorkOnly {
-                rows.add(\.userWorkOnly, showsFirstThumbnail: entry.showsFirstThumbnail)
+                rows.add(\.userWorkOnly, purpose: entry.purpose)
             } else {
-                rows.add(\.parked, showsFirstThumbnail: entry.showsFirstThumbnail)
+                rows.add(\.parked, purpose: entry.purpose)
             }
         }
         for record in parked.values
             where !record.work.isDeviceStaging && (record.hold == .pacing || record.hold == .freeSpace)
         {
-            rows.add(\.parked, showsFirstThumbnail: record.work.showsFirstThumbnail)
+            rows.add(\.parked, purpose: record.work.purpose)
         }
         for record in materializations.values where !record.work.isDeviceStaging && record.work.attemptCount > 0 {
-            rows.add(\.parked, showsFirstThumbnail: record.work.showsFirstThumbnail)
+            rows.add(\.parked, purpose: record.work.purpose)
         }
         return rows
     }
 
-    /// What stops rows at `now`, by cause, in `OwnerTrouble.Cause` order: rows the ledger
+    /// What stops rows at `now`, by cause, in `OwnerTrouble.Cause` order, of every purpose or of
+    /// `purpose` alone (the Activity kind that counts it): rows the ledger
     /// paces, transfers parked after failing or turned away by the free-space floor, transfers
     /// waiting for an in-window retry, and every video's faces while the face model is missing.
     /// A transfer waiting only for a slot is not stopped: it is queued.
-    func troubles(at now: ContinuousClock.Instant) -> [OwnerTrouble] {
+    func troubles(at now: ContinuousClock.Instant, purpose: EnrichmentPurpose? = nil) -> [OwnerTrouble] {
+        let counted = { (rowPurpose: EnrichmentPurpose) in purpose.map { $0 == rowPurpose } ?? true }
         var counts: [OwnerTrouble.Cause: Int] = [:]
-        for entry in retryLedger.values where entry.notBefore > now {
+        for entry in retryLedger.values where entry.notBefore > now && counted(entry.purpose) {
             counts[entry.cause, default: 0] += 1
         }
-        for record in parked.values where record.work.retryNotBefore.map({ $0 > now }) ?? true {
+        for record in parked.values
+            where (record.work.retryNotBefore.map { $0 > now } ?? true) && counted(record.work.purpose)
+        {
             switch record.hold {
             case .pacing: counts[.downloadsFailed, default: 0] += 1
             case .freeSpace: counts[.diskFull, default: 0] += 1
             case .transferSlot, nil: break
             }
         }
-        for record in materializations.values where !record.isInFlight {
+        for record in materializations.values where !record.isInFlight && counted(record.work.purpose) {
             if let retry = record.work.retryNotBefore, retry > now {
                 counts[.downloadsFailed, default: 0] += 1
             }
@@ -626,7 +630,7 @@ nonisolated struct EnrichmentSchedule: Sendable {
         var troubles = OwnerTrouble.Cause.allCases.compactMap { cause in
             counts[cause].map { OwnerTrouble(cause, count: $0) }
         }
-        if let held = videoFacesHeldUntil, held > now {
+        if let held = videoFacesHeldUntil, held > now, counted(.faces) {
             troubles.append(OwnerTrouble(.faceModelUnavailable))
         }
         return troubles
@@ -802,8 +806,8 @@ private extension EnrichmentCoordinator.DownloadWork {
     }
 }
 
-/// Rows enrichment holds back, by kind of work they owe (`EnrichmentSchedule.parkedRows`):
-/// those whose tile still shows a placeholder (`showing…`) and the rest (`details…`).
+/// Rows enrichment holds back, by the purpose each was claimed for
+/// (`EnrichmentSchedule.parkedRows`).
 nonisolated struct ParkedRows: Equatable, Sendable {
     struct Counts: Equatable, Sendable {
         /// Rows waiting out a failure, or being tried again.
@@ -812,14 +816,13 @@ nonisolated struct ParkedRows: Equatable, Sendable {
         var userWorkOnly = 0
     }
 
-    var showing = Counts()
-    var details = Counts()
+    var byPurpose: [EnrichmentPurpose: Counts] = [:]
 
-    mutating func add(_ count: WritableKeyPath<Counts, Int>, showsFirstThumbnail: Bool) {
-        if showsFirstThumbnail {
-            showing[keyPath: count] += 1
-        } else {
-            details[keyPath: count] += 1
-        }
+    subscript(purpose: EnrichmentPurpose) -> Counts {
+        byPurpose[purpose] ?? Counts()
+    }
+
+    mutating func add(_ count: WritableKeyPath<Counts, Int>, purpose: EnrichmentPurpose) {
+        byPurpose[purpose, default: Counts()][keyPath: count] += 1
     }
 }

@@ -92,3 +92,29 @@ feasible, let people halt processing"). Halting loses nothing, and Otos already 
 work for memory, heat and Low Power Mode (ADR 0057); no owner asked for one. A System Settings
 button for Apple Intelligence: no deep link into its pane could be verified from a cloud
 session, so the row says where to go in words.
+
+## Second pass: the names (same day)
+
+The owner, reading the first pass's names: "So showing photos is not showing photos is it? And
+Finding people, is it actually finding people? Or detecting faces or what? And naming places?
+… Reading details is also incredibly obscure. Read apple hig and come up with new
+suggestions." Each name was checked against what its code does:
+
+- `Showing photos` made thumbnails; `Reading details` was three jobs — Info's details, the
+  digests duplicates are told by, thumbnails remade.
+- `Finding people` was mostly face detection (Apple Vision on previews and video frames),
+  then grouping. Apple's Photos counts the same work as photos "scanned" (Apple Support
+  Community threads quote its "0 photos scanned").
+- `Naming places` counted map cells, not photos.
+- `Preparing search` made each item's search embedding: nothing is identified or labelled.
+
+HIG Writing asks for "words that are easily understood and convey the right thing" and verbs
+in labels; Progress indicators: "Avoid vague terms". So each row became a verb and the thing
+Otos makes: `Making thumbnails`, `Reading photo info`, `Scanning for faces`, `Looking up place
+names` (`locations`), `Indexing for search` (macOS's own word for Spotlight's), `Writing
+descriptions`, `Finding duplicates`, and an account `Syncing “Home”`. Enrichment's work is
+filed under the outcome it serves (`EnrichmentPurpose`), and an account's rows never count as
+thumbnails, which its sync brings.
+
+Sources: [Check the status of your library in Photos for macOS](https://support.apple.com/119921);
+[0 Photos Scanned](https://discussions.apple.com/thread/254493558).

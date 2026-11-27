@@ -181,19 +181,22 @@ struct EnrichmentScheduleTests {
         #expect(schedule.troubles(at: start.advanced(by: .seconds(3600))).isEmpty, "every wait has passed")
     }
 
-    /// The rows held back, apart by whether their tile shows a placeholder: a paced row counts
-    /// while its wait runs, or once passed while a claim holds it, until its read lands; a row only the user's
-    /// work can read is no work left, counted apart.
+    /// The rows held back, by the outcome each was claimed for: a paced row counts while its
+    /// wait runs, or once passed while a claim holds it, until its read lands; a row only the
+    /// user's work can read is no work left, counted apart. What stops rows is told by outcome
+    /// too, so one kind's failures never stop another's.
     @Test func parkedRowsCountEveryHeldRowUntilItsReadLands() {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
-        schedule.pace(id("a.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start, showsFirstThumbnail: true)
-        schedule.pace(id("b.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start)
-        schedule.pace(id("c.jpg"), sourceSize: 100, cause: .sentOnlyWhenOpened, now: start)
-        let expected = ParkedRows(
-            showing: ParkedRows.Counts(parked: 1, userWorkOnly: 0), details: ParkedRows.Counts(parked: 1, userWorkOnly: 1)
-        )
+        schedule.pace(id("a.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start, purpose: .thumbnail)
+        schedule.pace(id("b.jpg"), sourceSize: 100, cause: .serverDidNotAnswer, now: start, purpose: .info)
+        schedule.pace(id("c.jpg"), sourceSize: 100, cause: .sentOnlyWhenOpened, now: start, purpose: .info)
+        let expected = ParkedRows(byPurpose: [
+            .thumbnail: ParkedRows.Counts(parked: 1, userWorkOnly: 0), .info: ParkedRows.Counts(parked: 1, userWorkOnly: 1),
+        ])
         let none: (MediaAssetID) -> Bool = { _ in false }
         #expect(schedule.parkedRows(at: start, isClaimed: none) == expected)
+        #expect(schedule.troubles(at: start, purpose: .thumbnail) == [OwnerTrouble(.serverDidNotAnswer, count: 1)])
+        #expect(schedule.troubles(at: start, purpose: .copies).isEmpty)
         let later = start.advanced(by: .seconds(3600))
         #expect(schedule.troubles(at: later).isEmpty)
         #expect(
@@ -207,7 +210,7 @@ struct EnrichmentScheduleTests {
 
         schedule.endPacing(id("a.jpg"))
         #expect(
-            schedule.parkedRows(at: start, isClaimed: none).showing == ParkedRows.Counts(),
+            schedule.parkedRows(at: start, isClaimed: none)[.thumbnail] == ParkedRows.Counts(),
             "a row whose read landed is held back no longer"
         )
     }

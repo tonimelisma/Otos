@@ -260,7 +260,7 @@ extension EnrichmentCoordinator {
                     captureLocalTime: asset.captureLocalTime,
                     isVideo: asset.bestKind == .video,
                     isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
-                    showsFirstThumbnail: asset.showsPlaceholder
+                    purpose: candidate.purpose
                 )
                 // With no slot for it, the row keeps its claim and waits held, handed off when
                 // a slot frees; given back, the next pass would claim it again to find the
@@ -276,7 +276,7 @@ extension EnrichmentCoordinator {
                 // stops claims through the root's answering fact.
                 schedule.pace(
                     asset.id, sourceSize: asset.byteSize, cause: .sentOnlyWhenOpened, now: now, holdingClaim: true,
-                    showsFirstThumbnail: asset.showsPlaceholder
+                    purpose: candidate.purpose
                 )
                 routing.readinessCounts["userWorkOnly", default: 0] += 1
             case .unreachable:
@@ -671,7 +671,7 @@ extension EnrichmentCoordinator {
             captureLocalTime: asset.captureLocalTime,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
             scope: candidate.scope,
-            showsFirstThumbnail: asset.showsPlaceholder
+            purpose: candidate.purpose
         )
     }
 

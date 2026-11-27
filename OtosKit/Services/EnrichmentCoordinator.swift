@@ -105,10 +105,9 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let isDeviceStaging: Bool
         /// What this enrichment reads and produces, as the Store's claim decided it.
         let scope: EnrichmentScope
-        /// The row had no thumbnail when it was claimed, and none is known not to come: its
-        /// tile shows a placeholder, so it is one of the photos still to show
-        /// (`ActivityKind.showingPhotos`).
-        let showsFirstThumbnail: Bool
+        /// What the row's work gives the user, as the Store filed it at the claim: the
+        /// Activity kind its completion counts toward.
+        let purpose: EnrichmentPurpose
     }
 
     nonisolated struct DownloadWork: Equatable, Sendable {
@@ -120,9 +119,9 @@ actor EnrichmentCoordinator: QuiescentOwner {
         let isDeviceStaging: Bool
         let attemptCount: Int
         let retryNotBefore: ContinuousClock.Instant?
-        /// The row's tile shows a placeholder until this download lets it be read
-        /// (`EnrichWork.showsFirstThumbnail`).
-        let showsFirstThumbnail: Bool
+        /// What the row's work, which this download lets run, gives the user
+        /// (`EnrichWork.purpose`).
+        let purpose: EnrichmentPurpose
 
         init(
             id: MediaAssetID,
@@ -133,7 +132,7 @@ actor EnrichmentCoordinator: QuiescentOwner {
             isDeviceStaging: Bool = false,
             attemptCount: Int = 0,
             retryNotBefore: ContinuousClock.Instant? = nil,
-            showsFirstThumbnail: Bool = false
+            purpose: EnrichmentPurpose = .thumbnail
         ) {
             self.id = id
             self.url = url
@@ -143,7 +142,7 @@ actor EnrichmentCoordinator: QuiescentOwner {
             self.isDeviceStaging = isDeviceStaging
             self.attemptCount = attemptCount
             self.retryNotBefore = retryNotBefore
-            self.showsFirstThumbnail = showsFirstThumbnail
+            self.purpose = purpose
         }
     }
 
@@ -168,8 +167,8 @@ actor EnrichmentCoordinator: QuiescentOwner {
         /// the row is out of every claim until its pacing passes or its source may have moved,
         /// so no pass claims it only to give it back.
         var holdsStoreClaim = false
-        /// The row's tile shows a placeholder (`EnrichWork.showsFirstThumbnail`).
-        var showsFirstThumbnail = false
+        /// What the row's work gives the user (`EnrichWork.purpose`).
+        var purpose = EnrichmentPurpose.thumbnail
     }
 
     let store: CatalogStore
@@ -205,11 +204,12 @@ actor EnrichmentCoordinator: QuiescentOwner {
     var pendingDeviceSeeds: [DeviceStagingSeed] = []
     var nextClaimSequence: UInt64 = 0
     var pendingApply: [EnrichmentResult] = []
-    /// The rows of `pendingApply` whose tile gets its first thumbnail from their result.
-    var pendingFirstThumbnails: Set<MediaAssetID> = []
-    /// Rows whose tile got its first thumbnail from an apply that wrote every result of its
-    /// batch, since the coordinator started: the `completed` of `Showing photos`.
-    var firstThumbnailsShown = 0
+    /// The purpose each row of `pendingApply` was claimed for.
+    var pendingPurposes: [MediaAssetID: EnrichmentPurpose] = [:]
+    /// The rows written by an apply that wrote every result of its batch, since the
+    /// coordinator started, by the purpose each was claimed for: each Activity kind's
+    /// `completed`.
+    var finishedByPurpose: [EnrichmentPurpose: Int] = [:]
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
     var isShuttingDown = false
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
@@ -672,12 +672,13 @@ extension EnrichmentCoordinator {
         schedule.troubles(at: ContinuousClock.now)
     }
 
-    /// The rows its walk still owes, under the claims it claims them under now, as two kinds
-    /// of work (ADR 0058): the rows whose tile still shows a placeholder (`Showing photos`),
-    /// and the rest, whose details, digest or better rendering are still to read
-    /// (`Reading details`). Rows only the user's work can read are no work left
-    /// (`OwnerTrouble.Standing.userWorkOnly`); rows that wait out a failure are parked.
+    /// The rows its walk still owes, under the claims it claims them under now, of the
+    /// outcome `kind` is (ADR 0058, `EnrichmentPurpose`): thumbnails, a video's faces, the
+    /// photo info, the digests duplicates are told by. Rows only the user's work can read are
+    /// no work left (`OwnerTrouble.Standing.userWorkOnly`); rows that wait out a failure are
+    /// parked.
     func progress(for kind: ActivityKind) async -> WorkProgress? {
+        guard let purpose = Self.purpose(of: kind) else { return nil }
         let videoFaces = schedule.videoFaces(at: ContinuousClock.now)
         let left: EnrichmentLeft
         do {
@@ -686,22 +687,27 @@ extension EnrichmentCoordinator {
             WorkProgress.logFailure(owner: "enrichment", error)
             return nil
         }
-        let rows = schedule.parkedRows(at: ContinuousClock.now) { readyClaims[$0] != nil }
-        let counts: ParkedRows.Counts
-        let owed: Int
-        let completed: Int
+        let parked = schedule.parkedRows(at: ContinuousClock.now) { readyClaims[$0] != nil }
+        let counts = parked[purpose]
+        let workLeft = max(left[purpose] - counts.userWorkOnly, 0)
+        return .counted(completed: finishedByPurpose[purpose] ?? 0, left: workLeft, parked: min(counts.parked, workLeft))
+    }
+
+    /// What stops the work of `kind`'s outcome now (`EnrichmentSchedule.troubles`).
+    func troubles(for kind: ActivityKind) async -> [OwnerTrouble] {
+        schedule.troubles(at: ContinuousClock.now, purpose: Self.purpose(of: kind))
+    }
+
+    /// The purpose an Activity kind counts of enrichment's work; nil for a kind it does not
+    /// serve.
+    static func purpose(of kind: ActivityKind) -> EnrichmentPurpose? {
         switch kind {
-        case .showingPhotos:
-            (counts, owed, completed) = (rows.showing, left.withoutThumbnail, firstThumbnailsShown)
-        case .readingDetails:
-            (counts, owed, completed) = (
-                rows.details, left.total - left.withoutThumbnail, activity.finishedItems - firstThumbnailsShown
-            )
-        default:
-            return nil
+        case .makingThumbnails: .thumbnail
+        case .readingPhotoInfo: .info
+        case .scanningFaces: .faces
+        case .findingDuplicates: .copies
+        case .lookingUpPlaces, .indexingForSearch, .writingDescriptions: nil
         }
-        let workLeft = max(owed - counts.userWorkOnly, 0)
-        return .counted(completed: max(completed, 0), left: workLeft, parked: min(counts.parked, workLeft))
     }
 
     /// Asks the Store which of the rows to check it still offers, and ends the demands of rows

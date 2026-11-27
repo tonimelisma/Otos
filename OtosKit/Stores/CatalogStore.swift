@@ -480,15 +480,20 @@ nonisolated struct DigestStanding: Equatable, Sendable {
 /// claimed under and its staleness at that moment (ADR 0018). Carried rather than
 /// re-derived downstream: a later re-derivation reads root kind from a possibly-staler
 /// cache and can disagree with the predicate the row was actually claimed under.
-/// What enrichment's walk still owes (`CatalogStore.enrichmentLeft`): every row, claimed or
-/// not, and those of them whose tile shows a placeholder (`MediaAsset.showsPlaceholder`).
+/// What enrichment's walk still owes (`CatalogStore.enrichmentLeft`): its rows, claimed or
+/// not, by the purpose each is filed under (`EnrichmentPurpose`).
 nonisolated struct EnrichmentLeft: Equatable, Sendable {
-    var total = 0
-    var withoutThumbnail = 0
+    var byPurpose: [EnrichmentPurpose: Int] = [:]
+
+    subscript(purpose: EnrichmentPurpose) -> Int {
+        byPurpose[purpose] ?? 0
+    }
 }
 
 nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let asset: MediaAsset
+    /// What the row's work gives the user, filed as the Activity counts file it.
+    let purpose: EnrichmentPurpose
     let scope: EnrichmentScope
 }
 
@@ -4634,6 +4639,7 @@ extension CatalogStore {
             return claim.admitting(videoFaces)
         }
         let owingNothing = Set(priorityAssetsByID.values.filter { !$0.needsEnrichment(firstClaim($0.libraryRootPath)) }.map(\.id))
+        let accountRootPaths = Set(roots.values.filter { $0.root.kind == .immichAccount }.map(\.root.path))
         let eligibleClaims = EnrichmentClaimGateway.priorityClaimInputs(
             ids: ids,
             assetsByID: priorityAssetsByID,
@@ -4662,6 +4668,7 @@ extension CatalogStore {
                 }
                 candidates.append(ClaimedEnrichmentCandidate(
                     asset: asset,
+                    purpose: EnrichmentPurpose.of(asset, claim: claim, isAccount: accountRootPaths.contains(asset.libraryRootPath)),
                     scope: EnrichmentScope(claim: claim, asset: asset)
                 ))
             }
@@ -4783,6 +4790,9 @@ extension CatalogStore {
             let asset = mediaAsset(from: entry.asset, rootPath: rootPath)
             return ClaimedEnrichmentCandidate(
                 asset: asset,
+                purpose: EnrichmentPurpose.of(
+                    asset, claim: entry.claim, isAccount: roots[rootPath]?.root.kind == .immichAccount
+                ),
                 scope: EnrichmentScope(claim: entry.claim, asset: asset)
             )
         }
@@ -11532,31 +11542,36 @@ extension CatalogStore {
     func enrichmentLeft(videoFaces: VideoFacesAdmission, lane: CatalogReadLane) async throws -> EnrichmentLeft {
         let (library, account, metadataFirst) = roots.enrichableRootIDsByFirstClaim()
         let cards = Set(roots.enrichableCardRootIDs())
-        let sources: [(rootID: Int64, claim: EnrichmentClaim)] =
-            library.sorted().map { ($0, EnrichmentClaim.library.admitting(videoFaces)) }
-                + account.sorted().map { ($0, EnrichmentClaim.account.admitting(videoFaces)) }
-                + metadataFirst.sorted().map { ($0, cards.contains($0) ? EnrichmentClaim.products : .metadata) }
+        let sources: [(rootID: Int64, claim: EnrichmentClaim, isAccount: Bool)] =
+            library.sorted().map { ($0, EnrichmentClaim.library.admitting(videoFaces), false) }
+                + account.sorted().map { ($0, EnrichmentClaim.account.admitting(videoFaces), true) }
+                + metadataFirst.sorted().map { ($0, cards.contains($0) ? EnrichmentClaim.products : .metadata, false) }
         guard !sources.isEmpty else { return EnrichmentLeft() }
         return try await reader(for: lane).readFreeingConnection { db in
             var left = EnrichmentLeft()
             for source in sources {
                 guard let row = try Row.fetchOne(
                     db,
-                    sql: EnrichmentClaimGateway.leftSQL(source.claim),
+                    sql: EnrichmentClaimGateway.leftSQL(source.claim, isAccount: source.isAccount),
                     arguments: [source.rootID]
                 ) else { continue }
-                left.total += row[0] as Int
-                left.withoutThumbnail += row[1] as Int
+                for (index, purpose) in EnrichmentPurpose.allCases.enumerated() {
+                    let count: Int = row[index]
+                    if count > 0 {
+                        left.byPurpose[purpose, default: 0] += count
+                    }
+                }
             }
             return left
         }
     }
 
-    /// The photos and videos not yet checked for faces in the available roots whose faces
-    /// Otos reads: People's unchecked tally.
+    /// The stills not yet checked for faces in the available roots whose faces Otos reads:
+    /// what `PreviewFaceReader` owes. A video's faces are enrichment's
+    /// (`EnrichmentPurpose.faces`), counted there.
     func facesLeft(lane: CatalogReadLane) async throws -> Int {
         let available = Set(roots.values.filter { $0.availability == .available }.map(\.root.path))
-        return try await uncheckedForFaces(availableLibraryPaths: available, lane: lane).total
+        return try await uncheckedForFaces(availableLibraryPaths: available, lane: lane).photos
     }
 
     /// The map cells holding a located item with no name in `language`

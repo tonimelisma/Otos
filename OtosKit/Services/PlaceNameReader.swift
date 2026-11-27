@@ -148,7 +148,7 @@ actor PlaceNameReader: QuiescentOwner {
         backoff == nil ? [] : [OwnerTrouble(.placeNamesFailed)]
     }
 
-    /// The map cells with no name in the user's language: the count behind `Naming places`
+    /// The map cells with no name in the user's language: the count behind `Looking up place names`
     /// (ADR 0058).
     func progress(for _: ActivityKind) async -> WorkProgress? {
         let language = PlaceNameLanguage(locale())

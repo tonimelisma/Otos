@@ -93,7 +93,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             )
         }
         var rows: [Row] = []
-        var working: [(since: Date, row: Row, kind: ActivityKind?)] = []
+        var working: [(since: Date, row: Row)] = []
         var unlisted = 0
         for entry in snapshot.entries {
             guard let row = row(entry, uncheckedFaces: uncheckedFaces, sourceNames: sourceNames) else {
@@ -102,7 +102,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             }
             rows.append(row)
             if case let .working(since) = entry.state {
-                working.append((since, row, entry.kind))
+                working.append((since, row))
             }
         }
         for account in accounts {
@@ -112,12 +112,9 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             }
             rows.append(row)
             if row.status == .working {
-                working.append((.distantFuture, row, nil))
+                working.append((.distantFuture, row))
             }
         }
-        // `Reading details` names the line only when nothing else works: the user sees nothing
-        // missing of it, but the line never says up to date while work runs.
-        let named = working.filter { $0.kind != .readingDetails }
         let needsYou = rows.filter { $0.status == .needsYou }
         let waiting = rows.filter { $0.status == .waiting || $0.status == .needsYou }
         let line: String
@@ -129,7 +126,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             lineDetail = more(rows.count - 1) ?? first.reason.map(firstSentence)
             lineStatus = .needsYou
             header = working.isEmpty ? "Waiting on \(things(waiting.count))" : "Working on \(things(working.count))"
-        } else if let first = (named.isEmpty ? working : named).min(by: { $0.since < $1.since }) {
+        } else if let first = working.min(by: { $0.since < $1.since }) {
             line = first.row.title
             lineDetail = more(rows.count - 1)
             lineStatus = .working
@@ -156,9 +153,8 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         )
     }
 
-    /// A watched kind's row, or nil when the user would see nothing of it: up to date, or
-    /// `Reading details` while it does not work. What it does, how many items it has left, the
-    /// downloads it waits on, then what pauses or stops it.
+    /// A watched kind's row, or nil when it is up to date: what it does, how many items it has
+    /// left, the downloads it waits on, then what pauses or stops it.
     private static func row(
         _ entry: ActivityEntry,
         uncheckedFaces: MediaCount?,
@@ -177,15 +173,11 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             status = .waiting
             details = progress + [holdText(hold)] + troubles
         case .waiting:
-            guard entry.kind != .readingDetails else { return nil }
             status = said.contains { $0.cause.standing == .needsYou } ? .needsYou : .waiting
             // Items that wait out their own failures say only that they are tried again: which
             // failure is the log's, not the user's (HIG Feedback).
             details = progress + (troubles.isEmpty ? ["Otos will try these again later."] : troubles)
         case .upToDate:
-            return nil
-        }
-        if entry.kind == .readingDetails, status != .working {
             return nil
         }
         return Row(
@@ -211,17 +203,19 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         }
         let left = max(progress.left, 0)
         let count = left.formatted()
+        let items = left == 1 ? "photo or video" : "photos and videos"
         switch entry.kind {
-        case .showingPhotos, .preparingSearch, .readingDetails:
-            return "\(count) \(left == 1 ? "photo or video" : "photos and videos") left"
-        case .findingPeople:
-            return "\(count) \(left == 1 ? "photo or video" : "photos and videos") to check"
-        case .namingPlaces:
-            return "\(count) \(left == 1 ? "place" : "places") left"
-        case .describingPhotos:
+        case .makingThumbnails, .readingPhotoInfo, .indexingForSearch:
+            return "\(count) \(items) left"
+        case .scanningFaces:
+            return "\(count) \(items) to scan"
+        case .lookingUpPlaces:
+            // The work's own unit: a map area holding nearby photos, never a photo.
+            return "\(count) \(left == 1 ? "location" : "locations") to look up"
+        case .writingDescriptions:
             return "\(count) \(left == 1 ? "photo" : "photos") left"
         case .findingDuplicates:
-            return "\(count) \(left == 1 ? "photo" : "photos") to compare"
+            return "\(count) \(items) to compare"
         }
     }
 
@@ -264,7 +258,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             }
         }
         return Row(
-            id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing Immich: \(account.name)",
+            id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing “\(account.name)”",
             details: details, status: status, bar: bar, reason: status == .working ? nil : details.first, action: action
         )
     }
@@ -307,25 +301,25 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
     /// What the work does, in the user's words: the row's L2, and the line's while it works.
     static func title(_ kind: ActivityKind) -> String {
         switch kind {
-        case .showingPhotos: "Showing photos"
-        case .findingPeople: "Finding people"
-        case .namingPlaces: "Naming places"
-        case .preparingSearch: "Preparing search"
-        case .describingPhotos: "Describing photos"
-        case .findingDuplicates: "Looking for duplicates"
-        case .readingDetails: "Reading details"
+        case .makingThumbnails: "Making thumbnails"
+        case .readingPhotoInfo: "Reading photo info"
+        case .scanningFaces: "Scanning for faces"
+        case .lookingUpPlaces: "Looking up place names"
+        case .indexingForSearch: "Indexing for search"
+        case .writingDescriptions: "Writing descriptions"
+        case .findingDuplicates: "Finding duplicates"
         }
     }
 
     static func systemImage(_ kind: ActivityKind) -> String {
         switch kind {
-        case .showingPhotos: "photo.on.rectangle"
-        case .findingPeople: "person.2"
-        case .namingPlaces: "map"
-        case .preparingSearch: "magnifyingglass"
-        case .describingPhotos: "text.below.photo"
+        case .makingThumbnails: "photo.on.rectangle"
+        case .readingPhotoInfo: "info.circle"
+        case .scanningFaces: "person.2"
+        case .lookingUpPlaces: "map"
+        case .indexingForSearch: "magnifyingglass"
+        case .writingDescriptions: "text.below.photo"
         case .findingDuplicates: "square.on.square"
-        case .readingDetails: "info.circle"
         }
     }
 
@@ -377,7 +371,7 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
 
     /// The one exact count Otos holds for a kind's remaining work: People's unchecked tally.
     private static func countText(_ kind: ActivityKind, uncheckedFaces: MediaCount?) -> String? {
-        guard kind == .findingPeople, let uncheckedFaces, uncheckedFaces.total > 0 else { return nil }
-        return "\(uncheckedFaces.text) to check"
+        guard kind == .scanningFaces, let uncheckedFaces, uncheckedFaces.total > 0 else { return nil }
+        return "\(uncheckedFaces.text) to scan"
     }
 }

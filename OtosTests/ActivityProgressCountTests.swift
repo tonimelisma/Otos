@@ -25,8 +25,8 @@ struct ActivityProgressCountTests {
         let (store, ids, _) = try await catalogOfThreeStills()
         #expect(
             try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted)
-                == EnrichmentLeft(total: ids.count, withoutThumbnail: ids.count),
-            "every new row owes its products, and its tile shows a placeholder"
+                == EnrichmentLeft(byPurpose: [.thumbnail: ids.count]),
+            "every new row owes its products, filed under the thumbnail it still needs"
         )
     }
 
@@ -44,11 +44,9 @@ struct ActivityProgressCountTests {
             )
         })
 
-        #expect(
-            try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted)
-                == EnrichmentLeft(total: ids.count, withoutThumbnail: 0),
-            "a row with its thumbnail still owes its digest, but no longer shows a placeholder"
-        )
+        let written = try await store.backgroundReads.enrichmentLeft(videoFaces: .admitted)
+        #expect(written[.thumbnail] == 0, "a row with its rendering owes no thumbnail")
+        #expect(written[.copies] == ids.count, "each still owes its digest, filed under the copies duplicates are told by")
 
         let signatures = try await store.backgroundReads.renderSignatureCandidates(limit: 100).candidates
         #expect(signatures.count == ids.count)

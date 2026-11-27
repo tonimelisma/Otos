@@ -52,30 +52,33 @@ import OSLog
 // The loop holds the board weakly across its waits and ends with it; `shutdown()` ends it at
 // teardown.
 
-/// One background outcome the Activity surface names (DES-035: the user's nouns): something
-/// the user would notice missing. Declared in the order the popover lists them.
+/// One background outcome the Activity surface names (DES-035: the user's nouns), each said
+/// as what Otos does to give it: something the user would notice missing. Declared in the
+/// order the popover lists them.
 nonisolated enum ActivityKind: String, CaseIterable, Sendable {
-    /// The photos and videos whose tile still shows a placeholder, until their first thumbnail
-    /// is made (`EnrichmentCoordinator`), and the downloads of originals that lets
-    /// (`MaterializationCoordinator`, a detail of this row).
-    case showingPhotos
-    /// Faces found in stills and video frames, and put together into people
-    /// (`PreviewFaceReader`, `PeopleAssignment`).
-    case findingPeople
-    /// Countries and towns named for located items (`PlaceNameReader`).
-    case namingPlaces
-    /// What search reads in each photo (`PhotoSearchIndex`).
-    case preparingSearch
+    /// Thumbnails and previews made or remade (`EnrichmentCoordinator`,
+    /// `EnrichmentPurpose.thumbnail`), and the downloads of originals that lets
+    /// (`MaterializationCoordinator`, a detail of this row). An Immich account's thumbnails
+    /// are its sync's.
+    case makingThumbnails
+    /// The details the Info pane shows, read from each file, or from an account's server
+    /// (`EnrichmentCoordinator`, `EnrichmentPurpose.info`), and read again after Otos learned
+    /// to read more (`MetadataRefresher`).
+    case readingPhotoInfo
+    /// Faces detected in stills' previews (`PreviewFaceReader`) and videos' frames
+    /// (`EnrichmentCoordinator`, `EnrichmentPurpose.faces`), and grouped into people
+    /// (`PeopleAssignment`).
+    case scanningFaces
+    /// Towns and countries looked up for the map's areas (`PlaceNameReader`).
+    case lookingUpPlaces
+    /// What search compares a query with, made for each item (`PhotoSearchIndex`).
+    case indexingForSearch
     /// Each still's description (`PhotoDescriptionWriter`).
-    case describingPhotos
-    /// The duplicate groups and the render signatures they compare (`DuplicatesProjection`,
-    /// `RenderSignatureRefresher`).
+    case writingDescriptions
+    /// The duplicate groups, the render signatures they compare (`DuplicatesProjection`,
+    /// `RenderSignatureRefresher`) and the digests that tell exact copies apart
+    /// (`EnrichmentCoordinator`, `EnrichmentPurpose.copies`).
     case findingDuplicates
-    /// Everything else enrichment reads of items that already show a thumbnail — their
-    /// details, digests, a better rendering — and what it reads again after Otos learned to
-    /// read more (`EnrichmentCoordinator`, `MetadataRefresher`). Listed only while it works,
-    /// last, and never with a problem: the user sees nothing missing.
-    case readingDetails
 }
 
 /// How far one kind's current stretch of work is: `done` of `total` items, exact, and how
@@ -148,8 +151,9 @@ actor ActivityBoard {
     private var watched: [Watched] = []
     /// The start of each working kind's current stretch of work.
     private var workingSince: [ActivityKind: Date] = [:]
-    /// What each kind's counting owner had finished when its current stretch began.
-    private var stretchStarts: [ActivityKind: Int] = [:]
+    /// What each counting owner had finished, by its index in `watched`, when its kind's
+    /// current stretch began.
+    private var stretchStarts: [Int: Int] = [:]
     /// Each kind's progress as last published, kept while a count is not read again.
     private var progressByKind: [ActivityKind: ActivityProgress] = [:]
     /// Each watched owner's work as of its last successful count, by its index in `watched`:
@@ -220,7 +224,7 @@ actor ActivityBoard {
         var counts: [Counted] = []
         for (index, entry) in owners.enumerated() {
             var status = await entry.owner.status
-            status.troubles = await OwnerTrouble.stopping(entry.owner.troubles())
+            status.troubles = await OwnerTrouble.stopping(entry.owner.troubles(for: entry.kind))
             statuses.append((index, entry.kind, status))
             // Counted only while it works or something stops it, and only once its work moved.
             guard !status.isQuiescent || !status.troubles.isEmpty, countedAt[index] != status.work else { continue }
@@ -242,26 +246,35 @@ actor ActivityBoard {
 
     /// The stretch is over: the next one counts from its own start.
     private func endStretch(of kind: ActivityKind) {
-        stretchStarts[kind] = nil
         progressByKind[kind] = nil
         waitingAt[kind] = nil
         heldTroubles[kind] = nil
         for (index, entry) in watched.enumerated() where entry.kind == kind {
             countedAt[index] = nil
             lastCount[index] = nil
+            stretchStarts[index] = nil
         }
     }
 
-    /// A count applied to its kind's stretch: what the owner finished since the stretch began,
-    /// of that and what is left. A run of downloads is the kind's detail, not its count.
+    /// A count applied to its kind's stretch. Several owners can count one kind (a still's
+    /// faces and a video's; the render signatures and the digests duplicates compare), so the
+    /// kind's progress sums its counting owners' last counts: what each finished since the
+    /// stretch began, of that and what each has left. A run of downloads is the kind's detail,
+    /// not its count.
     private func record(_ counted: Counted) {
         countedAt[counted.index] = counted.work
         lastCount[counted.index] = counted.progress
-        guard case let .counted(completed, left, parked) = counted.progress else { return }
-        let start = stretchStarts[counted.kind] ?? completed
-        stretchStarts[counted.kind] = start
-        let done = max(completed - start, 0)
-        progressByKind[counted.kind] = ActivityProgress(done: done, total: done + left, parked: parked)
+        guard case let .counted(completed, _, _) = counted.progress else { return }
+        stretchStarts[counted.index] = stretchStarts[counted.index] ?? completed
+        var progress = ActivityProgress(done: 0, total: 0)
+        for (index, entry) in watched.enumerated() where entry.kind == counted.kind {
+            guard case let .counted(completed, left, parked) = lastCount[index] else { continue }
+            let done = max(completed - (stretchStarts[index] ?? completed), 0)
+            progress = ActivityProgress(
+                done: progress.done + done, total: progress.total + done + left, parked: progress.parked + parked
+            )
+        }
+        progressByKind[counted.kind] = progress
     }
 
     /// Whether an owner that is not quiescent moves its kind's work: one with no count of its

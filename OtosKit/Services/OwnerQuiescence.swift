@@ -601,6 +601,9 @@ nonisolated protocol QuiescentOwner: Actor {
     /// while nothing stops it. Every owner that arms a backoff wake reports the failure it
     /// waits out here.
     func troubles() async -> [OwnerTrouble]
+    /// What stops its work for `kind`: its troubles, or, for an owner serving several kinds
+    /// (enrichment), those of the work that kind counts.
+    func troubles(for kind: ActivityKind) async -> [OwnerTrouble]
     /// Rings the owner's wake path once, as an input it reads would, with no input changed:
     /// what a caller runs to see that a wake with nothing new costs nothing. An owner with no
     /// wake path (one pass a launch) does nothing.
@@ -665,6 +668,10 @@ extension QuiescentOwner {
     /// Nothing stops the owner.
     func troubles() async -> [OwnerTrouble] {
         []
+    }
+
+    func troubles(for _: ActivityKind) async -> [OwnerTrouble] {
+        await troubles()
     }
 
     /// Rings `ring` from now on in each step that can change whether this owner works or is

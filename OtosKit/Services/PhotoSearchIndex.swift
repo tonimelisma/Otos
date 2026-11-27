@@ -457,7 +457,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         retry == nil ? [] : [OwnerTrouble(.searchFailed)]
     }
 
-    /// The items owed a search embedding: the count behind `Preparing search` (ADR 0058).
+    /// The items owed a search embedding: the count behind `Indexing for search` (ADR 0058).
     func progress(for _: ActivityKind) async -> WorkProgress? {
         do {
             return try await activity.progress(left: store.backgroundReads.searchEmbeddingsLeft())

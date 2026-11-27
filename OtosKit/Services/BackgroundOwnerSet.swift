@@ -97,18 +97,20 @@ extension BackgroundOwnerSet {
     func activityOwners() async -> [ActivityBoard.Watched] {
         var owners = await projection.activityOwners()
         if starts.starts(.enrichment), let enrichment {
-            // One walk serves two outcomes, each counted apart; the downloads it waits on are
-            // the detail of the photos still to show.
+            // One walk serves four outcomes, each counted apart (`EnrichmentPurpose`); the
+            // downloads it waits on are the thumbnails' detail.
             owners += [
-                .init(kind: .showingPhotos, owner: enrichment),
-                .init(kind: .showingPhotos, owner: materialization, isDetail: true),
-                .init(kind: .readingDetails, owner: enrichment),
+                .init(kind: .makingThumbnails, owner: enrichment),
+                .init(kind: .makingThumbnails, owner: materialization, isDetail: true),
+                .init(kind: .readingPhotoInfo, owner: enrichment),
+                .init(kind: .scanningFaces, owner: enrichment),
+                .init(kind: .findingDuplicates, owner: enrichment),
             ]
         }
         let named: [(BackgroundOwner, ActivityKind, (any QuiescentOwner)?)] = [
-            (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .findingPeople, previewFaces),
-            (.placeNames, .namingPlaces, placeNames), (.searchIndex, .preparingSearch, searchIndex),
-            (.descriptions, .describingPhotos, descriptions), (.metadataRefresh, .readingDetails, metadata),
+            (.renderSignatures, .findingDuplicates, renderSignatures), (.previewFaces, .scanningFaces, previewFaces),
+            (.placeNames, .lookingUpPlaces, placeNames), (.searchIndex, .indexingForSearch, searchIndex),
+            (.descriptions, .writingDescriptions, descriptions), (.metadataRefresh, .readingPhotoInfo, metadata),
         ]
         for (owner, kind, running) in named where starts.starts(owner) {
             if let running {

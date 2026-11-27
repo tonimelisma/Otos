@@ -518,7 +518,7 @@ actor MaterializationCoordinator: MaterializationRequesting, QuiescentOwner {
     }
 
     /// The current run of downloads: how many finished of how many asked, their bytes, and
-    /// what the most pressing of them is for: the line `Showing photos` says of the
+    /// what the most pressing of them is for: the line `Making thumbnails` says of the
     /// downloads it waits on (ADR 0058); nil while nothing is pending or in flight.
     func progress(for _: ActivityKind) async -> WorkProgress? {
         let asked = pendingByID.values.map { ($0.request, $0.effectivePriority) }
