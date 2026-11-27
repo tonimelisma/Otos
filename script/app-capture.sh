@@ -8,8 +8,9 @@
 # the launch check a release passes before it publishes (script/release.sh): an app that
 # cannot reach its first grid and draw its window writes no capture, and this fails.
 #
-# For each appearance it launches the app in a sandbox home (script/sandbox-library.sh: a
-# library of generated photos on a disk image of its own), which the app registers through
+# For each appearance it launches the app in a sandbox home of that launch's own
+# (script/sandbox-library.sh: a library of generated photos on a disk image of its own), so a
+# launch that cannot end holds no catalog or volume the next one opens. The app registers it through
 # its own Add Library intent (`OTOS_SANDBOX_LIBRARY`), and asks for the app's own rendering
 # (`OTOS_SMOKE_CAPTURE_PATH`, ADR 0020). It waits on the app's reports: `op=launch.firstGrid`,
 # then `op=smoke.capture phase=finish` (or `failed`), from this launch's process only. That
@@ -47,17 +48,21 @@ if ! /usr/bin/codesign --verify --deep --strict "$APP" 2>&1; then
 fi
 echo "op=appCapture phase=signature outcome=valid app=$APP"
 
-HOME_DIR="$ROOT_DIR/build/capture-homes/$(date -u +%Y%m%dT%H%M%SZ)-$$"
-mkdir -p "$(dirname "$HOME_DIR")"
+HOMES_DIR="$ROOT_DIR/build/capture-homes/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir -p "$HOMES_DIR"
 APP_PID=""
 
 # Ends a launch's process: a TERM, then a wait for the kernel to report it gone (a zombie
 # child counts as gone; `wait` reaps it), then a KILL after twenty seconds. A process that
-# outlives even the KILL is stuck in the kernel; on CI's runner a dark launch did, twice
-# (runs 45859820816 and 45872381898), each time holding the job until its limit. Such a
-# process is never waited on: its state (`ps`, the kernel wait channel) and a short `sample`
-# of its threads are printed, so the next one says where it is stuck, and the capture,
-# already written, stands.
+# outlives even the KILL is stuck in the kernel. On CI's virtual Mac that is the
+# paravirtualized VideoToolbox driver: as the exiting process's video sessions are torn down
+# it messages the VM's host and sleeps until the host answers, which it sometimes never does
+# (docs/research/2026-11-27-a-capture-launch-stuck-in-the-vms-video-driver.md). The process
+# keeps its memory-mapped files, so its home's volume stays mounted; a home of its own keeps
+# that from reaching the next launch. Such a process is never waited on. What it is stuck on is written beside the captures: its threads' kernel and user
+# stacks (`spindump`, which reads an exiting process where `sample` cannot attach) and its
+# open files (`lsof`). Both need root, which CI's runner grants without a password (`sudo -n`);
+# where it is refused, the refusal is the record. The capture, already written, stands.
 gone() {
   local state
   state="$(/bin/ps -o stat= -p "$1" 2>/dev/null)"
@@ -83,12 +88,19 @@ end_app() {
   echo "op=appCapture phase=killed pid=$pid reason=outlivedTerm waitedSeconds=20" >&2
   kill -KILL "$pid" 2>/dev/null || true
   wait_gone "$pid" 100 && return 0
-  echo "op=appCapture phase=unkillable pid=$pid state=\"$(/bin/ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null | tr -s ' ')\"" >&2
-  local sample_file="$OUT/unkillable-$pid.sample.txt"
-  /usr/bin/sample "$pid" 2 -file "$sample_file" > /dev/null 2>&1 &
-  local sampler="$!"
-  wait_gone "$sampler" 150 || kill -KILL "$sampler" 2>/dev/null || true
-  [[ -s "$sample_file" ]] && echo "op=appCapture phase=sampled pid=$pid file=$sample_file" >&2
+  echo "op=appCapture phase=unkillable pid=$pid state=\"$(/bin/ps -o stat=,etime= -p "$pid" 2>/dev/null | tr -s ' ')\"" >&2
+  local stacks="$OUT/unkillable-$pid.spindump.txt" files="$OUT/unkillable-$pid.lsof.txt"
+  /usr/bin/sudo -n /usr/sbin/lsof -n -w -p "$pid" > "$files" 2>&1 || true
+  /usr/bin/sudo -n /usr/sbin/spindump "$pid" 2 -file "$stacks" > "$stacks.log" 2>&1 &
+  local dumper="$!"
+  # time: deadline — spindump samples for two seconds, then symbolicates; it reports its end
+  # by exiting.
+  wait_gone "$dumper" 900 || kill -KILL "$dumper" 2>/dev/null || true
+  if [[ -s "$stacks" ]]; then
+    echo "op=appCapture phase=stacks pid=$pid file=$stacks openFiles=$files" >&2
+  else
+    echo "op=appCapture phase=stacks pid=$pid outcome=none detail=\"$(tr '\n' ' ' < "$stacks.log" | cut -c1-200)\" openFiles=$files" >&2
+  fi
   return 0
 }
 
@@ -97,16 +109,14 @@ cleanup() {
   if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" 2>/dev/null; then
     end_app "$APP_PID"
   fi
-  if [[ -e "$HOME_DIR" ]]; then
-    "$ROOT_DIR/script/sandbox-library.sh" check-trash --home "$HOME_DIR" || true
-    "$ROOT_DIR/script/sandbox-library.sh" destroy --home "$HOME_DIR" || true
-  fi
+  local home
+  for home in "$HOMES_DIR"/*; do
+    [[ -e "$home" ]] || continue
+    "$ROOT_DIR/script/sandbox-library.sh" destroy --home "$home" || true
+  done
+  rmdir "$HOMES_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
-
-"$ROOT_DIR/script/sandbox-library.sh" create --home "$HOME_DIR" --count "$PHOTOS" --media small
-LIBRARY="$(/usr/bin/sed -n 's/^library=//p' "$HOME_DIR/.otos-sandbox-library")"
-[[ -n "$LIBRARY" ]] || { echo "op=appCapture phase=failed reason=noSandboxLibrary home=$HOME_DIR" >&2; exit 1; }
 
 # The number of the largest on-screen, normal-level window the process owns, through
 # CoreGraphics from JavaScript for Automation: numbers, owners and bounds need no Screen
@@ -131,11 +141,15 @@ JXA
 capture_one() {
   local appearance="$1" line="" status=0 scope="unknown" number=""
   local png="$OUT/window-$appearance.png" rendering="$OUT/window-$appearance-rendering.png"
+  local home="$HOMES_DIR/$appearance" library
   rm -f "$png" "$rendering"
+  "$ROOT_DIR/script/sandbox-library.sh" create --home "$home" --count "$PHOTOS" --media small
+  library="$(/usr/bin/sed -n 's/^library=//p' "$home/.otos-sandbox-library")"
+  [[ -n "$library" ]] || { echo "op=appCapture phase=failed reason=noSandboxLibrary home=$home" >&2; return 1; }
   otos_log_stream_open "subsystem == \"$SUBSYSTEM\" AND processImagePath == \"$EXECUTABLE\" AND (eventMessage BEGINSWITH \"op=launch.firstGrid\" OR eventMessage BEGINSWITH \"op=smoke.capture\" OR eventMessage BEGINSWITH \"op=ui.mediaGrid.visibleThumbnails phase=complete\")" debug
   # -ApplePersistenceIgnoreState: AppKit keeps window state per bundle id in the account,
   # not the sandbox home; a session that last quit with no window would restore none.
-  env HOME="$HOME_DIR" CFFIXED_USER_HOME="$HOME_DIR" OTOS_SANDBOX_LIBRARY="$LIBRARY" \
+  env HOME="$home" CFFIXED_USER_HOME="$home" OTOS_SANDBOX_LIBRARY="$library" \
     OTOS_SMOKE_CAPTURE_PATH="$rendering" OTOS_SMOKE_APPEARANCE="$appearance" \
     "$EXECUTABLE" -ApplePersistenceIgnoreState YES > /dev/null 2>&1 3<&- &
   APP_PID="$!"
@@ -186,6 +200,9 @@ capture_one() {
   end_app "$APP_PID"
   echo "op=appCapture phase=quit appearance=$appearance pid=$APP_PID"
   APP_PID=""
+  # Its home goes now, unless a process that cannot end still holds its volume: then it is
+  # reported, and tried again as the script ends.
+  "$ROOT_DIR/script/sandbox-library.sh" destroy --home "$home" || true
   if [[ "$status" == 0 ]]; then
     if [[ ! -s "$png" ]]; then
       echo "op=appCapture phase=failed reason=noPNG path=$png" >&2

@@ -50,7 +50,7 @@ struct MountedTestDiskImage {
             let entities = report["system-entities"] as? [[String: Any]]
         else {
             // Attached, but its report names nothing: `hdiutil info` still finds it by its file.
-            detachAndDelete(dmgPath)
+            detachAndDelete(dmgPath, mountPath: nil)
             throw DiskImageTestSupportError.unreadableAttachReport
         }
         let mountPath = entities.lazy.compactMap { $0["mount-point"] as? String }.first
@@ -69,7 +69,7 @@ struct MountedTestDiskImage {
     /// A detach that fails, an image still attached afterwards, or a file left behind is a
     /// recorded issue: each leaves state on the machine that outlives the test run.
     func detach() {
-        Self.detachAndDelete(dmgPath)
+        Self.detachAndDelete(dmgPath, mountPath: mountURL.path(percentEncoded: false))
     }
 
     /// How many times a detach refused as busy is tried again. Each try follows a forced
@@ -86,29 +86,31 @@ struct MountedTestDiskImage {
     /// client) can hold it busy for a moment: the volumes are force-unmounted first, and a busy
     /// refusal is tried again after the next forced unmount. Anything left attached or on disk
     /// is a recorded issue: it outlives the test run.
-    private static func detachAndDelete(_ dmgPath: URL) {
+    private static func detachAndDelete(_ dmgPath: URL, mountPath: String?) {
         do {
             for attempt in 1 ... busyDetachAttempts {
-                guard let device = try attachedDevice(of: dmgPath) else {
+                guard let image = try attachedImage(of: dmgPath) else {
                     break
                 }
-                _ = try run("/usr/sbin/diskutil", ["unmountDisk", "force", device])
-                let detach = try hdiutil(["detach", device, "-force"])
-                guard detach.status != 0, try attachedDevice(of: dmgPath) != nil else {
+                _ = try run("/usr/sbin/diskutil", ["unmountDisk", "force", image.device])
+                let detach = try hdiutil(["detach", image.device, "-force"])
+                guard detach.status != 0, let still = try attachedImage(of: dmgPath) else {
                     break
                 }
                 if detach.status != busyStatus || attempt == busyDetachAttempts {
-                    let refusal = "hdiutil detach \(device) exited \(detach.status): \(detach.errorText)"
+                    let refusal = "hdiutil detach \(image.device) exited \(detach.status): \(detach.errorText)"
                     if detach.status == busyStatus {
-                        Issue.record("\(refusal); held open by: \(holders(of: device))")
+                        Issue.record("\(refusal); held open by: \(holders(of: still, mountPath: mountPath))")
                     } else {
                         Issue.record("\(refusal)")
                     }
                     break
                 }
             }
-            if let device = try attachedDevice(of: dmgPath) {
-                Issue.record("disk image \(dmgPath.lastPathComponent) is still attached as \(device) after detach")
+            if let image = try attachedImage(of: dmgPath) {
+                Issue.record(
+                    "disk image \(dmgPath.lastPathComponent) is still attached as \(image.nodes.joined(separator: ", ")) after detach"
+                )
             }
         } catch {
             Issue.record(error, "detaching disk image \(dmgPath.lastPathComponent)")
@@ -122,9 +124,17 @@ struct MountedTestDiskImage {
         }
     }
 
-    /// The whole disk `hdiutil info` lists for an image backed by `dmgPath`, or nil when none
-    /// is attached.
-    private static func attachedDevice(of dmgPath: URL) throws -> String? {
+    /// An attached image as `hdiutil info` lists it: the whole disk a detach names, and every
+    /// node and mount point it lists — its own disk and partition and, for APFS, the container
+    /// disk and the volume APFS synthesizes on it, where the volume's files live.
+    private struct AttachedImage {
+        let device: String
+        let nodes: [String]
+        let mountPoints: [String]
+    }
+
+    /// The image `hdiutil info` lists as backed by `dmgPath`, or nil when none is attached.
+    private static func attachedImage(of dmgPath: URL) throws -> AttachedImage? {
         let info = try hdiutil(["info", "-plist"])
         guard info.status == 0,
               let report = try PropertyListSerialization.propertyList(from: info.output, format: nil)
@@ -150,18 +160,30 @@ struct MountedTestDiskImage {
             guard let entry = entity["dev-entry"] as? String, entry.isWholeDiskNode else { return nil }
             return (entry, entity["content-hint"] as? String)
         }
-        return wholeDisks.first { $0.hint?.hasSuffix("_partition_scheme") == true }?.entry
+        let device = wholeDisks.first { $0.hint?.hasSuffix("_partition_scheme") == true }?.entry
             ?? wholeDisks.map(\.entry).min { $0.diskNumber < $1.diskNumber }
+        guard let device else {
+            return nil
+        }
+        return AttachedImage(
+            device: device,
+            nodes: entities.compactMap { $0["dev-entry"] as? String },
+            mountPoints: entities.compactMap { $0["mount-point"] as? String }
+        )
     }
 
-    /// The open files on any node of `device` (`/dev/diskN`, its slices, `/dev/rdiskN`), as
-    /// `lsof` lists them with their processes: what a busy refusal names, so the refusal says
-    /// who held the disk. The likeliest holders (Spotlight's indexer, DiskArbitration's
+    /// The open files on any node of `image` (each `/dev/diskN…` it lists, and its raw
+    /// `/dev/rdiskN…`) or under any of its mount points, `mountPath` included, which a forced
+    /// unmount may already have taken out of `hdiutil info`. `lsof` names a file on a mounted
+    /// volume by its path, not by the disk under it. What a busy refusal names, so the refusal
+    /// says who held the disk. The likeliest holders (Spotlight's indexer, DiskArbitration's
     /// clients) run as root, which a user's `lsof` cannot see, so a passwordless `sudo -n` is
     /// tried first, as a CI runner allows; where it is refused, the user's own `lsof` answers
     /// for the processes it can see, and the text says which one answered.
-    private static func holders(of device: String) -> String {
-        let node = String(device.dropFirst("/dev/".count))
+    private static func holders(of image: AttachedImage, mountPath: String?) -> String {
+        let nodes = image.nodes.flatMap { node in [node, "/dev/r" + node.dropFirst("/dev/".count)] }
+        let mounts = Set(image.mountPoints + (mountPath.map { [$0] } ?? []))
+            .map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
         let listers: [(label: String, executable: String, arguments: [String])] = [
             ("sudo lsof", "/usr/bin/sudo", ["-n", "/usr/sbin/lsof", "-n", "-w"]),
             ("lsof", "/usr/sbin/lsof", ["-n", "-w"]),
@@ -181,8 +203,13 @@ struct MountedTestDiskImage {
             }
             let lines = String(decoding: listing.output, as: UTF8.self)
                 .split(separator: "\n")
-                .filter { $0.contains("/dev/\(node)") || $0.contains("/dev/r\(node)") }
-            let found = lines.isEmpty ? "no open file on \(device)" : lines.joined(separator: " | ")
+                .filter { line in
+                    nodes.contains { line.hasSuffix(" \($0)") }
+                        || mounts.contains { line.hasSuffix(" \($0)") || line.contains(" \($0)/") }
+                }
+            let found = lines.isEmpty
+                ? "no open file on \(image.nodes.joined(separator: ", ")) or under \(mounts.joined(separator: ", "))"
+                : lines.joined(separator: " | ")
             return "[\(lister.label)] \(found)" + (refusals.isEmpty ? "" : " (\(refusals.joined(separator: "; ")))")
         }
         return refusals.joined(separator: "; ")
