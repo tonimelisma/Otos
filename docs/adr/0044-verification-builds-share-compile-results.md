@@ -240,14 +240,20 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     a diagnosis run outside the five-minute budget.
 
 20. **Shard 3 captures the app it tested.** After its tests, shard 3 of a full-tier run
-    launches the dev build on a library of generated media and writes its window, light and
-    dark (`script/app-capture.sh`, ADR 0020's capture seam), as the artifact
-    `app-captures-<run>-<attempt>`. Shard 3 runs the complement of the dealt groups and
+    launches the dev build once on a library of generated media and writes its window in
+    each view (the library's grid, Places, On This Day, Duplicates, the Edit pane), light and dark
+    (`script/app-capture.sh`, ADR 0020's capture seam), as the artifact
+    `app-captures-<run>-<attempt>`. One launch per appearance walks every view: the seam
+    shows a view, reports it ready, and waits for the script's go-ahead once the screen
+    capture is written, so ten captures cost two libraries, two first walks and two exits.
+    The appearance is set from each launch's start, because a switch mid-launch was still
+    animating the toolbar when the next capture was taken (45947165362). Shard 3 runs the complement of the dealt groups and
     finished first in every sharded run measured, so the captures ride on it rather than on a
     fourth runner, which would queue against the owner's five concurrent macOS jobs. The
     capture to read is the window as the screen composes it (`screencapture -l`, found by
     the app's pid): the app's own `cacheDisplay` rendering, its readiness signal, drew the
-    grid blank and no toolbar on its first run (45857429826). It added 38 s to shard 3. The
+    grid blank and no toolbar on its first run (45857429826). Two launches of the grid added
+    54 s to shard 3 (45922482801); the walk's cost is measured on its PR. The
     workflow Capture The App builds and captures any branch on demand. A launch that
     outlives its TERM is killed after 20 s; one that outlives the KILL too is stuck in the
     kernel (twice on the runner, both the second, dark launch), and is reported with its

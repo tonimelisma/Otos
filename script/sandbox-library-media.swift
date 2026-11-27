@@ -47,8 +47,11 @@ struct Generator {
         "LIGHTHOUSE", "WELCOME HOME", "RECEIPT 42.10", "EXIT", "MENU OF THE DAY", "PLATFORM 9",
         "OPEN 24 HOURS", "HARBOUR ROAD", "NO PARKING", "BIRTHDAY", "CAFE", "MUSEUM",
     ]
+    /// Taken in turn by the photos that carry GPS. The first two are neighbours (Helsinki,
+    /// Paris), so a small library's two GPS photos fit one map at its widest zoom on a small
+    /// screen, and the Places capture (script/app-capture.sh) shows both stacks.
     static let places: [(Double, Double)] = [
-        (60.1699, 24.9384), (37.7749, -122.4194), (48.8566, 2.3522), (35.6762, 139.6503), (-33.8688, 151.2093),
+        (60.1699, 24.9384), (48.8566, 2.3522), (37.7749, -122.4194), (35.6762, 139.6503), (-33.8688, 151.2093),
     ]
 
     enum Size: String {

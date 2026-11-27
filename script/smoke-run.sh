@@ -32,7 +32,7 @@ Environment:
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
   OTOS_SMOKE_PLAY_STORY        1 with onThisDay: play the story once its years show
   OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
-  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
+  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let the Places map's tiles and stacks land
                                before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
@@ -90,7 +90,7 @@ Environment:
   OTOS_SMOKE_APPEARANCE        light|dark: the app's appearance for that capture
   OTOS_SMOKE_PLAY_STORY        1 with onThisDay: play the story once its years show
   OTOS_SMOKE_CAPTURE_SCROLL_FRACTION 0..1: scroll the window's lists this far down before the capture
-  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let map tiles and thumbnails land
+  OTOS_SMOKE_CAPTURE_SETTLE_SECONDS  seconds to let the Places map's tiles and stacks land
                                before the capture (MapKit reports neither; default 0)
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)

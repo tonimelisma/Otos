@@ -46,8 +46,9 @@ was green while half of All Media's tiles were blank.
   - a status that contradicts the logs.
 - **A finding the increment caused** is fixed in this increment. One it did not cause is
   diagnosed from logs and catalog, then fixed.
-- **From a cloud session:** read CI's captures of All Media's grid, light and dark, on
-  generated media, from the PR's final run (`ci` skill). The look at the owner's own
+- **From a cloud session:** read CI's captures of each view (the library's grid, Places, On This
+  Day, Duplicates, the Edit pane), light and dark, on generated media, from the PR's final
+  run (`ci` skill). The look at the owner's own
   library is a non-blocking owner note.
 - **From a session on the Mac:** look at the installed app as the `mac-session` skill
   says, and name the release it shows.

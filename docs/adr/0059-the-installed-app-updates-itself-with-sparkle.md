@@ -86,7 +86,7 @@ prove a commit to `.github/workflows/ci.yml`.
    library of generated media, must report its first grid (`op=launch.firstGrid`) and draw
    its window, light and dark. A build that does not publishes nothing (`op=release
    phase=failed reason=launchCheck`), and the installed app keeps the build it has. The
-   captures are kept as the run's artifact `release-captures-<run>` (plan 0118, step 2).
+   captures are kept as the run's artifact `release-captures-<run>` (ADR 0061).
 
 ## Rejected alternatives
 

@@ -1,6 +1,6 @@
 # Developing a macOS app when GitHub Actions is the only Mac
 
-Date: 2026-11-26. Sources fetched that day. Plan 0118 is built on this note.
+Date: 2026-11-26. Sources fetched that day. ADR 0061 is built on this note.
 
 ## Question
 

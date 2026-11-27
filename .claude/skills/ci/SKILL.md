@@ -55,18 +55,24 @@ wait for a CI notification: a green run may never send one.
 
 ## The captures
 
-Shard 3 of a full-tier run launches the dev build it tested on a library of generated
-media and writes its window, light and dark (`script/app-capture.sh`), as the artifact
-`app-captures-<run>-<attempt>`. A release does the same with the archive it is about to
-publish (`release-captures-<run>`) and publishes nothing whose window does not draw. Fetch
+Shard 3 of a full-tier run launches the dev build it tested, once per appearance, on a
+library of generated media, and writes its window in each view (the library's grid, Places, On This Day, Duplicates, and
+the Edit pane), light and dark (`script/app-capture.sh`), as the artifact
+`app-captures-<run>-<attempt>`. The window is zoomed to the runner's 1024 × 768 screen
+and drawn inactive (a shell-launched app cannot take activation: gray window buttons, a
+dimmed toolbar), and the grid is captured once the items at its top have their thumbnails.
+People is not captured: the generated photos hold no faces.
+A release captures the grid with the archive it is about to publish
+(`release-captures-<run>`) and publishes nothing whose window does not draw. Fetch
 them into the scratchpad and read the PNGs:
 
     gh api repos/tonimelisma/Otos/actions/runs/<run>/artifacts --jq '.artifacts[] | "\(.id) \(.name)"'
     gh api repos/tonimelisma/Otos/actions/artifacts/<id>/zip > <scratchpad>/captures.zip
 
-`window-<appearance>.png` is the window as the screen composes it (`screencapture`);
-`window-<appearance>-rendering.png` is the app's own `cacheDisplay` rendering, which leaves
-out the grid's layer-backed tiles and the toolbar. For a branch whose CI built no app (the
+`<view>-<appearance>.png` (`library`, `places`, `on-this-day`, `duplicates`, `edit`) is
+the window as the screen composes it (`screencapture`); `<view>-<appearance>-rendering.png`
+is the app's own `cacheDisplay` rendering, which leaves out layer-backed content (the
+grid's tiles, the map) and the toolbar. For a branch whose CI built no app (the
 static tier), start the workflow Capture The App on it (`actions_run_trigger`,
 `workflow_id` `capture.yml`, the branch as `ref`). Name what each should show before
 reading it (`dod` skill).

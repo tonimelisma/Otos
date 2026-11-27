@@ -74,7 +74,17 @@ main window's `cacheDisplay` to a PNG once the selection has something to show â
 first stacks on the map, the first items in a grid â€” a fact the ViewModel publishes,
 never a timer. It reads no screen and needs no permission, so a design pass (light,
 dark, grayscale) is agent-owned; a Metal-backed layer such as map tiles may be blank
-in it, which the run's log states. `#if DEBUG` as well.
+in it, which the run's log states. With `OTOS_SMOKE_CAPTURE_VIEWS` it walks views in one
+launch (the first library's grid, Places, On This Day, Duplicates, and the Edit pane opened
+on a still), each in every appearance asked for. It zooms the window to the screen, the size
+a person working in it uses (a shell-launched app cannot take activation, so the window is
+captured inactive); selects each view through the sidebar's own intent and opens the pane
+through the inspector's; waits until the window shows it with what it holds (for the
+library's grid, until the items at its top name their thumbnails); draws and commits the
+window, so the screen shows the step; writes that step's PNG into the folder the path
+names; and waits for the capturing
+script's go-ahead (`SIGUSR1`) before the next. Opening the Edit pane writes no recipe; the
+walk changes no catalog configuration and edits nothing. `#if DEBUG` as well.
 
 **A read-only tour reads the user's preferences and writes none of Otos's.** The preference
 domain is the one owner of everything Otos persists in `UserDefaults` (the browser place it

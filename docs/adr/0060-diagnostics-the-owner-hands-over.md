@@ -5,7 +5,7 @@
 
 ## Context
 
-Otos is developed from cloud sessions that never reach the owner's Mac (plan 0118): CI's
+Otos is developed from cloud sessions that never reach the owner's Mac (ADR 0061): CI's
 runner builds, tests, captures and releases. What the installed app runs into on his
 library — a hang, a crash, a stall the logs explain, a folder that grew — happens only on
 his Mac, where no session can read it. A directly distributed app gets no crash reports

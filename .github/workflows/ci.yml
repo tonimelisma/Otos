@@ -161,13 +161,14 @@ jobs:
           OTOS_CHECK_FAST_GATES: ubuntuJobs
         run: script/check.sh
 
-      # The look a session with no Mac reads: the dev build this shard tested, launched on a
-      # library of generated media, its window drawn light and dark (script/app-capture.sh).
+      # The look a session with no Mac reads: the dev build this shard tested, launched once per
+      # appearance on a library of generated media, its window drawn in each view
+      # (script/app-capture.sh).
       # Shard 3 finishes first, so the captures ride on it; a static-tier tree builds no app.
       - name: Capture the app's window
         if: ${{ success() && matrix.shard == 3 }}
         # A backstop only: the script bounds each wait on the app itself and says which
-        # step it is in. Two launches took 38 s.
+        # step it is in. Two launches of the grid took 54 s (run 45922482801).
         timeout-minutes: 6
         run: |
           set -euo pipefail

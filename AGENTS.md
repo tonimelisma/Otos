@@ -166,7 +166,7 @@ his `~/.claude/CLAUDE.md`.
 ## How A Session Works
 
 A cloud session is the normal way to work, and it needs nothing else: GitHub's `xcode-27`
-runner is the Mac that builds, tests and releases (plan 0118). A session on the owner's
+runner is the Mac that builds, tests and releases (ADR 0061). A session on the owner's
 Mac is optional, and nothing waits for one.
 
 - **One command: `script/check.sh`.** It runs the seconds-long gates first, then the

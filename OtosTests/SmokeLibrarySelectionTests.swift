@@ -92,6 +92,59 @@ struct SmokeLibrarySelectionTests {
         ))
     }
 
+    /// Alone, the capture path is one PNG of the window as it is; with views it is a folder
+    /// the walk fills, view by view, light then dark unless the appearances are named.
+    @Test func captureWalksEachViewInEachAppearance() {
+        let single = SmokeWindowCapture.plan(environment: [
+            SmokeWindowCapture.pathVariable: "/tmp/window.png",
+            SmokeWindowCapture.appearanceVariable: "dark",
+        ])
+        #expect(single == .steps([.init(view: nil, appearance: .dark, path: "/tmp/window.png")]))
+
+        let walk = SmokeWindowCapture.plan(environment: [
+            SmokeWindowCapture.pathVariable: "/tmp/captures",
+            SmokeWindowCapture.viewsVariable: "library, edit",
+        ])
+        #expect(walk == .steps([
+            .init(view: .library, appearance: .light, path: "/tmp/captures/library-light-rendering.png"),
+            .init(view: .library, appearance: .dark, path: "/tmp/captures/library-dark-rendering.png"),
+            .init(view: .edit, appearance: .light, path: "/tmp/captures/edit-light-rendering.png"),
+            .init(view: .edit, appearance: .dark, path: "/tmp/captures/edit-dark-rendering.png"),
+        ]))
+
+        #expect(SmokeWindowCapture.plan(environment: [:]) == SmokeWindowCapture.Plan.none)
+        #expect(SmokeWindowCapture.plan(environment: [
+            SmokeWindowCapture.pathVariable: "/tmp/captures",
+            SmokeWindowCapture.viewsVariable: "people",
+        ]) == .invalid("unknownView=people"))
+        #expect(SmokeWindowCapture.plan(environment: [
+            SmokeWindowCapture.pathVariable: "/tmp/window.png",
+            SmokeWindowCapture.appearanceVariable: "light,dark",
+        ]) == .invalid("oneAppearanceForOnePath"))
+    }
+
+    /// A walk selects a view only once the window's state can show it: nothing while the
+    /// catalog loads or before a library is registered (a choice then would stand in for the
+    /// launch's default), Duplicates once a group is active.
+    @Test func captureSelectsAViewOnceTheStateCanShowIt() {
+        let today = CalendarDay(year: 2026, month: 11, day: 27)
+        let pictures = LibraryRootPath(rawValue: "/Pictures")
+        var state = CatalogWindowState.empty
+        state.libraries = [libraryState(path: pictures.rawValue)]
+        #expect(SmokeWindowCapture.selection(for: .library, in: state, today: today) == nil)
+
+        state.mediaEmptyState = .noMedia
+        state.libraries = []
+        #expect(SmokeWindowCapture.selection(for: .library, in: state, today: today) == nil)
+
+        state.libraries = [libraryState(path: pictures.rawValue)]
+        #expect(SmokeWindowCapture.selection(for: .library, in: state, today: today) == .library(pictures))
+        #expect(SmokeWindowCapture.selection(for: .edit, in: state, today: today) == .library(pictures))
+        #expect(SmokeWindowCapture.selection(for: .places, in: state, today: today) == .places)
+        #expect(SmokeWindowCapture.selection(for: .onThisDay, in: state, today: today) == .onThisDay(today))
+        #expect(SmokeWindowCapture.selection(for: .duplicates, in: state, today: today) == nil)
+    }
+
     /// An unregistered path selects nothing and reports what is registered, rather
     /// than making itself registered.
     @Test func unregisteredRootSelectsNothingAndNamesRegisteredRoots() {

@@ -3,7 +3,7 @@ import OSLog
 
 /// Diagnostics export guide
 ///
-/// The owner develops Otos from sessions that cannot reach his Mac (plan 0118), so what the
+/// The owner develops Otos from sessions that cannot reach his Mac (ADR 0061), so what the
 /// installed app experienced reaches a session only when he hands it over. Help ▸ Export
 /// Diagnostics… writes one new folder into a folder he chooses (ADR 0060):
 ///
