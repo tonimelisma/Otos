@@ -4,15 +4,20 @@
 # it as the release v<x.y.z> with Sparkle's feed. Installed copies find it within the hour.
 #
 # It runs after CI, and only for a push to main that CI passed: a pull request, whoever opened
-# it, never reaches this workflow or its secrets. The secrets live in the environment
-# "release" (repository settings, Environments), where the owner can also require an approval:
-#   OTOS_CERTIFICATE_P12        the "Apple Development" certificate and its private key,
-#                               exported from Keychain Access as .p12, base64
-#   OTOS_CERTIFICATE_PASSWORD   that export's password
-#   OTOS_DEVELOPMENT_TEAM       the team ID, kept out of the repository
-#   OTOS_SPARKLE_PRIVATE_KEY    the update key (Sparkle's generate_keys -x); its public half is
-#                               OTOS_SPARKLE_PUBLIC_ED_KEY in Otos.xcodeproj
-# Until they are set, the job says which are missing and publishes nothing.
+# it, never reaches this workflow or its secrets. The secrets live in Azure Key Vault
+# <vault>, managed from the owner's private repository <secrets-repo>. The job's
+# first step signs in keylessly: GitHub's OIDC token for this job is exchanged for a vault token
+# of the Entra app gh-otos-release, which trusts only repo:tonimelisma/Otos:environment:release
+# and may read only these secrets. The environment "release" needs no secrets, only the
+# variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_KEY_VAULT, and the owner can require an
+# approval there. The step masks each value and puts it in the job's environment:
+#   OTOS_CERTIFICATE_P12        the "Apple Development" certificate and its private key, .p12,
+#                               base64 (vault secret apple-development-p12-base64)
+#   OTOS_CERTIFICATE_PASSWORD   that export's password (apple-development-p12-password)
+#   OTOS_DEVELOPMENT_TEAM       the team ID, kept out of the repository (apple-development-team)
+#   OTOS_SPARKLE_PRIVATE_KEY    the update key (Sparkle's generate_keys -x; otos-sparkle-private-key);
+#                               its public half is OTOS_SPARKLE_PUBLIC_ED_KEY in Otos.xcodeproj
+# A secret the vault does not give fails the fetch, and the job publishes nothing.
 name: Release
 
 on:
@@ -37,14 +42,47 @@ jobs:
     environment: release
     permissions:
       contents: write # the release and its assets
+      id-token: write # the OIDC token the vault sign-in exchanges
     steps:
+      - name: Fetch release secrets from Azure Key Vault
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_KEY_VAULT: ${{ vars.AZURE_KEY_VAULT }}
+          # ENV_NAME=vault-secret-name, one per line
+          SECRET_MAP: |
+            OTOS_CERTIFICATE_P12=apple-development-p12-base64
+            OTOS_CERTIFICATE_PASSWORD=apple-development-p12-password
+            OTOS_DEVELOPMENT_TEAM=apple-development-team
+            OTOS_SPARKLE_PRIVATE_KEY=otos-sparkle-private-key
+        run: |
+          set -euo pipefail
+          j() { python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
+          oidc=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | j value)
+          echo "::add-mask::$oidc"
+          tok=$(curl -sSf "https://login.microsoftonline.com/$AZURE_TENANT_ID/oauth2/v2.0/token" \
+            -d client_id="$AZURE_CLIENT_ID" -d grant_type=client_credentials \
+            --data-urlencode scope=https://vault.azure.net/.default \
+            --data-urlencode client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+            --data-urlencode client_assertion="$oidc" | j access_token)
+          echo "::add-mask::$tok"
+          while IFS='=' read -r name secret; do
+            [ -n "$name" ] || continue
+            v=$(curl -sSf -H "Authorization: Bearer $tok" \
+              "https://$AZURE_KEY_VAULT.vault.azure.net/secrets/$secret?api-version=7.4" | j value)
+            echo "::add-mask::$v"
+            d="EOF_$(openssl rand -hex 8)"
+            printf '%s<<%s\n%s\n%s\n' "$name" "$d" "$v" "$d" >> "$GITHUB_ENV"
+          done <<< "$SECRET_MAP"
+
       - name: Is the release set up?
         id: ready
         env:
-          P12: ${{ secrets.OTOS_CERTIFICATE_P12 }}
-          P12_PASSWORD: ${{ secrets.OTOS_CERTIFICATE_PASSWORD }}
-          TEAM: ${{ secrets.OTOS_DEVELOPMENT_TEAM }}
-          SPARKLE_KEY: ${{ secrets.OTOS_SPARKLE_PRIVATE_KEY }}
+          P12: ${{ env.OTOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ env.OTOS_CERTIFICATE_PASSWORD }}
+          TEAM: ${{ env.OTOS_DEVELOPMENT_TEAM }}
+          SPARKLE_KEY: ${{ env.OTOS_SPARKLE_PRIVATE_KEY }}
         run: |
           missing=""
           [ -n "$P12" ] || missing="$missing OTOS_CERTIFICATE_P12"
@@ -52,7 +90,7 @@ jobs:
           [ -n "$TEAM" ] || missing="$missing OTOS_DEVELOPMENT_TEAM"
           [ -n "$SPARKLE_KEY" ] || missing="$missing OTOS_SPARKLE_PRIVATE_KEY"
           if [ -n "$missing" ]; then
-            echo "::warning::Updates aren't set up yet; missing secrets in the environment release:$missing. Nothing was published."
+            echo "::warning::Updates aren't set up yet; empty from Azure Key Vault:$missing. Nothing was published."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -79,8 +117,8 @@ jobs:
         id: keychain
         if: steps.ready.outputs.ready == 'true'
         env:
-          P12: ${{ secrets.OTOS_CERTIFICATE_P12 }}
-          P12_PASSWORD: ${{ secrets.OTOS_CERTIFICATE_PASSWORD }}
+          P12: ${{ env.OTOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ env.OTOS_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
           kc="$RUNNER_TEMP/release.keychain-db"
@@ -110,7 +148,7 @@ jobs:
             keep && inside { print }
             keep && /END CERTIFICATE/ { exit }' > "$RUNNER_TEMP/cert.pem"
           if ! security verify-cert -c "$RUNNER_TEMP/cert.pem" -p codeSign -R ocsp -R require; then
-            echo "::warning::Apple's revocation check did not accept the certificate in OTOS_CERTIFICATE_P12 (verify-cert's reason above). If Xcode then refuses it as revoked or expired, run script/release-setup.sh on the Mac again: it exports the newest valid one."
+            echo "::warning::Apple's revocation check did not accept the certificate in OTOS_CERTIFICATE_P12 (verify-cert's reason above). If Xcode then refuses it as revoked or expired, export the newest valid one into the vault (<secrets-repo>)."
           fi
           rm -f "$RUNNER_TEMP/cert.pem"
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
@@ -119,10 +157,10 @@ jobs:
       - name: Build, sign and publish (script/release.sh)
         if: steps.ready.outputs.ready == 'true'
         env:
-          OTOS_DEVELOPMENT_TEAM: ${{ secrets.OTOS_DEVELOPMENT_TEAM }}
+          OTOS_DEVELOPMENT_TEAM: ${{ env.OTOS_DEVELOPMENT_TEAM }}
           OTOS_SIGNING_IDENTITY: ${{ steps.keychain.outputs.identity }}
           OTOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
-          SPARKLE_PRIVATE_KEY: ${{ secrets.OTOS_SPARKLE_PRIVATE_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ env.OTOS_SPARKLE_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: script/release.sh
 

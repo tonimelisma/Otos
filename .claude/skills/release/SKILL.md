@@ -51,7 +51,11 @@ read a newer catalog. A bad migration is fixed forward (`.claude/rules/persisten
 
 - The installed app updates itself. A fresh install on another Mac starts from
   `https://github.com/tonimelisma/Otos/releases/latest/download/Otos.dmg`.
-- The Apple Development certificate expires yearly. The owner renews it by running
-  `script/release-setup.sh` on the Mac, which re-exports the newest valid certificate into
-  the environment `release`. When Xcode refuses the certificate as revoked or expired,
+- The release's secrets (the Apple Development `.p12` and its password, the team ID, the
+  Sparkle update key) live in Azure Key Vault `<vault>`, managed from the
+  owner's private repository `<secrets-repo>`. `Release` reads them keylessly through
+  GitHub OIDC as the Entra app `gh-otos-release`, trusted only for the environment
+  `release`. No session sets them, and the repository holds no GitHub secrets for them.
+- The Apple Development certificate expires yearly. The owner renews it in the vault from
+  `<secrets-repo>`. When Xcode refuses the certificate as revoked or expired,
   `Release` says so.

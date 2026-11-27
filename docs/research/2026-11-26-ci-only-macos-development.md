@@ -92,7 +92,7 @@ Mac-only steps can move there?
 - Verify the copy that ships (`codesign --verify --deep --strict`), launch it, wait for a
   readiness report, and gate publishing on that. https://developer.apple.com/forums/thread/706442
 - Apple Development certificates are meant for development; this is accepted for an
-  owner-only app (ADR 0059) and expires yearly, renewed with `script/release-setup.sh`.
+  owner-only app (ADR 0059) and expires yearly, renewed in Azure Key Vault from `<secrets-repo>`.
 
 ### Runner facts
 

@@ -53,8 +53,11 @@ prove a commit to `.github/workflows/ci.yml`.
    arrives as one. A quit before then installs the update as Otos quits, Sparkle's default.
 6. **CI builds and publishes every `main` commit CI passed that changes the app.**
    `.github/workflows/release.yml` runs after CI, only for a push to `main` that passed, in the
-   environment `release` that holds the certificate, its password, the team ID and the update
-   key. `script/release.sh` publishes only when something under `Otos/`, `OtosKit/`,
+   environment `release`. Its first step fetches the certificate, its password, the team ID and
+   the update key from Azure Key Vault `<vault>` with no stored credential: the job's
+   GitHub OIDC token signs in as the Entra app `gh-otos-release`, which trusts only
+   `repo:tonimelisma/Otos:environment:release` and reads only those four secrets. The owner
+   manages them from his private repository `<secrets-repo>`. `script/release.sh` publishes only when something under `Otos/`, `OtosKit/`,
    `Otos.xcodeproj/` or `Config/` changed since the newest release (owner, 2026-11-26: "no need
    to release a new release with only a new versioning scheme"); a commit of docs or scripts
    alone ships nothing. It builds by the recipe `script/install.sh` uses
@@ -111,12 +114,10 @@ prove a commit to `.github/workflows/ci.yml`.
 
 ## Consequences
 
-- Updates start once the owner has run `script/release-setup.sh` on the Mac, which makes the
-  update key, sets the environment's secrets from the login keychain with the owner's `gh`
-  login (no value printed or committed), and opens the pull request that commits the public
-  key; it builds and installs nothing. The first install is the first release's disk image,
-  dragged to Applications once. Until the secrets exist the release job says what is missing
-  and publishes nothing, and a build without the public key never starts Sparkle.
+- Updates need the update key's public half committed as `OTOS_SPARKLE_PUBLIC_ED_KEY` and the
+  four secrets in the vault. The first install is the first release's disk image, dragged to
+  Applications once. A secret the vault does not give fails the release job, which then
+  publishes nothing, and a build without the public key never starts Sparkle.
 - A build installed from the Mac (`script/install.sh`) is updated by the next published build
   with a higher commit count.
 - An update quits and reopens Otos when no import or reorganization is in flight, as an
