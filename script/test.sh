@@ -182,6 +182,9 @@ run_tests_with_footprint_guard() {
     echo "OTOS_TEXT_READING_LIVE set: including the live text readings."
     args+=("OTOS_TEXT_READING_LIVE=$OTOS_TEXT_READING_LIVE")
   fi
+  # What a crash report must be newer than to belong to this run.
+  local crash_since
+  crash_since="$(mktemp)"
   xcodebuild "${args[@]}" > "$LOG_FILE" 2>&1 &
   local xcodebuild_pid="$!"
   monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" "$pids_file" &
@@ -192,8 +195,14 @@ run_tests_with_footprint_guard() {
   wait "$monitor_pid" >/dev/null 2>&1 || true
   cat "$LOG_FILE"
   if [[ "$test_status" -ne 0 ]]; then
-    otos_print_test_failure_reasons "$LOG_FILE"
+    local reasons
+    reasons="$(otos_print_test_failure_reasons "$LOG_FILE")"
+    echo "$reasons"
+    if [[ "$reasons" == *"message=Crash: "* ]]; then
+      otos_report_test_host_crashes "$LOG_FILE" "$crash_since"
+    fi
   fi
+  rm -f "$crash_since"
   # `-only-testing:` matches by suite (type) name, not by file name, and a name
   # that matches nothing runs nothing and succeeds. A narrowed suite that ran no
   # test case is a wrong name, never a pass. Only a case that passed, failed or recorded

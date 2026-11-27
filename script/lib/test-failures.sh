@@ -60,3 +60,68 @@ if printed == 0:
 PY
   rm -f "$tests_json"
 }
+
+# A test host that crashes fails every test it was running with `Crash: xctest` and no
+# issue of its own, so the run's log never says what crashed. The system's crash report does:
+# each one written since `$2` (a file made as the run started) for a test host (`xctest`,
+# `OtosTests-Runner`) is copied beside the log, which CI keeps (`logs/`), and its exception,
+# the crash message the process left, and the faulting thread's top frames are printed as one
+# `op=test.crash` line. The tests run on generated fixtures, so a report holds nothing
+# personal. `$1` is the log xcodebuild's output went to.
+otos_report_test_host_crashes() {
+  local log_file="$1" since="$2" reports=() report copy
+  local folder="$HOME/Library/Logs/DiagnosticReports"
+  if [[ -d "$folder" ]]; then
+    while IFS= read -r report; do
+      reports+=("$report")
+    done < <(find "$folder" -maxdepth 1 -type f \( -name 'xctest*.ips' -o -name 'OtosTests*.ips' \) -newer "$since" | sort)
+  fi
+  if [[ ${#reports[@]} -eq 0 ]]; then
+    echo "op=test.crash phase=noReport folder=$folder"
+    return
+  fi
+  for report in "${reports[@]}"; do
+    copy="${log_file%.log}-$(basename "$report")"
+    cp "$report" "$copy"
+    /usr/bin/python3 -I - "$copy" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path) as handle:
+    header_line, _, body_text = handle.read().partition("\n")
+try:
+    body = json.loads(body_text)
+except json.JSONDecodeError as error:
+    print(f"op=test.crash phase=unreadable report={path} error={error}")
+    sys.exit(0)
+
+
+def one_line(text, limit=300):
+    return " ".join(str(text).split())[:limit]
+
+
+exception = body.get("exception", {})
+images = body.get("usedImages", [])
+threads = body.get("threads", [])
+faulting = body.get("faultingThread", 0)
+frames = threads[faulting].get("frames", []) if faulting < len(threads) else []
+
+
+def frame_name(frame):
+    index = frame.get("imageIndex")
+    image = images[index].get("name", "?") if isinstance(index, int) and index < len(images) else "?"
+    return f"{image}:{frame.get('symbol') or hex(frame.get('imageOffset', 0))}"
+
+
+asi = body.get("asi") or {}
+message = " | ".join(" ".join(lines) for lines in asi.values()) if isinstance(asi, dict) else asi
+print(
+    f"op=test.crash report={path} process={body.get('procName', '?')} pid={body.get('pid', '?')}"
+    f" exception={exception.get('type', '?')}/{exception.get('signal', '?')}"
+    f" message={one_line(message) or 'none'}"
+    f" thread={faulting} frames={' < '.join(frame_name(frame) for frame in frames[:10])}"
+)
+PY
+  done
+}
