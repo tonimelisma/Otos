@@ -42,7 +42,15 @@ prove a commit to `.github/workflows/ci.yml`.
 4. **Hourly, silent, in the background.** Sparkle reads the feed every hour
    (`SUScheduledCheckInterval` 3600, its shortest), and downloads a newer build without asking
    (`SUAutomaticallyUpdate`). App ▸ Check for Updates… asks at once and shows what it finds;
-   only a build that updates itself offers it.
+   only a build that updates itself offers it. It never does nothing when chosen: Sparkle
+   answers a check with nothing while a session of its own is in progress
+   (`SPUUpdater.checkForUpdates` returns at `sessionInProgress`, Sparkle 2.10.1), and its
+   session stays open for as long as Otos holds a downloaded update (decision 5). So while Otos
+   holds one, the item says which version waits and why (`Otos 1.0.9 Is Ready to Install`:
+   it installs when the import or library reorganization in progress finishes, or at once if
+   the user quits); while Sparkle's own check or download runs, the item is disabled, following
+   Sparkle's `canCheckForUpdates` (owner, 2026-11-27: "when I click for check updates, nothing
+   happens in the app").
 5. **Installing never interrupts work.** Sparkle hands the downloaded update's install to
    `UpdateInstallGate`, which holds it while an import or a reorganization is in flight and
    runs it once none is: Sparkle quits Otos, replaces it and opens it again. The Store owns

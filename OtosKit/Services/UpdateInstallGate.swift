@@ -18,13 +18,16 @@ import OSLog
 /// main-queue job, where that reply could not be delivered: it runs from the main run loop's
 /// own callback (`RunLoop.main.perform`).
 @MainActor
+@Observable
 final class UpdateInstallGate {
     /// The Store's answers to "is an import or a reorganization in flight", current first.
-    private let operationalWork: @Sendable () async -> AsyncStream<Bool>
+    @ObservationIgnored private let operationalWork: @Sendable () async -> AsyncStream<Bool>
     /// The install Sparkle handed over last, until it runs.
-    private var install: (() -> Void)?
-    private var heldVersion = ""
-    private var waiting: Task<Void, Never>?
+    @ObservationIgnored private var install: (() -> Void)?
+    /// The version the held install installs, as the user knows it; nil while none is held.
+    /// App ▸ Check for Updates… says it (`AppUpdater.CheckAnswer`).
+    private(set) var heldVersion: String?
+    @ObservationIgnored private var waiting: Task<Void, Never>?
 
     init(operationalWork: @escaping @Sendable () async -> AsyncStream<Bool>) {
         self.operationalWork = operationalWork
@@ -57,7 +60,8 @@ final class UpdateInstallGate {
     private func runHeldInstall() {
         guard let install else { return }
         self.install = nil
-        OtosLog.app.noticeOperation("update.install", phase: "installing", fields: ["version": heldVersion])
+        OtosLog.app.noticeOperation("update.install", phase: "installing", fields: ["version": heldVersion ?? ""])
+        heldVersion = nil
         install()
     }
 

@@ -550,12 +550,14 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.canPlayLivePhoto)
             }
             // App ▸ Check for Updates… (ADR 0059), where macOS apps put it, after About. Only a
-            // build that updates itself offers it.
+            // build that updates itself offers it; it is disabled only while choosing it could
+            // do nothing (`AppUpdater.CheckAnswer`).
             CommandGroup(after: .appInfo) {
-                if lifecycle.updater.canCheckForUpdates {
+                if lifecycle.updater.offersCheck {
                     Button("Check for Updates…") {
                         lifecycle.updater.checkForUpdates()
                     }
+                    .disabled(lifecycle.updater.checkAnswer == .unavailable)
                 }
             }
             // Help ▸ Export Diagnostics… (ADR 0060): what this Mac's Otos ran into, written

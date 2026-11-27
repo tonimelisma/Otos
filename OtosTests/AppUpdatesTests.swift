@@ -34,9 +34,24 @@ struct AppUpdatesTests {
         #expect(gate.isHolding)
         #expect(installs.value == 0, "held while an import or a reorganization is in flight")
 
+        #expect(gate.heldVersion == "101", "the version held is the newest handed over")
+
         report.yield(false)
         try await waitUntil { !gate.isHolding }
         #expect(installs.value == 1, "the newest held install, once")
+        #expect(gate.heldVersion == nil, "an install that ran holds nothing")
+    }
+
+    /// App ▸ Check for Updates… always answers: Sparkle answers a check with nothing while its
+    /// session is open, which it is for as long as Otos holds an update, so a held update is
+    /// said first; with none held, the check is Sparkle's while it can check and the item is
+    /// disabled while it cannot.
+    @Test func checkForUpdatesAlwaysAnswers() {
+        #expect(AppUpdater.checkAnswer(sparkleCanCheck: false, heldVersion: "1.0.9") == .showHeld(version: "1.0.9"))
+        #expect(AppUpdater.checkAnswer(sparkleCanCheck: true, heldVersion: "1.0.9") == .showHeld(version: "1.0.9"))
+        #expect(AppUpdater.checkAnswer(sparkleCanCheck: true, heldVersion: nil) == .check)
+        #expect(AppUpdater.checkAnswer(sparkleCanCheck: false, heldVersion: nil) == .unavailable)
+        #expect(AppUpdater.heldTitle(version: "1.0.9") == "Otos 1.0.9 Is Ready to Install")
     }
 
     /// The Store says when an import starts and when its journal is gone, from the journal
