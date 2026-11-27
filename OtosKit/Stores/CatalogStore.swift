@@ -4472,10 +4472,14 @@ extension CatalogStore {
     }
 
     /// Claims up to `limit` background rows: removable sources first, then libraries, each
-    /// newest capture first (ADR 0013, ADR 0018). While `videoFaces` is held, no row is
-    /// claimed for a video's faces (`EnrichmentClaim.admitting`), so a video that owes only
-    /// them is not claimed at all.
-    func enrichmentCandidates(limit: Int, videoFaces: VideoFacesAdmission) async throws -> [ClaimedEnrichmentCandidate] {
+    /// newest capture first (ADR 0013, ADR 0018), no root past its `room` (ENR-009). While
+    /// `videoFaces` is held, no row is claimed for a video's faces
+    /// (`EnrichmentClaim.admitting`), so a video that owes only them is not claimed at all.
+    func enrichmentCandidates(
+        limit: Int,
+        room: EnrichmentClaimRoom,
+        videoFaces: VideoFacesAdmission
+    ) async throws -> [ClaimedEnrichmentCandidate] {
         guard limit > 0 else {
             return []
         }
@@ -4503,7 +4507,7 @@ extension CatalogStore {
         var claims = landedClaims
         if landedClaims.value.count < limit {
             let tiers = try await claimedEnrichmentCandidates(
-                limit: limit - landedClaims.value.count, videoFaces: videoFaces
+                limit: limit - landedClaims.value.count, room: room, videoFaces: videoFaces
             )
             claims = DatabaseTimedValue(
                 value: landedClaims.value + tiers.value,
@@ -4682,15 +4686,34 @@ extension CatalogStore {
         )
     }
 
-    private func claimedEnrichmentCandidates(limit: Int, videoFaces: VideoFacesAdmission) async throws
-        -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
-    {
+    private func claimedEnrichmentCandidates(
+        limit: Int,
+        room: EnrichmentClaimRoom,
+        videoFaces: VideoFacesAdmission
+    ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
         let (libraryRootIDs, accountRootIDs, metadataFirstRootIDs) = roots.enrichableRootIDsByFirstClaim()
         let cardRootIDs = roots.enrichableCardRootIDs()
+        let roomByRootID = roots.pathsByRowID.mapValues { room.room(for: $0) }
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, claim: EnrichmentClaim)] = []
+            // Each root is claimed only into its own room, so a root whose claims wait on
+            // transfers never takes another's (`EnrichmentClaimRoom`).
+            var claimedByRootID: [Int64: Int] = [:]
+            func take(rootID: Int64, upTo wanted: Int, under claim: EnrichmentClaim) throws {
+                let rootRoom = roomByRootID[rootID, default: 0] - claimedByRootID[rootID, default: 0]
+                let count = min(wanted, limit - storedAssets.count, rootRoom)
+                guard count > 0 else { return }
+                let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
+                    rootIDs: [rootID],
+                    limit: count,
+                    claim: claim,
+                    db: db
+                )
+                claimedByRootID[rootID, default: 0] += claimed.count
+                storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: claim) })
+            }
             // The fallback spans roots of mixed kinds (ADR 0018): a fixed library's rows are
             // claimed for every product they owe at once (`EnrichmentClaim.library`), an Immich
             // account's for metadata and a video's faces (`.account`), and a card's and a
@@ -4714,14 +4737,10 @@ extension CatalogStore {
                 (removableRoots.intersection(accountRootIDs).sorted(), EnrichmentClaim.account.admitting(videoFaces)),
                 (cardsReadyForProducts, .products),
             ]
-            for group in priorityGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
-                let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
-                    rootIDs: group.rootIDs,
-                    limit: limit - storedAssets.count,
-                    claim: group.claim,
-                    db: db
-                )
-                storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: group.claim) })
+            for group in priorityGroups {
+                for rootID in group.rootIDs {
+                    try take(rootID: rootID, upTo: limit, under: group.claim)
+                }
             }
             // Each fixed source gets its share of what is left, then any room a source did
             // not fill goes to the others in turn. A source whose rows wait on downloads (a
@@ -4735,14 +4754,8 @@ extension CatalogStore {
             if storedAssets.count < limit, !fixedSources.isEmpty {
                 let share = max(1, (limit - storedAssets.count) / fixedSources.count)
                 for pass in [share, limit] {
-                    for source in fixedSources where storedAssets.count < limit {
-                        let claimed = try EnrichmentClaimGateway.fetchStoredAssetsNeedingEnrichment(
-                            rootIDs: [source.rootID],
-                            limit: min(pass, limit - storedAssets.count),
-                            claim: source.claim,
-                            db: db
-                        )
-                        storedAssets.append(contentsOf: claimed.map { (asset: $0, claim: source.claim) })
+                    for source in fixedSources {
+                        try take(rootID: source.rootID, upTo: pass, under: source.claim)
                     }
                 }
             }

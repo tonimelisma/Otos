@@ -20,9 +20,9 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
-        let firstClaim = try await store.enrichmentCandidates(limit: 1, videoFaces: .admitted)
+        let firstClaim = try await store.enrichmentCandidates(limit: 1, room: .unlimited, videoFaces: .admitted)
         #expect(firstClaim.map(\.asset.relativePath) == [rel])
-        let blockedByLease = try await store.enrichmentCandidates(limit: 1, videoFaces: .admitted)
+        let blockedByLease = try await store.enrichmentCandidates(limit: 1, room: .unlimited, videoFaces: .admitted)
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
 
@@ -80,7 +80,7 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
 
-        let claims = try await store.enrichmentCandidates(limit: 3, videoFaces: .admitted)
+        let claims = try await store.enrichmentCandidates(limit: 3, room: .unlimited, videoFaces: .admitted)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
@@ -128,15 +128,13 @@ struct CatalogStoreEnrichmentClaimTests {
                 && snapshot.removableSources.first?.availability == .available
         }
 
-        let claims = try await store.enrichmentCandidates(limit: 2, videoFaces: .admitted)
+        let claims = try await store.enrichmentCandidates(limit: 2, room: .unlimited, videoFaces: .admitted)
 
         #expect(claims.map(\.asset.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
     }
 
-    /// Fixed sources share a claim window: with two libraries owing work, a window of two
-    /// takes one row from each, whatever their dates, so a source whose rows wait on
-    /// downloads never holds back another. Room a source does not fill goes to the others.
-    @Test func fixedSourcesShareTheClaimWindow() async throws {
+    /// Two libraries of three rows each, the older's captured before the newer's.
+    private func twoLibraries() async throws -> (store: CatalogStore, older: LibraryRootPath, newer: LibraryRootPath) {
         let temp = try makeTestDirectory()
         let older = temp.appending(path: "Older", directoryHint: .isDirectory)
         let newer = temp.appending(path: "Newer", directoryHint: .isDirectory)
@@ -166,12 +164,35 @@ struct CatalogStoreEnrichmentClaimTests {
         try await store.addLibrary(url: newer)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 6 }
 
-        let window = try await store.enrichmentCandidates(limit: 2, videoFaces: .admitted)
+        return try (
+            store,
+            CatalogPath.normalizedDirectoryPath(for: older),
+            CatalogPath.normalizedDirectoryPath(for: newer)
+        )
+    }
+
+    /// Fixed sources share a claim window: with two libraries owing work, a window of two
+    /// takes one row from each, whatever their dates, so a source whose rows wait on
+    /// downloads never holds back another. Room a source does not fill goes to the others.
+    @Test func fixedSourcesShareTheClaimWindow() async throws {
+        let (store, _, _) = try await twoLibraries()
+        let window = try await store.enrichmentCandidates(limit: 2, room: .unlimited, videoFaces: .admitted)
         #expect(Set(window.map { $0.asset.relativePath.rawValue.prefix(5) }) == ["older", "newer"])
 
         // The newer library has two rows left and the older two: a window of five takes all.
-        let rest = try await store.enrichmentCandidates(limit: 5, videoFaces: .admitted)
+        let rest = try await store.enrichmentCandidates(limit: 5, room: .unlimited, videoFaces: .admitted)
         #expect(rest.count == 4)
+    }
+
+    /// ENR-009: each root is claimed only into its own room. A root whose window is full is
+    /// claimed nothing, and the claim's room goes to the roots that have some, up to theirs.
+    @Test func aRootWithAFullWindowIsNotClaimed() async throws {
+        let (store, older, newer) = try await twoLibraries()
+        let room = EnrichmentClaimRoom(perRoot: 2, claimed: [newer: 2])
+
+        let claims = try await store.enrichmentCandidates(limit: 4, room: room, videoFaces: .admitted)
+
+        #expect(claims.map(\.asset.id.libraryRootPath) == [older, older])
     }
 }
 

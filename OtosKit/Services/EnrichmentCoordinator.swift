@@ -168,6 +168,8 @@ actor EnrichmentCoordinator: QuiescentOwner {
     let claimBatchSize: Int
     let admissionPolicy: EnrichmentAdmissionPolicy
     let handoffPolicy: EnrichmentMaterializationHandoffPolicy
+    /// The claimed work each root may hold, queued, reading or waiting on a transfer
+    /// (`claimRoom`, `EnrichmentClaimRoom`).
     let claimWindowLimit: Int
 
     var viewport: [MediaAssetID] = []
@@ -209,17 +211,21 @@ actor EnrichmentCoordinator: QuiescentOwner {
     /// failing it, so this is measured rather than assumed. A root absent from this set
     /// stages, which is what every device did before this path existed.
     var rangeCapableRootPaths: Set<LibraryRootPath> = []
-    /// Bumped by every Store change this coordinator hears and every claim it gives back: the
-    /// facts a background claim's answer depends on (ADR 0032 rule 2).
+    /// Bumped by every Store change this coordinator hears that names rows or names none, and
+    /// every claim it gives back: the facts a background claim's answer depends on (ADR 0032
+    /// rule 2). A change that names no row (`CatalogChangedRows.none`) moves none of them.
     var claimInputsRevision: UInt64 = 0
     /// Signals, passes and the work they did (`QuiescentOwner`).
     let activity = OwnerActivity(owner: "enrichment")
     /// Set by a pass whose candidate read failed, so the pass covers nothing (ADR 0032 rule 4).
     var claimReadFailed = false
-    /// The revision and video-faces admission a background claim last found nothing at. While
-    /// both stand, another claim would find nothing again, so none is asked: an empty claim is
-    /// still a write transaction, and an idle coordinator writes nothing (ADR 0009).
-    var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission)?
+    /// The revision, video-faces admission and room a background claim last found nothing at.
+    /// While the revision and admission stand and no root that was full has room, another
+    /// claim would find nothing again, so none is asked: an empty claim is still a write
+    /// transaction, and an idle coordinator writes nothing (ADR 0009). The room is among them
+    /// because the claim could not ask a root whose window was full, which may have rows once
+    /// a demand of its own starts its transfer (`EnrichmentClaimRoom.opensARootFull`).
+    var exhaustedClaims: (revision: UInt64, videoFaces: VideoFacesAdmission, room: EnrichmentClaimRoom)?
     /// What the next pass asks the Store of the demanded rows (`reconcileDemandSources`): the
     /// rows a membership change named or a deadline brought back from parking, and, after a
     /// change that named no rows, every active demand. A demand ends when its row does, not
@@ -571,7 +577,7 @@ extension EnrichmentCoordinator {
 }
 
 extension EnrichmentCoordinator {
-    /// A Store change: new claim inputs, and, when it may have removed, moved or resized a
+    /// A Store change: new claim inputs unless it names no row, and, when it may have removed, moved or resized a
     /// demanded row — a membership change that names one, or names none — a question for the
     /// next pass of which demanded rows the Store still offers (`reconcileDemandSources`), and
     /// the end of the claim holds of paced rows it may have resized; and the priority rows it
@@ -600,7 +606,15 @@ extension EnrichmentCoordinator {
                 break
             }
         }
-        markDirtyAndSignal()
+        // A change that names no row and moves none in or out of reach
+        // (`CatalogChangedRows.none`: a root's order or activity, an account's listing
+        // starting and ending) gives a claim nothing new to find, so it wakes a pass without
+        // moving the claim's inputs: a claim that found nothing is not asked again for it.
+        if change.rows == .none {
+            signal()
+        } else {
+            markDirtyAndSignal()
+        }
     }
 
     /// A change the Store delivered to this coordinator's subscription: noted, and counted as

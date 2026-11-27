@@ -12,6 +12,19 @@ struct EnrichmentScheduleTests {
         MediaAssetID(libraryRootPath: root ?? self.root, relativePath: MediaRelativePath(rawValue: name))
     }
 
+    /// ENR-009: a claim that found nothing asked every root with room, and none had a row, so
+    /// it is asked again only once a root it could not ask, one whose window was full, has
+    /// room; more room for a root that had some reaches no row.
+    @Test func anEmptyClaimIsAskedAgainOnlyOnceAFullRootHasRoom() {
+        let card = LibraryRootPath(rawValue: "/Volumes/CARD")
+        let asked = EnrichmentClaimRoom(perRoot: 32, claimed: [root: 32, card: 4])
+
+        #expect(!EnrichmentClaimRoom(perRoot: 32, claimed: [root: 32, card: 4]).opensARootFull(in: asked))
+        #expect(!EnrichmentClaimRoom(perRoot: 32, claimed: [root: 32]).opensARootFull(in: asked))
+        #expect(!EnrichmentClaimRoom(perRoot: 32, claimed: [root: 32, card: 9]).opensARootFull(in: asked))
+        #expect(EnrichmentClaimRoom(perRoot: 32, claimed: [root: 31, card: 4]).opensARootFull(in: asked))
+    }
+
     private func work(
         _ id: MediaAssetID,
         sourceSize: Int64? = 100,
@@ -27,7 +40,7 @@ struct EnrichmentScheduleTests {
     }
 
     private func submitAll(_ schedule: inout EnrichmentSchedule, at now: ContinuousClock.Instant) -> [MediaAssetID] {
-        _ = schedule.unparkDue(now: now, room: 16)
+        _ = schedule.unparkDue(now: now, room: .unlimited)
         return schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
     }
 
@@ -115,8 +128,8 @@ struct EnrichmentScheduleTests {
         #expect(schedule.outstandingCount == 0)
         #expect(schedule.heldCount == 1)
         #expect(schedule.nextWake(after: now) == now.advanced(by: .seconds(900)))
-        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(899)), room: 16).isEmpty)
-        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(900)), room: 16) == [row])
+        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(899)), room: .unlimited).isEmpty)
+        #expect(schedule.unparkDue(now: now.advanced(by: .seconds(900)), room: .unlimited) == [row])
         let afterPacing = schedule.takeSubmissions(
             globalLimit: 16, backgroundPerRoot: 2, viewport: [], now: now.advanced(by: .seconds(900))
         )

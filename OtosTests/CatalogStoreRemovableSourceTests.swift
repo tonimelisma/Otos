@@ -171,7 +171,7 @@ struct CatalogStoreRemovableSourceTests {
         await store.beginImportSourceRead(batch, source: cardPath)
         #expect(await store.enrichableRootPaths() == [fixture.fixedRootPath])
         #expect(try await store.priorityEnrichmentCandidates([cardID], videoFaces: .admitted).claimed.isEmpty)
-        let background = try await store.enrichmentCandidates(limit: 10, videoFaces: .admitted)
+        let background = try await store.enrichmentCandidates(limit: 10, room: .unlimited, videoFaces: .admitted)
         #expect(background.allSatisfy { $0.asset.id.libraryRootPath == fixture.fixedRootPath })
 
         await store.endImportSourceRead(batch, source: cardPath)

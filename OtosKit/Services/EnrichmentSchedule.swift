@@ -116,11 +116,11 @@ nonisolated struct EnrichmentSchedule: Sendable {
 
     let retrySchedule: EnrichmentRetrySchedule
     /// The active demands: in flight, outstanding, or held for a transfer slot. Every pass
-    /// reads these, so their count is bounded by the hand-off and the claim window.
+    /// reads these, so their count is bounded by the hand-off and each root's claim window.
     private(set) var materializations: [MediaAssetID: Materialization] = [:]
     /// The demands parked until a deadline: waiting out the pacing after their in-window
     /// retries, or the free-space recheck. A failing or full-disk library can park any number
-    /// of rows, so no pass reads them: they come back into `materializations`, a window's room
+    /// of rows, so no pass reads them: they come back into `materializations`, their root's room
     /// at a time, when their deadline passes (`unparkDue`), and the next wake is the earliest
     /// of them (`parkedEarliest`).
     private(set) var parked: [MediaAssetID: Materialization] = [:]
@@ -163,13 +163,17 @@ nonisolated struct EnrichmentSchedule: Sendable {
         materializations.values.count(where: \.isHeld) + parked.count
     }
 
-    /// The active demands that hold a Store claim and are not in flight: held for a slot, or
-    /// waiting for a slot or an in-window retry. Each is claimed work that has not started, so
-    /// it takes a place in the coordinator's claim window (`EnrichmentCoordinator.claimWindowLimit`).
+    /// Each root's active demands that hold a Store claim and are not in flight: held for a
+    /// slot, or waiting for a slot or an in-window retry. Each is claimed work that has not
+    /// started, so it takes a place in its root's claim window (`EnrichmentClaimRoom`).
     /// Outside it, every pass would claim a window's more rows to hold, until every row of a
     /// cloud-only library was held and each pass walked them all.
-    var claimedWaitingCount: Int {
-        materializations.values.count { $0.ownsStoreClaim && !$0.isInFlight }
+    var claimedWaitingByRoot: [LibraryRootPath: Int] {
+        var counts: [LibraryRootPath: Int] = [:]
+        for (id, demand) in materializations where demand.ownsStoreClaim && !demand.isInFlight {
+            counts[id.libraryRootPath, default: 0] += 1
+        }
+        return counts
     }
 
     var hasDemands: Bool {
@@ -180,24 +184,28 @@ nonisolated struct EnrichmentSchedule: Sendable {
         materializations[id] != nil || parked[id] != nil
     }
 
-    /// Brings back up to `room` parked demands whose deadline is at or behind `now`, earliest
-    /// first, held for a transfer slot with their claim; returns their rows. The rest stay
-    /// parked, and the earliest deadline still ahead is the next wake.
-    mutating func unparkDue(now: ContinuousClock.Instant, room: Int) -> [MediaAssetID] {
-        guard room > 0, let earliest = parkedEarliest, earliest <= now else {
+    /// Brings back the parked demands whose deadline is at or behind `now`, earliest first,
+    /// as many as each one's root has `room` for, held for a transfer slot with their claim;
+    /// returns their rows. The rest stay parked, and the earliest deadline still ahead is the
+    /// next wake.
+    mutating func unparkDue(now: ContinuousClock.Instant, room: EnrichmentClaimRoom) -> [MediaAssetID] {
+        guard let earliest = parkedEarliest, earliest <= now else {
             return []
         }
         let due = parked.filter { ($0.value.work.retryNotBefore ?? now) <= now }
             .sorted { ($0.value.work.retryNotBefore ?? now) < ($1.value.work.retryNotBefore ?? now) }
-            .prefix(room)
-        for (id, record) in due {
+        var taken: [LibraryRootPath: Int] = [:]
+        var unparked: [MediaAssetID] = []
+        for (id, record) in due where taken[id.libraryRootPath, default: 0] < room.room(for: id.libraryRootPath) {
+            taken[id.libraryRootPath, default: 0] += 1
             parked[id] = nil
             var active = record
             active.hold = .transferSlot
             materializations[id] = active
+            unparked.append(id)
         }
         parkedEarliest = parked.values.compactMap(\.work.retryNotBefore).min()
-        return due.map(\.key)
+        return unparked
     }
 
     func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {

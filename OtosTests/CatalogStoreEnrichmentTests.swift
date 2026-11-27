@@ -648,7 +648,7 @@ struct CatalogStoreEnrichmentTests {
         _ = try await card.settle(sourceModifiedAt: card.scannedModifiedAt)
         let copyID = MediaAssetID(libraryRootPath: card.destinationPath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"))
 
-        let claimed = try await card.store.enrichmentCandidates(limit: 1, videoFaces: .admitted)
+        let claimed = try await card.store.enrichmentCandidates(limit: 1, room: .unlimited, videoFaces: .admitted)
 
         #expect(claimed.map(\.asset.id) == [copyID])
         #expect(claimed.first?.scope == [.rendering])

@@ -62,7 +62,9 @@ struct EnrichmentLaunchMemoryTests {
         let demands = schedule.materializations.count
         let kept = "parked=\(schedule.parked.count) ledger=\(schedule.retryLedger.count) rechecks=\(schedule.readinessRechecks.count)"
         let claims = store.use().connections.holds.filter { $0.operation == "claimedEnrichmentCandidates" }.reduce(0) { $0 + $1.count }
-        let demandBound = await enrichment.claimWindowLimit + enrichment.handoffPolicy.globalOutstandingLimit
+        // Each root has its own claim window (`EnrichmentClaimRoom`); the hand-off is shared.
+        let windows = await store.enrichableRootPaths().count
+        let demandBound = await enrichment.claimWindowLimit * windows + enrichment.handoffPolicy.globalOutstandingLimit
         let vmmap = Self.vmmapSummary()
         await enrichment.shutdown()
         await materializer.shutdown()
@@ -87,7 +89,7 @@ struct EnrichmentLaunchMemoryTests {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
 
-        #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its window and hand-off")
+        #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its roots' windows and hand-off")
         #expect(startMB <= Self.startBoundMB, "starting enrichment added \(startMB) MB")
         #expect(releasedMB <= Self.startBoundMB, "after its claims were given back the footprint was \(releasedMB) MB over the floor")
         #expect(hashed <= Self.bytesBoundMB, "hashing \(Self.hashedFileMB) MB added \(hashed) MB")

@@ -251,7 +251,7 @@ Adjacent decisions requiring separate ADRs or specs:
    the floor. The catalog is already media-only, so non-media is never downloaded.
 
 8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
-   owns cursorless catalog claims, a bounded 32-identity ready-enrichment window,
+   owns cursorless catalog claims, a bounded 32-identity ready-enrichment window per root,
    separate materialization demands and in-flight IDs, pending-apply claims,
    readiness retry state, eight local byte-reading workers, the `freshly` handoff,
    and batched writes. Ready capacity, physical-transfer capacity, and SQLite
@@ -303,7 +303,7 @@ Adjacent decisions requiring separate ADRs or specs:
 
    Enrichment remains cursorless. Store claims priority rows through
    `priorityEnrichmentCandidates(_:)` and background rows through
-   `enrichmentCandidates(limit:)`. Priority rows are the viewport and the `freshly`
+   `enrichmentCandidates(limit:room:videoFaces:)`. Priority rows are the viewport and the `freshly`
    hand-off, and each pass claims them first, before queued work is drained and
    outside the 32-identity window. The window bounds look-ahead, and a row on screen
    is not look-ahead: a window full of slow background claims would otherwise make a
@@ -311,12 +311,27 @@ Adjacent decisions requiring separate ADRs or specs:
    before it claims. The priority list's own length is the bound. Among background
    rows, available connected/removable roots precede fixed roots, then capture date and
    stable path break ties. The fixed roots share what the removable ones leave of a
-   window: a share each, then the room a root did not fill to the others in turn. A
-   claimed row whose download the materialization budget holds back is released and
-   claimed again on the next pass, so a root claimed whole before another (a cloud
-   library owing 627 GB of video) would fill every window with rows that cannot move,
-   and a root whose rows are readable now (an Immich account's, read in ranges) would
-   never be reached. MTP staging submits device-priority work, with stills
+   claim: a share each, then the room a root did not fill to the others in turn.
+
+   **Each root has a claim window of its own** (`EnrichmentClaimRoom`). A claimed row
+   whose download cannot start keeps its claim and its place in its root's window (the
+   held state below), so a window shared by every root fills with the root that waits longest.
+   On the owner's Mac (2026-11-26) a launch under memory pressure claimed 37 cloud-only
+   OneDrive videos whose downloads the machine held (`reason=machineHeld`); a card
+   inserted nine seconds later found the window full, and every pass after it claimed
+   nothing (`limit=0`): the card's 147 rows on screen were read through the priority
+   path and its other 317 never, so its import waited on their dates with Import
+   disabled, and the Immich account, read in ranges, was starved the same way. A share
+   per claim cannot prevent this, since the held rows were claimed by earlier claims. Per
+   root, a root whose rows wait holds only its own room, and the bound on what the
+   coordinator holds is a window per root plus the shared hand-off. Rejected: counting
+   only ready work against the window, since the Store cannot tell a cloud-only row from
+   a local one, so every pass would claim another window of rows to hold until a
+   cloud-only library was held whole; giving a removable root's work the slots of
+   unstarted fixed-root claims, which needs a probe claim each pass, re-claims the rows
+   it gives back, and leaves one fixed root starving another; and giving back the claims
+   of downloads the machine holds, which is one cause of a wait among several (the
+   floor, a full hand-off, an outage) and re-claims them the next pass. MTP staging submits device-priority work, with stills
    before videos, then capture date and path. No durable materialization queue or
    status column exists.
 
@@ -346,7 +361,7 @@ Adjacent decisions requiring separate ADRs or specs:
    not a signal about the provider's ability to materialize the asset. Ordinary
    background failure retries in-window through a capped exponential schedule
    (`[15, 60, 300, 900]` seconds); once that schedule is exhausted the row leaves the
-   32-item working window and is held, with its claim, for `ledgerPacing` (900 s,
+   root's 32-item working window and is held, with its claim, for `ledgerPacing` (900 s,
    `time: backoff`), then starts a fresh set of retries. A claimed row the hand-off has no
    slot for is held the same way, with no deadline, and handed off when a slot frees.
    **The blocked state is the schedule's, not rediscovered by the Store**: a

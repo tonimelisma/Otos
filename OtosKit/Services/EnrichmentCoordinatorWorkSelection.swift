@@ -105,7 +105,8 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return []
         }
-        await dropClaimedWork(outside: store.enrichableRootPaths())
+        let enrichableRoots = await store.enrichableRootPaths()
+        await dropClaimedWork(outside: enrichableRoots)
         await releasePacedClaims(now: now)
         let availableSlots = admissionPolicy.enrichConcurrency - enrichingCount
         guard availableSlots > 0 else {
@@ -154,13 +155,16 @@ extension EnrichmentCoordinator {
                 guard items.count < availableSlots else { break }
                 let currentReadyCapacity = max(availableSlots - items.count, 0)
                 // A demand waiting for a slot or a retry is claimed work not started, as a
-                // queued one is: it takes a place in the window, so a full hand-off stops the
-                // claims.
-                let currentClaimCapacity = claimWindowRoom
+                // queued one is: it takes a place in its root's window, so a full hand-off
+                // stops that root's claims and no other's.
+                let room = claimRoom
+                let currentClaimCapacity = room.total(over: enrichableRoots)
                 guard currentClaimCapacity > 0 else { break }
                 let claimLimit = min(max(claimBatchSize, currentReadyCapacity), currentClaimCapacity)
                 lastClaimLimit = claimLimit
-                let claimed = try await claimSkippingLedgerDeferrals(limit: claimLimit, videoFaces: videoFaces, now: now)
+                let claimed = try await claimSkippingLedgerDeferrals(
+                    limit: claimLimit, room: room, videoFaces: videoFaces, now: now
+                )
                 routing.examined += claimed.totalExamined
                 routing.deferred += claimed.deferredIDs.count
                 await route(claimed.ready, now: now, into: &routing)
@@ -295,6 +299,7 @@ extension EnrichmentCoordinator {
     /// do, so each batch surfaces different rows, and their claims pass to the ledger.
     private func claimSkippingLedgerDeferrals(
         limit: Int,
+        room: EnrichmentClaimRoom,
         videoFaces: VideoFacesAdmission,
         now: ContinuousClock.Instant
     ) async throws -> (ready: [ClaimedEnrichmentCandidate], deferredIDs: [MediaAssetID], totalExamined: Int) {
@@ -302,7 +307,9 @@ extension EnrichmentCoordinator {
         var deferredIDs: [MediaAssetID] = []
         var totalExamined = 0
         for _ in 0 ..< Self.maxLedgerSkipPasses {
-            let batch = try await claimEnrichmentCandidates(limit: limit, videoFaces: videoFaces)
+            // The ledger holds the paced rows' claims outside the window, so each batch has
+            // the room the pass started with.
+            let batch = try await claimEnrichmentCandidates(limit: limit, room: room, videoFaces: videoFaces)
             guard !batch.isEmpty else {
                 break
             }
@@ -371,7 +378,7 @@ extension EnrichmentCoordinator {
         }
         // Parked demands whose deadline passed come back as the window has room, and are
         // asked of the Store with the rest: a row deleted while it was parked ends here.
-        demandRowsToCheck.formUnion(schedule.unparkDue(now: now, room: claimWindowRoom))
+        demandRowsToCheck.formUnion(schedule.unparkDue(now: now, room: claimRoom))
         // A demand whose row went is ended before a transfer is spent on it.
         await reconcileDemandSources()
         guard !isShuttingDown else {
@@ -396,10 +403,14 @@ extension EnrichmentCoordinator {
         return selected
     }
 
-    /// The claim window's free places: its limit less the claimed work not yet started,
-    /// queued enrichment and the demands waiting for a slot or a retry.
-    var claimWindowRoom: Int {
-        max(claimWindowLimit - readyClaims.count - schedule.claimedWaitingCount, 0)
+    /// Each root's claim window: its limit less the root's claimed work, queued or reading,
+    /// and its demands waiting for a slot or a retry (`EnrichmentClaimRoom`).
+    var claimRoom: EnrichmentClaimRoom {
+        var claimed = schedule.claimedWaitingByRoot
+        for id in readyClaims.keys {
+            claimed[id.libraryRootPath, default: 0] += 1
+        }
+        return EnrichmentClaimRoom(perRoot: claimWindowLimit, claimed: claimed)
     }
 
     func prioritizedEnrichmentIDs() -> [MediaAssetID] {
@@ -449,17 +460,21 @@ extension EnrichmentCoordinator {
     /// window, by `dequeueEnrichmentWork`.
     private func claimEnrichmentCandidates(
         limit: Int,
+        room: EnrichmentClaimRoom,
         videoFaces: VideoFacesAdmission
     ) async throws -> [ClaimedEnrichmentCandidate] {
-        if let exhausted = exhaustedClaims, exhausted.revision == claimInputsRevision, exhausted.videoFaces == videoFaces {
+        if let exhausted = exhaustedClaims, exhausted.revision == claimInputsRevision,
+           exhausted.videoFaces == videoFaces, !room.opensARootFull(in: exhausted.room)
+        {
             return []
         }
         let startedFrom = claimInputsRevision
-        let candidates = try await store.enrichmentCandidates(limit: limit, videoFaces: videoFaces)
+        let candidates = try await store.enrichmentCandidates(limit: limit, room: room, videoFaces: videoFaces)
         activity.read(rows: candidates.count)
-        // A claim that found nothing at a revision finds nothing again until a Store change or
-        // a claim given back moves it; one that found rows says nothing of the next.
-        exhaustedClaims = candidates.isEmpty ? (startedFrom, videoFaces) : nil
+        // A claim that found nothing at a revision and room finds nothing again until a Store
+        // change, a claim given back or room for a root it could not ask moves it; one that
+        // found rows says nothing of the next.
+        exhaustedClaims = candidates.isEmpty ? (startedFrom, videoFaces, room) : nil
         for candidate in candidates {
             await recordClaimedCandidate(candidate.asset)
         }

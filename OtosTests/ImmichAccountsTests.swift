@@ -441,7 +441,7 @@ struct ImmichAccountsTests {
         #expect(await accounts.downloadOriginal(request(.interactive)).outcome == .materialized)
         #expect(FileManager.default.contents(atPath: id.fileURL.path(percentEncoded: false)) == FakeServer.original)
         // Offered ahead of other work, for every product it owes: a rendering, not just metadata.
-        let offered = try await store.enrichmentCandidates(limit: 4, videoFaces: .admitted)
+        let offered = try await store.enrichmentCandidates(limit: 4, room: .unlimited, videoFaces: .admitted)
         #expect(offered.map(\.asset.id) == [id])
         #expect(offered.first?.scope.contains(.rendering) == true)
 

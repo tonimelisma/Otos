@@ -246,6 +246,74 @@ struct EnrichmentHoldEndingTests {
         await coordinator.shutdown()
         await store.shutdown()
     }
+
+    /// ENR-011: a cloud library whose downloads never start fills its window with held
+    /// demands, and a card attached after them is still read in full, none of its rows on
+    /// screen: each root has a window of its own, so held downloads take no other root's room.
+    @Test func heldDownloadsLeaveACardAttachedAfterThemItsOwnWindow() async throws {
+        let temp = try makeTestDirectory()
+        let cloud = temp.appending(path: "Cloud", directoryHint: .isDirectory)
+        let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
+        for folder in [cloud, card] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        let cloudPath = try CatalogPath.normalizedDirectoryPath(for: cloud)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
+        let cloudRows = 200
+        let cardRows = 5
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
+            let isCloud = rootPath.rawValue == cloudPath.rawValue
+            let files = (0 ..< (isCloud ? cloudRows : cardRows)).map { index in
+                let name = "\(isCloud ? "cloud" : "card")-\(index).jpg"
+                return ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: name),
+                    name: name,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 100,
+                    createdAt: nil,
+                    contentModifiedAt: Date(timeIntervalSince1970: 1000 + TimeInterval(index))
+                )
+            }
+            try await batchHandler(files)
+            return .mediaOnly(Set(files.map(\.relativePath)))
+        }
+        let store = makeTestStore(location: .inMemory, scanner: scanner)
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: cloud)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == cloudRows }
+        // The cloud library's originals are all in the cloud; the card's are on the card.
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _, _, _ in .notMaterialized },
+            originalStatus: { url in
+                url.path(percentEncoded: false).hasPrefix(cardPath.rawValue) ? .materialized : .dataless
+            }
+        )
+        // The transfers handed off never return, as while the machine holds downloads.
+        for _ in 1 ... 5 {
+            _ = await coordinator.dequeueEnrichmentWork()
+            _ = await coordinator.dequeueMaterializationSubmissions()
+        }
+        #expect(await coordinator.claimRoom.room(for: cloudPath) == 0, "the held downloads fill the cloud library's window")
+
+        try await store.attachRemovableVolume(
+            mountURL: card,
+            identity: .volume(uuid: "held-downloads-card"),
+            displayName: "CARD",
+            isEjectable: true,
+            capabilities: .unknown
+        )
+        // A card's rows are not All Media's, so its scan's end is the source's own state.
+        _ = try await waitForCatalogStoreState(store) { state in
+            state.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+
+        let dispatched = await coordinator.dequeueEnrichmentWork()
+        #expect(dispatched.count == cardRows)
+        #expect(Set(dispatched.map(\.id.libraryRootPath)) == [cardPath])
+        await coordinator.shutdown()
+        await store.shutdown()
+    }
 }
 
 private actor HoldTestPresence {

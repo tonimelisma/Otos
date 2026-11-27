@@ -82,10 +82,12 @@ struct BackgroundOwnersIdleTests {
         let idle = IdleUse(from: before, to: store.use())
         let rounds = OwnerRound.between(settled, rung)
         // Every original is dataless and no download succeeds, as on a cloud-only library: what
-        // enrichment holds stays within its claim window and hand-off however many rows wait,
+        // enrichment holds stays within its roots' claim windows and hand-off however many rows wait,
         // or every pass walks a growing set (ENR-009).
         let demands = await owners.enrichment.schedule.materializations.count
-        let demandBound = await owners.enrichment.claimWindowLimit + owners.enrichment.handoffPolicy.globalOutstandingLimit
+        // Each root has its own claim window (`EnrichmentClaimRoom`); the hand-off is shared.
+        let windows = await store.enrichableRootPaths().count
+        let demandBound = await owners.enrichment.claimWindowLimit * windows + owners.enrichment.handoffPolicy.globalOutstandingLimit
         // Every transaction of the session — the open, every owner's settling and the idle
         // round — is accounted to the operation that ran it (`CatalogWriter`, the lanes), so
         // the scorecard can say whose a write was.
@@ -101,7 +103,7 @@ struct BackgroundOwnersIdleTests {
             try IdleUse.write(report, named: name)
         }
 
-        #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its window and hand-off (\(demandBound))")
+        #expect(demands <= demandBound, "enrichment holds \(demands) demands, more than its roots' windows and hand-off (\(demandBound))")
         // No catalog change: a root's own state, an account's listing starting and ending, is
         // announced (`CatalogChangedRows.none`) and moves no read, once each per listing pass.
         let listings = rounds.first { $0.owner == "immichSync" }?.work.passes ?? 0

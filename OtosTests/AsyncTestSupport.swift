@@ -9,6 +9,13 @@ extension MaterializationResult {
     }
 }
 
+extension EnrichmentClaimRoom {
+    /// Room no claim in a test reaches, for a test that asks the Store directly.
+    static var unlimited: EnrichmentClaimRoom {
+        EnrichmentClaimRoom(perRoot: 1_000_000, claimed: [:])
+    }
+}
+
 enum AsyncTestTimeoutError: Error, CustomStringConvertible {
     case streamEnded(String)
 
