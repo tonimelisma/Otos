@@ -50,8 +50,11 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    left are parked, and keeps waiting, with what stopped it still said, through its owners'
    retries until it has finished an item more than when it began to wait — a fact its count
    reports, never a time (ADR 0033) — or nothing of it works or waits. An owner that is only
-   a kind's detail (the downloads behind the photos to show, `Watched.isDetail`) never makes
-   it work. The board keeps when a kind's stretch of work began, which only orders the line;
+   a kind's detail (the downloads behind the photos to show, `Watched.Role.detail`) never makes
+   it work. An owner that groups a kind's finished items (`Watched.Role.grouping`: People's
+   assignment, the duplicate groups) has no count; while only it moves the kind, the row says
+   that it groups (`Grouping faces into people`, `Grouping duplicates`), draws a spinner in
+   place of a bar, and keeps its count only while items are left (owner, 2026-11-28). The board keeps when a kind's stretch of work began, which only orders the line;
    no time is shown. The owner rejected a list of finish times (2026-11-21: "it's a status
    window. not when something was done"). An Immich account reads syncing or connecting
    (working), offline (waiting), signed out (needs you), or online (up to date).

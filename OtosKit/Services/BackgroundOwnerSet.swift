@@ -101,7 +101,7 @@ extension BackgroundOwnerSet {
             // downloads it waits on are the thumbnails' detail.
             owners += [
                 .init(kind: .makingThumbnails, owner: enrichment),
-                .init(kind: .makingThumbnails, owner: materialization, isDetail: true),
+                .init(kind: .makingThumbnails, owner: materialization, role: .detail),
                 .init(kind: .readingPhotoInfo, owner: enrichment),
                 .init(kind: .scanningFaces, owner: enrichment),
                 .init(kind: .findingDuplicates, owner: enrichment),

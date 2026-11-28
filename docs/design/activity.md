@@ -103,6 +103,8 @@ row answers each, in that order.
 | Indexing for search | `22,308 photos and videos left` | the items owed a search embedding |
 | Writing descriptions | `38,100 photos left` | the stills owed a description |
 | Finding duplicates | `31,310 photos and videos to compare` | the stills owed a render signature, which the groups are built from, and the files owed the digest that tells exact copies apart (`EnrichmentPurpose.copies`) |
+| Scanning for faces, grouping | `Grouping faces into people`, a spinner, no bar | the faces found are being assigned to people (`PeopleAssignment`), which no count measures: shown while only that moves the row, with the scan's count after it only while stills are left |
+| Finding duplicates, grouping | `Grouping duplicates`, a spinner, no bar | the duplicate groups are being built from the fingerprints (`DuplicatesProjection`), which no count measures: shown while only that moves the row |
 | Syncing “Home”, listing | `18,400 photos and videos so far`, no bar | the assets the pass's stream has listed: the stream names no total ahead of its end, and the server's own statistics need not count what it lists |
 | Syncing “Home”, images | `2,100 of 6,000 thumbnails` | the rows tried of those owed the server's images when the fetch began, counted over the walk's own index; with no count, `2,100 thumbnails so far` and no bar |
 
@@ -118,6 +120,10 @@ HIG review (Progress indicators):
   the owner finishes items; when new photos arrive the total steps up, which is the truth, and
   done stays. An item that stops being owed for another reason — its facts changed again, its
   file gone — lowers the total and is never counted done.
+- **Say the step no count measures.** A row whose items are done while their result is still
+  being built — faces into people, fingerprints into duplicate groups — says that step and
+  spins, instead of `0 … to scan` beside a full bar that never finishes (owner, 2026-11-28:
+  "say grouping faces into people and fix duplicates too").
 - **A bar only while the work moves.** A paused or waiting row keeps its count, with what stops
   it under the count, and draws no bar: a bar says work is progressing, and it is not (owner,
   2026-11-26: "Whatever the problem the status needs to be right! It cant give a progress bar

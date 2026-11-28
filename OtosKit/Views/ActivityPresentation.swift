@@ -166,6 +166,14 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         let status: Status
         let details: [String]
         switch entry.state {
+        case .working where entry.isGrouping:
+            // Its items are done or wait and their result is being built, which no count
+            // measures: the row says so, and its count only while items are left (a count of
+            // none beside a working row reads as stuck).
+            status = .working
+            let left = (entry.progress?.left ?? 0) > 0 ? progress : []
+            details = (groupingText(entry.kind).map { [$0] } ?? []) + left
+                + (entry.transfers.flatMap(transfersText).map { [$0] } ?? []) + troubles
         case .working:
             status = .working
             details = progress + (entry.transfers.flatMap(transfersText).map { [$0] } ?? []) + troubles
@@ -182,9 +190,20 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
         }
         return Row(
             id: entry.kind.rawValue, systemImage: systemImage(entry.kind), title: title(entry.kind),
-            details: details, status: status, bar: status == .working ? bar(entry.progress) : nil,
+            details: details, status: status,
+            bar: status == .working && !entry.isGrouping ? bar(entry.progress) : nil,
             reason: troubles.first
         )
+    }
+
+    /// What a grouping kind does once only its grouping owners move it; nil for a kind with
+    /// none.
+    static func groupingText(_ kind: ActivityKind) -> String? {
+        switch kind {
+        case .scanningFaces: "Grouping faces into people"
+        case .findingDuplicates: "Grouping duplicates"
+        case .makingThumbnails, .readingPhotoInfo, .lookingUpPlaces, .indexingForSearch, .writingDescriptions: nil
+        }
     }
 
     /// The bar for a working stretch with something to count. A row that waits has none: its

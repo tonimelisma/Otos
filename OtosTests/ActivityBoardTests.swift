@@ -266,6 +266,39 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    /// A kind moved only by its grouping owner groups; once an owner of its items moves it
+    /// too, it works on its items again.
+    @Test func aKindMovedOnlyByItsGroupingOwnerGroups() async {
+        let board = ActivityBoard()
+        let faces = ScriptedOwner("previewFaces")
+        let people = ScriptedOwner("peopleAssignment")
+        let published = Published(board)
+        await board.watch(
+            [.init(kind: .scanningFaces, owner: faces), .init(kind: .scanningFaces, owner: people, role: .grouping)],
+            room: nil
+        )
+        _ = await published.newest { $0.watching }
+
+        let grouping = await people.begin()
+        let grouped = await published.newest { $0.isWorking(.scanningFaces) }
+        #expect(grouped.entries.first?.isGrouping == true)
+
+        let scan = await faces.begin()
+        await faces.count(5, finished: 1)
+        board.ring()
+        let scanning = await published.newest { $0.entries.first?.progress?.left == 5 }
+        #expect(scanning.entries.first?.isGrouping == false)
+        #expect(scanning.isWorking(.scanningFaces))
+
+        await faces.count(0, finished: 5)
+        await faces.end(covering: scan)
+        let groupingAgain = await published.newest { $0.entries.first?.isGrouping == true }
+        #expect(groupingAgain.isWorking(.scanningFaces))
+        await people.end(covering: grouping)
+        _ = await published.newest { $0.entries.first?.state == .upToDate }
+        await board.shutdown()
+    }
+
     /// An owner that is only a kind's detail — the downloads behind the photos to show —
     /// never makes the kind work; its run is the working kind's line while the run is
     /// background work.
@@ -275,7 +308,7 @@ struct ActivityBoardTests {
         let downloads = ScriptedOwner("materialization")
         let published = Published(board)
         await board.watch(
-            [.init(kind: .makingThumbnails, owner: enrichment), .init(kind: .makingThumbnails, owner: downloads, isDetail: true)],
+            [.init(kind: .makingThumbnails, owner: enrichment), .init(kind: .makingThumbnails, owner: downloads, role: .detail)],
             room: nil
         )
         _ = await published.newest { $0.watching }
@@ -627,6 +660,30 @@ struct ActivityPresentationTests {
             ActivityPresentation.transfersText(TransferRun(done: 0, total: 1, bytesDone: nil, bytesTotal: nil)) == "Downloading 0 of 1",
             "a run whose sizes are not all on record shows no bytes"
         )
+    }
+
+    /// A kind whose items are done and whose result is still being built says that step: no
+    /// count of none beside a working row, and a spinner in place of a bar that would read as
+    /// done; a count is still said while items are left (owner, 2026-11-28).
+    @Test func aKindThatOnlyGroupsSaysSoWithNoBar() {
+        let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(
+                kind: .scanningFaces, state: .working(since: now), progress: ActivityProgress(done: 120, total: 120),
+                isGrouping: true
+            ),
+            ActivityEntry(kind: .findingDuplicates, state: .working(since: now), isGrouping: true),
+        ]))
+        #expect(presentation.rows.map(\.details) == [["Grouping faces into people"], ["Grouping duplicates"]])
+        #expect(presentation.rows.map(\.bar) == [nil, nil])
+        #expect(presentation.rows.allSatisfy { $0.status == .working })
+
+        let parkedLeft = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
+            ActivityEntry(
+                kind: .scanningFaces, state: .working(since: now),
+                progress: ActivityProgress(done: 100, total: 103, parked: 3), isGrouping: true
+            ),
+        ]))
+        #expect(parkedLeft.rows.map(\.details) == [["Grouping faces into people", "3 photos and videos to scan"]])
     }
 
     @Test func theDuplicatesBarSaysItIsStillLookingOnlyWhileNothingWouldMove() {

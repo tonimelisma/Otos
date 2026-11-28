@@ -2141,10 +2141,10 @@ extension CatalogProjection: QuiescentOwner {
     func activityOwners() -> [ActivityBoard.Watched] {
         var owners: [ActivityBoard.Watched] = []
         if let duplicatesProjection {
-            owners.append(.init(kind: .findingDuplicates, owner: duplicatesProjection))
+            owners.append(.init(kind: .findingDuplicates, owner: duplicatesProjection, role: .grouping))
         }
         if let peopleAssignment {
-            owners.append(.init(kind: .scanningFaces, owner: peopleAssignment))
+            owners.append(.init(kind: .scanningFaces, owner: peopleAssignment, role: .grouping))
         }
         return owners
     }

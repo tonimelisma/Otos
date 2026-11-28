@@ -24,8 +24,10 @@ import OSLog
 // the details read of items that already show. Several owners can serve one kind (the
 // duplicate groups and the render signatures they compare), and one owner can serve two
 // (enrichment counts the photos still to show and the details still to read apart). An owner
-// can also be a kind's detail only (`Watched.isDetail`): the downloads that let photos show
-// are the row's line, never whether it works. Bookkeeping owners — the projection, the People
+// can also be a kind's detail only (`Watched.Role.detail`): the downloads that let photos show
+// are the row's line, never whether it works. An owner that groups a kind's finished items
+// (`Watched.Role.grouping`: People's assignment, the duplicate groups) has no count; while only
+// it moves the kind, the row says it groups. Bookkeeping owners — the projection, the People
 // gallery's tally, the derived folder's launch tidy — are not watched: they are machinery,
 // never an outcome (DES-035). Immich accounts report their own status
 // (`ImmichAccountStatus`, with a persisted last sync), which the presentation reads beside
@@ -120,6 +122,10 @@ nonisolated struct ActivityEntry: Equatable, Sendable {
     /// The run of background downloads its work waits on, while it works: the row's detail,
     /// never a row of its own (a download is a means, not an outcome).
     var transfers: TransferRun?
+    /// It works, and only its grouping owners move it (`ActivityBoard.Watched.Role.grouping`):
+    /// its items are done or wait, and what runs is building the result from them, which no
+    /// count measures.
+    var isGrouping = false
 }
 
 /// What the board shows: every watched kind, in `ActivityKind` order. `watching` is false
@@ -143,9 +149,21 @@ actor ActivityBoard {
     struct Watched {
         let kind: ActivityKind
         let owner: any QuiescentOwner
-        /// The owner only says how the kind's work goes (its downloads), never whether it
-        /// works: the owner it serves says that.
-        var isDetail = false
+        var role: Role = .items
+    }
+
+    /// What one watched owner does for its kind.
+    enum Role: Sendable {
+        /// Does the kind's work on its items, counted (`QuiescentOwner.progress(for:)`) or not
+        /// (a metadata refresh).
+        case items
+        /// Builds the kind's result from its finished items, which no count measures: People's
+        /// assignment of faces to people, the duplicate groups. While only such owners move
+        /// the kind, the row says that step (`ActivityEntry.isGrouping`).
+        case grouping
+        /// Only says how the kind's work goes (the downloads behind the photos to show), never
+        /// whether it works: the owner it serves says that.
+        case detail
     }
 
     private var watched: [Watched] = []
@@ -282,12 +300,23 @@ actor ActivityBoard {
     /// counts does while it has items left that are not parked, and one that reports
     /// transfers never does by itself (the work they serve says so).
     private func moves(_ index: Int) -> Bool {
-        guard !watched[index].isDetail else { return false }
+        guard watched[index].role != .detail else { return false }
         return switch lastCount[index] {
         case nil: true
         case let .counted(_, left, parked): left > parked
         case .transfers: false
         }
+    }
+
+    /// The run of background downloads a working kind's busy owners report, if any.
+    private func backgroundTransfers(of owners: [(index: Int, kind: ActivityKind, status: OwnerStatus)]) -> TransferRun? {
+        var transfers: TransferRun?
+        for owner in owners where !owner.status.isQuiescent {
+            if case let .transfers(run) = lastCount[owner.index], run.purpose == .background {
+                transfers = run
+            }
+        }
+        return transfers
     }
 
     /// One round's facts applied. A kind works while one of its owners moves its work
@@ -312,7 +341,7 @@ actor ActivityBoard {
             let progress = progressByKind[kind]
             let troubles = owners.flatMap(\.status.troubles)
             let blocked = !troubles.isEmpty || (progress?.parked ?? 0) > 0
-            let busy = owners.contains { !$0.status.isQuiescent && !watched[$0.index].isDetail }
+            let busy = owners.contains { !$0.status.isQuiescent && watched[$0.index].role != .detail }
             if let since = waitingAt[kind], (progress?.done ?? 0) > since {
                 waitingAt[kind] = nil
             }
@@ -354,17 +383,12 @@ actor ActivityBoard {
             if state == .upToDate {
                 endStretch(of: kind)
             }
-            var transfers: TransferRun?
+            var entry = ActivityEntry(kind: kind, state: state, troubles: said, progress: progressByKind[kind])
             if case .working = state {
-                for owner in owners where !owner.status.isQuiescent {
-                    if case let .transfers(run) = lastCount[owner.index], run.purpose == .background {
-                        transfers = run
-                    }
-                }
+                entry.transfers = backgroundTransfers(of: owners)
+                entry.isGrouping = moving.allSatisfy { watched[$0.index].role == .grouping }
             }
-            entries.append(ActivityEntry(
-                kind: kind, state: state, troubles: said, progress: progressByKind[kind], transfers: transfers
-            ))
+            entries.append(entry)
         }
         let snapshot = ActivitySnapshot(watching: true, entries: entries)
         guard snapshot != published else { return }
