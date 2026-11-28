@@ -20,9 +20,10 @@ struct EditableLibrary {
     @MainActor
     func makeEditModel(
         ids: [MediaAssetID]? = nil,
-        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        originalChanges: @escaping @Sendable (URL) -> AsyncStream<Void> = OriginalPathWatch.changes(of:)
     ) -> CatalogWindowViewModel {
-        models.make(store: store, ids: ids ?? self.ids, originalStatus: originalStatus)
+        models.make(store: store, ids: ids ?? self.ids, originalStatus: originalStatus, originalChanges: originalChanges)
     }
 }
 
@@ -44,7 +45,8 @@ final class EditModels {
     func make(
         store: CatalogStore,
         ids: [MediaAssetID],
-        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        originalChanges: @escaping @Sendable (URL) -> AsyncStream<Void> = OriginalPathWatch.changes(of:)
     ) -> CatalogWindowViewModel {
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -54,7 +56,8 @@ final class EditModels {
             preferencesDomain: .suite(UUID().uuidString),
             volumeCapacity: ampleVolumeCapacity,
             trashFiles: .refusing,
-            originalStatus: originalStatus
+            originalStatus: originalStatus,
+            originalChanges: originalChanges
         )
         model.applyState(CatalogWindowState(
             title: "Edit",

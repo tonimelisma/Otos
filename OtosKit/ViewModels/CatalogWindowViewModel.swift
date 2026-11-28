@@ -286,8 +286,12 @@ final class CatalogWindowViewModel {
         window: makeEditSessionWindow(),
         tileDetailReader: mediaTileDetailReader,
         materialization: materializationCoordinator,
-        undoManager: windowUndoManager
+        undoManager: windowUndoManager,
+        originalChanges: originalChanges
     )
+    /// Changes at an original's path, which the edit session waits on while its target's open
+    /// has failed (`OriginalPathWatch`).
+    @ObservationIgnored let originalChanges: @Sendable (URL) -> AsyncStream<Void>
     /// What holds the keyboard, as the key window's first responder says
     /// (`KeyboardFocusRelay`): what Edit ▸ Cut, Copy, Paste and Select All act on.
     var keyboardFocus: KeyboardFocus = .photos
@@ -802,11 +806,14 @@ final class CatalogWindowViewModel {
         // Where the window's materialization coordinator reads an original's status; a test
         // hands in one that fails when it chooses.
         originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
+        // Changes at an original's path; a test hands in a stream it yields to itself.
+        originalChanges: @escaping @Sendable (URL) -> AsyncStream<Void> = OriginalPathWatch.changes(of:),
         trashMarkHook: (@Sendable () async throws -> Void)? = nil,
         trashUndoHook: (@Sendable () async -> Void)? = nil,
         handOffPreparer: HandOffPreparer? = nil
     ) {
         self.trashMarkHook = trashMarkHook
+        self.originalChanges = originalChanges
         self.trashUndoHook = trashUndoHook
         self.volumeCapacity = volumeCapacity
         self.workspace = workspace

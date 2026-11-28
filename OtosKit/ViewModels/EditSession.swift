@@ -21,8 +21,15 @@ import OSLog
 ///
 /// How that open went is the target's own state (`EditTarget.open`): opening, opened, or
 /// failed. A failed open is not the end of the photo: the pane says its original can't be
-/// read, and the target is resolved and opened again by the next refresh of the target and
-/// by the next catalog change (`catalogDidChange`): a row written, a root that came back.
+/// read, and the target is resolved and opened again by whichever comes first:
+/// - the next refresh of the target;
+/// - the next catalog change (`catalogDidChange`): a row written, a root that came back;
+/// - a change at the original's own path (`OriginalPathWatch`): the file written or put
+///   back, a folder above it restored, its volume mounted again. This is what reopens an
+///   original that returns exactly as it was, which changes no row. Right after the watch is
+///   armed the original is looked at once more, so a return between the failed read and the
+///   watch is not missed.
+///
 /// Nothing retries on a timer (ADR 0033); a refresh of a target that is open or opening
 /// leaves it alone.
 ///
@@ -72,9 +79,26 @@ nonisolated enum EditTargetOpen: Equatable, Sendable {
     case opening(sequence: UInt64)
     /// Its facts are published; the controls act.
     case opened
-    /// The original could not be made local or read. The next target refresh or catalog
-    /// change resolves and opens it again.
-    case failed
+    /// The original could not be made local or read. The next target refresh, catalog
+    /// change or change at its path resolves and opens it again.
+    case failed(EditOpenFailure)
+
+    var hasFailed: Bool {
+        if case .failed = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Why opening an edit target's original failed.
+nonisolated enum EditOpenFailure: Error, Equatable, Sendable {
+    /// The original is not on this Mac and could not be made local: missing, its volume
+    /// gone, a download that failed.
+    case notLocal
+    /// The original is local, but could not be decoded.
+    case undecodable
 }
 
 /// A live render of `recipe` for `id`. `revision` is the save that recipe became, once it
@@ -298,6 +322,8 @@ final class EditSession {
     @ObservationIgnored var editTargetTask: Task<Void, Never>?
     /// The photo `editTargetTask` is reading, while it runs.
     @ObservationIgnored var editTargetRequestedID: MediaAssetID?
+    /// Waits for the original of a target whose open failed (`watchOriginal`).
+    @ObservationIgnored var editOriginalWatchTask: Task<Void, Never>?
     @ObservationIgnored let liveEditRenderer = LiveEditRenderer()
     // A live render is newest-wins; a save is a command that must survive in order.
     @ObservationIgnored let editRenderStream: AsyncStream<EditRenderRequest>
@@ -328,13 +354,17 @@ final class EditSession {
     @ObservationIgnored private let materialization: any MaterializationRequesting
     /// The window's one undo stack (ADR 0036): edits are undone among likes and trash.
     @ObservationIgnored private let undoManager: UndoManager
+    /// Changes at an original's path (`OriginalPathWatch.changes(of:)`).
+    @ObservationIgnored private let originalChanges: @Sendable (URL) -> AsyncStream<Void>
 
     init(
         window: Window,
         tileDetailReader: MediaTileDetailReader,
         materialization: any MaterializationRequesting,
-        undoManager: UndoManager
+        undoManager: UndoManager,
+        originalChanges: @escaping @Sendable (URL) -> AsyncStream<Void> = OriginalPathWatch.changes(of:)
     ) {
+        self.originalChanges = originalChanges
         self.window = window
         self.tileDetailReader = tileDetailReader
         self.materialization = materialization
@@ -354,6 +384,7 @@ final class EditSession {
         // Consumers before producers: finishing a stream drains what it buffered, and a
         // cancelled lane starts none of it.
         editTargetTask?.cancel()
+        editOriginalWatchTask?.cancel()
         editRenderTask?.cancel()
         editCommandTask?.cancel()
         editAnalysisTask?.cancel()
@@ -466,7 +497,7 @@ final class EditSession {
         // Already the target and open or opening, or already being read: every target writer
         // calls this, and one gesture fires several, so a read in flight for the same photo
         // is kept. A target whose open failed is resolved and opened again.
-        if let target = editTarget, target.id == id, target.open != .failed {
+        if let target = editTarget, target.id == id, !target.open.hasFailed {
             return
         }
         guard !(editTargetTask != nil && editTargetRequestedID == id) else { return }
@@ -507,6 +538,8 @@ final class EditSession {
     private func openTarget(_ id: MediaAssetID, detail: MediaTileDetail) {
         let saved = detail.editRecipe ?? .neutral
         let reopening = editTarget?.id == id
+        editOriginalWatchTask?.cancel()
+        editOriginalWatchTask = nil
         editRenderRequested &+= 1
         editTarget = EditTarget(id: id, sourceSize: detail.byteSize, open: .opening(sequence: editRenderRequested))
         editPhotoFacts = nil
@@ -535,18 +568,52 @@ final class EditSession {
     /// failed may be readable now — its file written again, its volume back — so it is
     /// resolved and opened again; any other target is left as it is.
     func catalogDidChange() {
-        guard editTarget?.open == .failed else { return }
+        guard editTarget?.open.hasFailed == true else { return }
         refreshEditTarget()
+    }
+
+    /// Something changed at the failed target's original, or it was found local right after
+    /// the watch was armed: it is resolved and opened again.
+    private func originalChanged(_ id: MediaAssetID, reason: String) {
+        guard let target = editTarget, target.id == id, target.open.hasFailed else { return }
+        editOriginalWatchTask = nil
+        OtosLog.ui.noticeOperation("edit.target", phase: "originalChanged", fields: [
+            "id": id.relativePath.rawValue, "reason": reason,
+        ])
+        refreshEditTarget()
+    }
+
+    /// While the target's open has failed, waits for its original: one look once the path's
+    /// watch is armed (only for an original that was not local, so a local file that cannot
+    /// be decoded is not opened again and again), then the first change at its path.
+    private func watchOriginal(_ id: MediaAssetID, after failure: EditOpenFailure) {
+        editOriginalWatchTask?.cancel()
+        let changes = originalChanges(id.fileURL)
+        let materialization = materialization
+        editOriginalWatchTask = Task { [weak self] in
+            if failure == .notLocal, await materialization.locality(of: id) == .local {
+                guard !Task.isCancelled else { return }
+                self?.originalChanged(id, reason: "localOnceWatched")
+                return
+            }
+            for await _ in changes {
+                guard !Task.isCancelled else { return }
+                self?.originalChanged(id, reason: "pathChanged")
+                return
+            }
+        }
     }
 
     /// The target is resolved and its original could not be read: the pane says so.
     var isOriginalUnreadable: Bool {
-        editTarget?.open == .failed
+        editTarget?.open.hasFailed == true
     }
 
     private func clearEditTarget() {
         guard editTarget != nil || editLivePreview != nil else { return }
         endCropping()
+        editOriginalWatchTask?.cancel()
+        editOriginalWatchTask = nil
         editTarget = nil
         editPhotoFacts = nil
         editAutoLevel = nil
@@ -790,21 +857,28 @@ final class EditSession {
                 case .close:
                     await pipeline.renderer.close()
                 case let .open(id, sourceSize, recipe, sequence):
-                    guard let opened = await pipeline.open(id, sourceSize: sourceSize) else {
-                        self?.publishOpenFailed(id: id, sequence: sequence)
+                    let opened: OpenedEditPhoto
+                    switch await pipeline.open(id, sourceSize: sourceSize) {
+                    case let .success(photo):
+                        opened = photo
+                    case let .failure(failure):
+                        self?.publishOpenFailed(id: id, sequence: sequence, failure)
                         continue
                     }
                     self?.publishOpenedPhoto(id: id, opened)
-                    guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
-                        continue
-                    }
+                    let rendered = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize)
+                    guard case let .success(live) = rendered else { continue }
                     let histogram = await EditHistogram.count(live.image.cgImage)
                     self?.publishHistogram(id: id, histogram, sequence: sequence)
                 case let .render(id, recipe, sourceSize, sequence, purpose, requestedAt):
                     let startedAt = ContinuousClock.now
-                    guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
+                    let live: (image: DisplayImage, opened: OpenedEditPhoto)
+                    switch await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) {
+                    case let .success(rendered):
+                        live = rendered
+                    case let .failure(failure):
                         // A render that replaced a queued open answers for it.
-                        self?.publishOpenFailed(id: id, sequence: sequence)
+                        self?.publishOpenFailed(id: id, sequence: sequence, failure)
                         continue
                     }
                     // How long the pane waited for this render: queued behind the lane,
@@ -893,15 +967,16 @@ final class EditSession {
     /// A request for the target could not read its original. It fails the open only while
     /// that open is still unanswered and the request is the open or a later one; a render
     /// failing once the photo is open leaves it open.
-    private func publishOpenFailed(id: MediaAssetID, sequence: UInt64) {
+    private func publishOpenFailed(id: MediaAssetID, sequence: UInt64, _ failure: EditOpenFailure) {
         guard var target = editTarget, target.id == id,
               case let .opening(opening) = target.open, sequence >= opening
         else { return }
-        target.open = .failed
+        target.open = .failed(failure)
         editTarget = target
         OtosLog.ui.noticeOperation("edit.target", phase: "openFailed", fields: [
-            "id": id.relativePath.rawValue, "sequence": "\(sequence)",
+            "id": id.relativePath.rawValue, "sequence": "\(sequence)", "failure": "\(failure)",
         ])
+        watchOriginal(id, after: failure)
     }
 
     /// The picked white balance becomes the draft's and is saved as one step, unless the
@@ -1048,45 +1123,45 @@ nonisolated struct EditPipeline: Sendable {
     }
 
     /// Opens the photo — downloading it first when it is cloud-only — and reports its
-    /// facts and upright size, or nil when it cannot be read.
+    /// facts and upright size, or why it cannot be read.
     @concurrent
-    func open(_ id: MediaAssetID, sourceSize: Int64?) async -> OpenedEditPhoto? {
+    func open(_ id: MediaAssetID, sourceSize: Int64?) async -> Result<OpenedEditPhoto, EditOpenFailure> {
         guard await materialization.ensureLocal(.init(
             id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
         )).isLocal else {
-            return nil
+            return .failure(.notLocal)
         }
         do {
-            return try await renderer.open(id.fileURL)
+            return try await .success(renderer.open(id.fileURL))
         } catch {
             OtosLog.rendering.errorOperation("render.liveEdit", phase: "openFailed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
-            return nil
+            return .failure(.undecodable)
         }
     }
 
-    /// The draft rendered at preview size with what opening the photo reported, or nil
-    /// when the original cannot be read.
+    /// The draft rendered at preview size with what opening the photo reported, or why the
+    /// original cannot be read.
     @concurrent
     func liveImage(
         _ id: MediaAssetID,
         recipe: EditRecipe,
         sourceSize: Int64?
-    ) async -> (image: DisplayImage, opened: OpenedEditPhoto)? {
+    ) async -> Result<(image: DisplayImage, opened: OpenedEditPhoto), EditOpenFailure> {
         guard await materialization.ensureLocal(.init(
             id: id, sourceSize: sourceSize, isVideo: false, priority: .interactive
         )).isLocal else {
-            return nil
+            return .failure(.notLocal)
         }
         do {
             let image = try await renderer.render(id.fileURL, recipe: recipe)
-            return try await (image, renderer.open(id.fileURL))
+            return try await .success((image, renderer.open(id.fileURL)))
         } catch {
             OtosLog.rendering.errorOperation("render.liveEdit", phase: "failed", fields: [
                 "id": id.relativePath.rawValue, "error": String(describing: error),
             ])
-            return nil
+            return .failure(.undecodable)
         }
     }
 
