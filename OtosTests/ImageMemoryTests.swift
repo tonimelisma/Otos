@@ -7,7 +7,7 @@ import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
-/// Stored previews shaped like the owner's (ADR 0035): 2560 × 1920 8-bit Display P3 HEICs a
+/// Stored previews shaped like the reference library's (ADR 0035): 2560 × 1920 8-bit Display P3 HEICs a
 /// few hundred kilobytes each, about 20 MB each decoded, drawn here as overlapping ellipses so
 /// they encode like photographs rather than flat colour.
 nonisolated enum ImageMemoryFixture {
@@ -45,7 +45,7 @@ nonisolated enum ImageMemoryFixture {
     }
 
     /// `count` people, each covered by a small face (3 to 8 % of the photo's width, as in the
-    /// owner's group photos) on one of `previews`.
+    /// reference library's group photos) on one of `previews`.
     static func people(count: Int, previews: [String]) -> CatalogPeopleState {
         let people = (0 ..< count).map { index in
             let photo = PeopleGalleryFixture.asset(index)
@@ -187,6 +187,7 @@ extension AppKitWindowTests {
     @MainActor
     @Suite(.testScope, .enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1"))
     struct ImageMemoryTests {
+        // Validates: APP-072
         /// The People gallery's tiles in a Retina window: what a screenful costs, and that a
         /// tile holds only its own pixels however small its face is on the preview.
         @Test func thePeopleGalleryHoldsOnlyItsTiles() async throws {
@@ -249,7 +250,8 @@ extension AppKitWindowTests {
         /// What a screenful of the People gallery may add to the footprint.
         static let galleryBoundMB = 64
 
-        /// The full-size view walked as the owner walks it: ten photos opened one after the
+        // Validates: APP-023
+        /// The full-size view walked as the user walks it: ten photos opened one after the
         /// other, then a step back. The pane holds the photo it shows and the loader what a
         /// pane can return to, so the footprint holds a few previews however many were seen.
         @Test func theFullSizeViewHoldsOnlyWhatItCanReturnTo() async throws {
@@ -298,7 +300,8 @@ extension AppKitWindowTests {
             #expect(walked - start <= bound, "Full-size view: \(start) MB → \(walked) MB, bound \(bound) MB")
         }
 
-        /// The tour's photo steps in the main window at the owner's screen size: open, next ×3,
+        // Validates: APP-023
+        /// The tour's photo steps in the main window at the test Mac's screen size: open, next ×3,
         /// previous ×3, Compare of the first two, back to the grid. Each step waits until the
         /// pane holds its photo and the window has drawn it, as the tour does.
         @Test func theTourPhotoStepsInTheWindow() async throws {
@@ -434,14 +437,15 @@ extension AppKitWindowTests {
         static let photoStepsBoundMB = 100
         static let leftBoundMB = 20
 
-        /// The grid at the owner's window size, as the tour shows it: All Media of a generated
-        /// catalog of the owner's shape, its stored thumbnails 256 px JPEGs, first a screenful,
+        // Validates: ENR-010
+        /// The grid at the test Mac's window size, as the tour shows it: All Media of a generated
+        /// catalog of the reference shape, its stored thumbnails 256 px JPEGs, first a screenful,
         /// then scrolled 900 tiles down in three steps, each step waiting until every visible
         /// tile shows its thumbnail. Each tile's image is held once: the tile store holds it,
         /// the tile's layer shows that same image, and Core Animation keeps no copy of it.
         @Test func theGridHoldsEachThumbnailOnce() async throws {
             let directory = try makeTestDirectory()
-            let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.02)
+            let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 0.02)
             let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
             try await store.start(scansSavedLibraries: false)
             let thumbnails = try #require(store.thumbnailDirectory)

@@ -87,7 +87,7 @@ This ADR owns:
   video revision and the macOS build (`VideoFaceReader.decoderIdentity`); at launch a video
   another decoder could not read loses its faces stamp and is read again (ENR-031). Each
   kind is judged by its own decoder, so a change to one never re-reads the other. Any other
-  error, a failed decode among them, stays a failed read (`facesUnread`): the owner's
+  error, a failed decode among them, stays a failed read (`facesUnread`): the reference
   library answered a failed decode once for videos that then read cleanly, while 67
   videos each answered one of the verdict codes on every read, up to 33 reads in three days
   (`docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`). Pacing alone left
@@ -316,7 +316,7 @@ Adjacent decisions requiring separate ADRs or specs:
    **Each root has a claim window of its own** (`EnrichmentClaimRoom`). A claimed row
    whose download cannot start keeps its claim and its place in its root's window (the
    held state below), so a window shared by every root fills with the root that waits longest.
-   On the owner's Mac (2026-11-26) a launch under memory pressure claimed 37 cloud-only
+   On the test Mac (2026-11-26) a launch under memory pressure claimed 37 cloud-only
    OneDrive videos whose downloads the machine held (`reason=machineHeld`); a card
    inserted nine seconds later found the window full, and every pass after it claimed
    nothing (`limit=0`): the card's 147 rows on screen were read through the priority
@@ -366,7 +366,7 @@ Adjacent decisions requiring separate ADRs or specs:
    slot for is held the same way, with no deadline, and handed off when a slot frees.
    **The blocked state is the schedule's, not rediscovered by the Store**: a
    row held by a full hand-off, the free-space floor or a failing download was claimed,
-   found blocked and given back on every pass — on the owner's Mac, hundreds of
+   found blocked and given back on every pass — on the test Mac, hundreds of
    `claimedEnrichmentCandidates` write transactions a session, with writer waits up to
    1.1 s behind them, while nothing was imported. A held row keeps its claim, so the Store
    never offers it again until it is handed off, and a background claim that found nothing
@@ -381,7 +381,7 @@ Adjacent decisions requiring separate ADRs or specs:
    its recorded source size no longer matches, which resets pacing immediately. **A paced
    row keeps its claim, held by the ledger** (`EnrichmentSchedule.holdPacedClaims`), for
    the reason a held demand does: given back, the Store offered it first again, and every
-   pass — one per completion — claimed it and released it. On the owner's Mac (2026-11-18,
+   pass — one per completion — claimed it and released it. On the test Mac (2026-11-18,
    a session that walked an Immich account's backlog) 22 paced rows were claimed and
    released at each of about 1,700 passes: 4,336 `claimedEnrichmentCandidates` and 2,674
    `releaseEnrichmentClaims` write transactions, 34 s of the writer. The hold ends when the
@@ -464,7 +464,7 @@ Adjacent decisions requiring separate ADRs or specs:
     the query builds today.
 
 12. **A row owing only its digest is downloaded for it, like any other owed product.**
-    Owner decision, 2026-11-21 ("yes, download them"), reversing the hold the coordinator
+    Decided 2026-11-21, reversing the hold the coordinator
     decided on 2026-11-17: every photo is to be checked for duplicates, not only the ones
     some other work happened to download. A dataless row of a folder library that owes only
     its digest is routed as every dataless row is: a background materialization demand
@@ -473,25 +473,25 @@ Adjacent decisions requiring separate ADRs or specs:
     (ADR 0057), and its digest is read from the downloaded copy. Otos frees nothing it
     downloads; macOS evicts uploaded, idle provider files under disk pressure (§7).
 
-    Cost, measured when the hold was built (the owner's catalog and the installed app's
+    Cost, measured when the hold was built (the reference catalog and the installed app's
     log, 2026-11-17, `docs/research/2026-11-16-idle-disk-read-attribution.md`,
     `docs/research/2026-11-17-background-load-attribution.md`): 3,219 library files whose
     rendering, faces and metadata were current owed only their digest (153 GB: 417 videos
     105 GB, 1,142 RAW 41 GB, 1,660 images 7 GB), each downloaded a second time to be hashed,
     13–21 GB in each ten-minute session, with the provider's process at 80–90 % CPU and the
     machine at the memory-pressure warning. On 2026-11-21, 2,999 rows (149 GB) were held. The
-    machine's conditions now pause that work (ADR 0057), which they did not then; the owner
-    chose the downloads over the load.
+    machine's conditions now pause that work (ADR 0057), which they did not then; the downloads
+    were chosen over the load.
 
     Rejected:
     - *The hold for local bytes* (2026-11-17 to 2026-11-21): an exact copy among cloud-only
       files was found only once both copies were local for another reason, so Duplicates and
       the one-copy rule missed copies indefinitely, and the Activity surface showed thousands
       of rows waiting on nothing Otos would do.
-    - *A setting to choose*: a performance knob over a product fact the owner has decided.
+    - *A setting to choose*: a performance knob over a product fact that is decided.
     - *A hash the provider exposes without a download*: a placeholder lists only
-      `com.apple.FinderInfo` as an extended attribute (one of the owner's dataless files,
-      names only, 2026-11-17), and File Provider items expose an opaque content version,
+      `com.apple.FinderInfo` as an extended attribute (one of the reference library's dataless
+      files, names only, 2026-11-17), and File Provider items expose an opaque content version,
       not a digest. No same-algorithm (SHA-1) hash is readable locally; a provider's web API
       is a network source Otos does not use for libraries.
 
@@ -518,7 +518,7 @@ Failure modes:
 - A future visible-detail query could accidentally pull more cold metadata into
   the grid path.
 
-Rejected for the owner-directed hot duration promotion. Duration is
+Rejected for the hot duration promotion. Duration is
 small, scalar, and needed by every visible video; other metadata remains cold.
 
 ### Metadata inline on `MediaAsset` and resident
@@ -664,7 +664,7 @@ queue is not a maintained catalog partition: if the process exits, Store lease e
 is the recovery path.
 
 The cursorless derivation was measured too costly for the derived products at the
-owner's library (`docs/research/2026-11-16-stall-reproduction-baseline.md`):
+reference library (`docs/research/2026-11-16-stall-reproduction-baseline.md`):
 the render signature, search embedding, text reading and description owners re-ran a
 whole-library candidate query for every page of 8 to 128 — about 3,200 full scans to
 drain 51,000 owed descriptions — and held the main pool's readers for 8 to 33 s. Those
@@ -714,8 +714,8 @@ Rejected with the walk cursor (`docs/research/2026-11-16-plan-0116-due-diligence
   starts, and the waiting ones start in the step the room opens; how fast the downloads
   run follows the machine. No download is made for a digest alone (§12): a cloud-only
   file's digest waits until its bytes are local for another reason. Descriptions (ADR 0053)
-  run while Otos is the active app and at memory-pressure warning (the owner, 2026-11-18;
-  ADR 0057 decision 8).
+  run while Otos is the active app and at memory-pressure warning (ADR 0057
+  decision 8).
 - A future metadata-driven feature (sort, filter, inspector) must use the scalar
   columns/detail JSON on demand or propose its own measured index/resident structure
   in a new spec; it cannot assume metadata is resident in the grid path.
@@ -752,9 +752,9 @@ path for pre-user enrichment schema changes.
 
 ## Living Documentation Impact
 
-- `docs/adr/0008-...md` — point 6 and the MECE cloud-materialization bullet amended
+- ADR 0008 — point 6 and the MECE cloud-materialization bullet amended
   to permit eager full-library materialization and reference this ADR.
-- `AGENTS.md` — the cloud-materialization baseline paragraph amended the same way.
+- `CLAUDE.md` — the cloud-materialization baseline paragraph amended the same way.
 - `docs/requirements.md` — add ENR-001…ENR-010 (Current); update APP-001, APP-006,
   APP-009, APP-010, and ARC-034.
 -  — the enrichment
@@ -764,7 +764,7 @@ path for pre-user enrichment schema changes.
   one-second provider re-request cadence and durable result attribution fields.
 - `docs/index.md` — register this ADR.
 - `docs/architecture.md` — add the enrichment data flow and the coordinator's role.
-- `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here and
+- ENRICHMENT-IMPLEMENTATION-PLAN.md — deleted (its decisions now live here and
   in requirements).
 
 ## Capture Timestamps: One Stored Truth, Two Projections

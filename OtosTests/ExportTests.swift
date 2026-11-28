@@ -14,6 +14,7 @@ private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
 @Suite(.testScope)
 @MainActor
 struct ExportTests {
+    // Validates: APP-052
     /// Several photos, one edited, exported as JPEG into a folder that already holds a file
     /// with one of their names: every photo arrives, the taken name gets `_001`, the file
     /// that was there is untouched, and nothing else is left in the folder.
@@ -51,6 +52,7 @@ struct ExportTests {
         }
     }
 
+    // Validates: APP-052
     @Test func aLongEdgeScalesDownButNeverUp() async throws {
         let (item, folder) = try makePhoto(named: "wide.jpg")
         var settings = ExportSettings.default
@@ -67,6 +69,7 @@ struct ExportTests {
         #expect(full.width == 96 && full.height == 64)
     }
 
+    // Validates: APP-052
     @Test func heicKeepsOrRemovesLocationAsAsked() async throws {
         let (item, folder) = try makePhoto(named: "placed.jpg", withLocation: true)
         var settings = ExportSettings.default
@@ -103,6 +106,7 @@ struct ExportTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).isEmpty)
     }
 
+    // Validates: APP-052
     @Test func originalExportsTheFileAsItIsOnDisk() async throws {
         let (photo, folder) = try makePhoto(named: "as-is.jpg")
         let item = EditedMediaItem(id: photo.id, isVideo: false, recipe: EditRecipe(exposure: 1), sourceSize: nil)
@@ -115,6 +119,7 @@ struct ExportTests {
         #expect(try Data(contentsOf: url) == Data(contentsOf: item.id.fileURL))
     }
 
+    // Validates: APP-052
     /// A trimmed video exports its range; removing location drops the location the
     /// original carries, and keeping it keeps it.
     @Test func aVideoExportsItsTrimAndCanDropLocation() async throws {
@@ -144,6 +149,7 @@ struct ExportTests {
         #expect(try await !hasLocation(removed))
     }
 
+    // Validates: APP-052
     @Test func aMissingFolderStopsTheExportWithAReport() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = library.makeEditModel()
@@ -163,6 +169,7 @@ struct ExportTests {
         }
     }
 
+    // Validates: APP-052
     @Test func theFloorAFullDiskAndFailuresAreReportedAndACancelIsNot() {
         let folder = URL(fileURLWithPath: "/Exports", isDirectory: true)
         let one = [folder.appending(path: "a.jpg")]
@@ -178,6 +185,7 @@ struct ExportTests {
         #expect(CatalogWindowViewModel.exportReport(requested: 1, exported: one, failed: 0, stop: nil, folder: folder) == nil)
     }
 
+    // Validates: APP-052
     @Test func settingsAreRememberedAndKeptInRange() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(

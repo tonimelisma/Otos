@@ -34,7 +34,7 @@ The models Core ML mapped (`(MIL) MMapped` lines, matched to the bundled models 
 
 Core ML's compiled programs for those three were created at those times (the Caches folder's
 `e5bundlecache` keys). No model loaded inside the peak's window. In the window: two of the
-owner's new iPhone videos (`*_iOS.MOV`, 4K) were being read for faces (`videoInFlight=2`,
+reference library's new iPhone videos (`*_iOS.MOV`, 4K) were being read for faces (`videoInFlight=2`,
 `op=face.analyse width=3840 height=2160`), along with a People assignment pass and Apple
 Intelligence descriptions. Descriptions run in the system's model process.
 
@@ -60,7 +60,7 @@ the 1,179 MB: about 300 MB of footprint before plus the 890 MB measured.
 
 - The peak was the video face reader holding six full-resolution HDR frames per video, two
   videos at once. It was not the install: the first launch after the install happened to be
-  the first to meet the owner's new 4K videos. A later launch that meets a new 4K HDR video
+  the first to meet the reference library's new 4K videos. A later launch that meets a new 4K HDR video
   would peak the same way.
 - It was not compiling models in the process. A cold compile of the text tower added at most
   87 MB, and the compiled programs' loads came 27 s and 66 s apart from the peak.
@@ -80,7 +80,7 @@ is unchanged, so no video is read again and `decodeRevision` stays. Two 4K HDR v
 once now add 128 MB at their peak, against 890 MB; the on-demand test bounds it at 200 MB, and
 `VideoFaceTests.oneFullResolutionFrameIsHeldAtATime` guards the order on every run.
 
-On the owner's session that is about 300 + 128 MB, under 700 MB. The scorecard's
+On the reference library's session that is about 300 + 128 MB, under 700 MB. The scorecard's
 `memory.peakFootprintMB` already reports every session's peak. A first launch after an install
 gets no line of its own: nothing in the log tells that launch apart (no Core ML line names a
 compile), and this peak did not depend on it.

@@ -2,7 +2,6 @@
 //  ContentView.swift
 //  Otos
 //
-//  Created by Taylor on 6/2/26.
 //
 
 import SwiftUI

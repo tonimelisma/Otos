@@ -13,12 +13,12 @@ catalog data, generated previews, metadata, and editing intent.
 - Spec and ADR driven development.
 - OSLog and signpost instrumentation on meaningful paths.
 
-Read `AGENTS.md` before making changes. It is the working contract for future
-agents and contributors.
+Read `CLAUDE.md` (also reachable as `AGENTS.md`) before making changes. It is the
+working contract for agents and contributors.
 
 The documentation map lives in `docs/index.md`. Current requirements are tracked
-in `docs/requirements.md`, opt-in planning notes live under `docs/product/`, and
-how-to-work guidance lives in `AGENTS.md`; the code map is `docs/architecture.md`.
+in `docs/requirements.md`, future work in GitHub issues, and how-to-work guidance
+in `CLAUDE.md`; the code map is `docs/architecture.md`.
 
 ## Setup
 
@@ -73,7 +73,7 @@ script/dod-report.sh
 
 GitHub CI runs the hygiene and lint gates on Ubuntu and `script/check.sh` on
 GitHub's Xcode 27 runner. A Claude Code cloud session, which has no Xcode, runs
-the gates itself and is verified by that CI run (AGENTS.md, "Cloud Sessions").
+the gates itself and is verified by that CI run (CLAUDE.md, "Where sessions run").
 
 ## Fixtures
 

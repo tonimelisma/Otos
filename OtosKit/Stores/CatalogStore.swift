@@ -2884,12 +2884,12 @@ extension CatalogStore {
         )
     }
 
-    /// The first person's faces become the second's. Merging says the two are one person
-    /// (owner, 2026-11-19: "If I merge, I know they're the same"), so every face of the
+    /// The first person's faces become the second's. Merging says the two are one person:
+    /// the user who merges knows they are the same, so every face of the
     /// person merged away stays the merged person's as an anchor: its guesses become seeds.
     /// Left as guesses, they would hang on the first person's anchors alone, and when those
     /// make way in a shared photo, the next assignment would group them into a new person
-    /// again (owner's catalog, 2026-11-20). A photo both are in never
+    /// again (seen on the reference catalog). A photo both are in never
     /// refuses the merge: of the faces the user gave or Otos seeded for either in one photo,
     /// the one most like the merged person stays theirs and the others are held
     /// (`keepLikeliestFace`); the second person's guesses in a photo the first is in make way.
@@ -3304,7 +3304,7 @@ extension CatalogStore {
         // A date order hands over a root's rows and a day's rows together, so a row of the root
         // and the day before it costs two comparisons, not two dictionary lookups: those
         // lookups were most of the 2.8–3.5 s this loop took for All Media's 164,766 rows of a
-        // generated owner-shaped catalog, unoptimized (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+        // generated reference-shaped catalog, unoptimized (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
         var lastRoot: (id: Int64, path: LibraryRootPath?)?
         var lastDay: (number: Int, start: Date)?
         for row in orderedRows {
@@ -6328,8 +6328,7 @@ extension CatalogStore {
 
     /// Forgets every card and camera Otos has not seen for
     /// `RemovableSourceRetention.unseenPeriod`, exactly as Settings' Forget does: the
-    /// source, its rows, its likes and its thumbnails (owner decision 2026-10-25,
-    /// ADR 0013). It runs at launch, before any source re-attaches, so a source
+    /// source, its rows, its likes and its thumbnails (ADR 0013). It runs at launch, before any source re-attaches, so a source
     /// present now is judged by its stamp from an earlier session. A source with no
     /// last-seen stamp is kept: nothing says how long it has been away. Each removal
     /// re-reads its root and takes its lease in one step, so a root that a source attached
@@ -11343,8 +11342,9 @@ extension CatalogStore {
 
     /// What the model is told about one still: its faces with their people, when and where it
     /// was taken, the text Vision is certain of and its confident scene labels. A hidden
-    /// person is never named. The description eval reads its sample's facts through it too
-    /// (`script/description-eval.sh`), so it scores exactly what the app tells the model.
+    /// person is never named. The descriptions were judged once on a private sample read through
+    /// this same reader (`docs/research/2026-11-19-plain-photo-descriptions.md`), so what was
+    /// judged is exactly what the app tells the model.
     nonisolated static func photoDescriptionFacts(_ db: Database, key: StatementArguments) throws -> PhotoDescriptionFacts {
         // Asked once per still of a page: each statement is prepared once per connection.
         let faces = try Row.fetchAll(db.cachedStatement(sql: PhotoDescriptionStorage.facesSQL), arguments: key).map { row in

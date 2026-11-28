@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct AppUpdatesTests {
+    // Validates: APP-097
     /// Only the installed identity carrying the update key, outside a test host, updates.
     @Test func onlyTheInstalledBuildWithTheKeyUpdatesItself() {
         let key = "q1Wd5xZ2b3cV9mN0pL7kJ8hG6fD4sA2eR5tY1uI3oP0="
@@ -22,6 +23,7 @@ struct AppUpdatesTests {
         ))
     }
 
+    // Validates: APP-097
     /// A downloaded update waits while work is in flight and installs once, when none is.
     @Test func anInstallWaitsForTheWorkInFlightAndRunsOnce() async throws {
         let (answers, report) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -42,6 +44,7 @@ struct AppUpdatesTests {
         #expect(gate.heldVersion == nil, "an install that ran holds nothing")
     }
 
+    // Validates: APP-097
     /// App ▸ Check for Updates… always answers: Sparkle answers a check with nothing while its
     /// session is open, which it is for as long as Otos holds an update, so a held update is
     /// said first; with none held, the check is Sparkle's while it can check and the item is
@@ -54,6 +57,7 @@ struct AppUpdatesTests {
         #expect(AppUpdater.heldTitle(version: "1.0.9") == "Otos 1.0.9 Is Ready to Install")
     }
 
+    // Validates: APP-097
     /// The Store says when an import starts and when its journal is gone, from the journal
     /// write itself.
     @Test func theStoreReportsAnImportInFlightFromItsJournal() async throws {

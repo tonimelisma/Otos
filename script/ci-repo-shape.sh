@@ -23,6 +23,8 @@ if (( ${#scripts[@]} == 0 )); then
 fi
 status=0
 for script in "${scripts[@]}"; do
+  # Settings files beside the scripts that read them (script/process-check.conf) are data.
+  [[ "$script" == *.conf ]] && continue
   if [[ ! -x "$script" ]]; then
     echo "Script is not executable: $script" >&2
     status=1

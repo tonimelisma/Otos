@@ -121,6 +121,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Today
 
+    // Validates: APP-069
     @Test func aReportedDayChangeMovesOnThisDayToTheNewDay() async throws {
         let day = DayBox(Self.today)
         let center = NotificationCenter()
@@ -140,6 +141,7 @@ struct CatalogWindowViewModelStoryTests {
         #expect(model.sidebarSelection == .onThisDay(tomorrow))
     }
 
+    // Validates: APP-069
     @Test func aDayChangeElsewhereLeavesTheScopeAlone() async throws {
         let day = DayBox(Self.today)
         let center = NotificationCenter()
@@ -158,6 +160,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - The scope
 
+    // Validates: APP-069
     @Test func onThisDayIsItsOwnPresentationWithItsOwnOrder() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)
@@ -177,6 +180,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Moving
 
+    // Validates: APP-070
     @Test func aStoryStartsAtTheChosenYearAndMovesAcrossYearsBothWays() async throws {
         try await withEditableLibrary(fileCount: 5) { library in
             let ids = library.ids
@@ -200,6 +204,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-070
     @Test func playStoryFromTheMenuStartsAtTheNewestYear() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)
@@ -213,6 +218,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Timing
 
+    // Validates: APP-071
     @Test func aStillHoldsOnlyOnceItsPictureIsOnScreenAndThenAdvances() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let ids = library.ids
@@ -243,6 +249,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     @Test func pauseFreezesTheHoldAndPlayResumesIt() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = await makeModel(store: library.store, loader: picturingLoader())
@@ -266,6 +273,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     /// A report made for an earlier visit of the same item — its hold, its video's end or
     /// failure — is dropped once focus has left and come back.
     @Test func aReportFromAnEarlierVisitOfTheSameItemMovesNothing() async throws {
@@ -291,6 +299,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     @Test func anItemWithNoPictureHoldsLikeAStill() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)
@@ -303,6 +312,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     @Test func theLastItemEndsPausedAndAVideoEndAdvances() async throws {
         try await withEditableLibrary(fileCount: 5) { library in
             let ids = library.ids
@@ -329,6 +339,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     /// A player that turns up while a still's hold runs ends the hold: a video plays to its
     /// own end.
     @Test func aReadyPlayerEndsARunningHold() async throws {
@@ -349,6 +360,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     /// A video the player cannot play reports its failure; the player goes and the item
     /// holds like a still on its poster.
     @Test func aVideoThatFailsToPlayHoldsLikeAStill() async throws {
@@ -370,6 +382,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Tools
 
+    // Validates: APP-071
     @Test func trimAndTheLoupesOwnToolsAreOffWhileAStoryPlays() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let id = library.ids[0]
@@ -388,6 +401,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Covers
 
+    // Validates: APP-070
     /// The anniversaries' covers are pinned in the shared tile store while On This Day shows, as the
     /// grid pins its visible tiles: a story's pictures filling the store past its budget
     /// cannot drop a painted cover, so the card made again when the story closes draws the
@@ -456,6 +470,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Move to Trash
 
+    // Validates: APP-071
     /// Moving the item on screen to the Trash, through the ordinary intent, leaves the story
     /// on the successor its own survivor rule names, with focus, selection and the visit
     /// all on it.
@@ -490,6 +505,7 @@ struct CatalogWindowViewModelStoryTests {
 
     // MARK: - Closing and catalog changes
 
+    // Validates: APP-071
     @Test func closingReturnsToTheYearsWithFocusOnTheYearItWasOn() async throws {
         try await withEditableLibrary(fileCount: 5) { library in
             let ids = library.ids
@@ -510,6 +526,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     @Test func aRemovedItemMovesTheStoryToItsSurvivorAndAnEmptyScopeClosesIt() async throws {
         try await withEditableLibrary(fileCount: 5) { library in
             let ids = library.ids
@@ -531,6 +548,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     /// A reorganization renames the item on screen: the story is on the renamed item, and
     /// Next goes on from there instead of skipping one.
     @Test func aRenamedItemStaysTheStorysItem() async throws {
@@ -561,6 +579,7 @@ struct CatalogWindowViewModelStoryTests {
         }
     }
 
+    // Validates: APP-071
     @Test func leavingTheScopeClosesTheStory() async throws {
         try await withEditableLibrary(fileCount: 4) { library in
             let model = makeModel(store: library.store)

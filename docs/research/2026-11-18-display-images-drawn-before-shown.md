@@ -2,13 +2,13 @@
 
 ## Question
 
-The owner: "scrolling has become incredibly janky. like a stop motion movie", "even small
-libraries like a 109 asset import". What does the main thread do while the grid scrolls, and
+Scrolling had become very janky, like a stop-motion movie, even in small scopes such as a
+109-asset import. What does the main thread do while the grid scrolls, and
 what form must an image have so that showing it costs the main thread nothing?
 
-## Evidence from the owner's app
+## Evidence from the installed app
 
-The installed app's unified log over a minute of his scrolling in All Media (142,197 items),
+The installed app's unified log over a minute of the user's scrolling in All Media (142,197 items),
 read-only (`script/logs.sh capture --last 5m --pid <pid>`):
 
 - 17 `op=mainThreadStall` lines of 100–217 ms in 25 s of scrolling, every one bracketed by
@@ -60,7 +60,7 @@ full size is drawn (`OriginalRoute.wholeDrawn`, 86–92 MB at its peak) where th
 `wholeShown` route peaked at 36–37 MB through its first showing — and decoded it on the main
 thread, 12 MP at a time.
 
-Not measured here: the owner's library at rest and its session peak; the weekly tour
+Not measured here: the reference library at rest and its session peak; the weekly tour
 (`script/perf.sh run`) measures them against the 800 MB target.
 
 ## Conclusion

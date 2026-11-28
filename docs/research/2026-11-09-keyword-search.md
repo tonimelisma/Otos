@@ -1,12 +1,12 @@
 # Keyword search: which models and mechanisms could find "dog on the beach" in the library
 
-Date: 2026-11-09 to 2026-11-10. Question: how could Otos let the owner type a word or a phrase,
+Date: 2026-11-09 to 2026-11-10. Question: how could Otos let the user type a word or a phrase,
 in any of many languages, and get the photos and videos that show it? Which current models can
 do it under about 500 MB, and what does Apple already provide?
 
 **Answer:** search by a contrastive image–text embedding (the CLIP family) is the only approach
 that finds long-tail phrases. Apple provides no such embedding, so it needs a model of Otos's
-own. The bake-off on the owner's library (section 7) found one clear best design, and the app
+own. The bake-off on the reference library (section 7) found one clear best design, and the app
 built from it (section 8) measures within three points of it:
 
 - **Translate the query to English with Apple's on-device Translation, then search with
@@ -58,7 +58,7 @@ Checked in the macOS 27 SDK interfaces and by running probes **[measured]**:
   Photos library anyway.
 - **Foundation Models image input (new in 27):** `Attachment(cgImage:)` in a prompt, with
   `capabilities.contains(.vision)` true on this Mac. A beach photo gave "beach, sea, ocean,
-  shore, coast". 9.7 s cold, about 2.4 s warm per image: about 13 hours for the owner's 19,415
+  shore, coast". 9.7 s cold, about 2.4 s warm per image: about 13 hours for the reference library's 19,415
   assets, before decode. Finnish is not in `supportedLanguages`, and a request for Finnish
   keywords returned English. The `.contentTagging` use case with an image failed
   (`ModelManagerError 1001`). WWDC26 session 241.
@@ -101,14 +101,14 @@ No 2026 release in this family turned up: no SigLIP 3, MobileCLIP 3, Perception 
 MetaCLIP 3. The newest are MetaCLIP 2's distilled models and FG-CLIP 2. TULIP (Mar 2025) starts
 above 1B parameters.
 
-**What the table says** (published numbers; section 7 measures them on the owner's library):
+**What the table says** (published numbers; section 7 measures them on the reference library):
 - **Untranslated Finnish follows the text tower.** The models that do well on Finnish carry a
   large multilingual text encoder (NLLB, XLM-R, mSigLIP's 250k vocabulary). Its token-embedding
   table is most of the download. SigLIP 2 is multilingual in name, but at B size it scores 40 on
   Finnish against 66 on Swedish. The bake-off reproduced that gap (41 against 60), and showed
   that translating the query first closes it.
-- **Licences are not the barrier they would be elsewhere.** Otos is non-commercial (owner
-  decision, ADR 0047), so CC-BY-NC models are acceptable. The Apple ML Research licence
+- **Licences are not the barrier they would be elsewhere.** Otos is non-commercial
+  (ADR 0047), so CC-BY-NC models are acceptable. The Apple ML Research licence
   (`apple-amlr`) on MobileCLIP2 and FastVLM is narrower: it covers research use, and whether a
   personal non-commercial app falls under it needs reading before relying on it.
 - **Size against GitHub's 100 MB file limit** (memory `core-ml-in-otos`): every multilingual
@@ -155,7 +155,7 @@ the main actor:
 | 768 | 10.5 ms | 16.2 ms | 153 MB |
 | 1152 | 15.1 ms | 26.0 ms | 230 MB |
 
-The owner's library (19,415 assets) at 768-d Float16 is about 30 MB. Picking the top k costs
+The reference library (19,415 assets) at 768-d Float16 is about 30 MB. Picking the top k costs
 under 1 ms. sqlite-vec is still pre-1.0 (v0.1.10 alphas), and as a loadable extension it would
 need a custom SQLite under GRDB. USearch and FAISS pay off only past a million vectors.
 
@@ -192,12 +192,12 @@ with OCR or filename hits), reciprocal rank fusion, Σ 1/(60 + rank), needs no s
 - **Engine.** Core ML on the CPU, owned like `EditAnalyzer`; the measured scan above needs only
   Accelerate.
 
-## 7. Bake-off on the owner's library
+## 7. Bake-off on the reference library
 
-The published numbers could not decide this. Crossmodal-3600 captions are not the owner's
-queries, and the face research had already shown that a measured run on the owner's library can
+The published numbers could not decide this. Crossmodal-3600 captions are not the user's
+queries, and the face research had already shown that a measured run on the reference library can
 overturn a published ranking. The material lives in `~/Development/Otos-search-research`, outside
-the repository, because it holds the owner's photos. This section keeps the method and the
+the repository, because it holds private photos. This section keeps the method and the
 numbers.
 
 ### Method
@@ -415,7 +415,7 @@ something the library hardly holds still shows photos: soccer (one relevant phot
 them, because their best scores (0.108–0.130) overlap those of queries with hundreds of right
 answers (plane 0.101, beach 0.119). With Relevance order the best matches come first.
 
-### The app on the owner's library
+### The app on the reference library
 
 The dev build indexed its own catalog: 14,846 assets in about 20 minutes, 12 a second, while
 enrichment ran. Where its stored thumbnail is the same file as the installed catalog's, its
@@ -429,7 +429,7 @@ encoder, over the photos it holds:
 | The same code on the installed catalog's thumbnails | 83 | 75.0 | 37 |
 | Bake-off: PyTorch, previews, told the language | 85 | 77.3 | 48 |
 
-**App Nap.** With the owner away (`UserIsActive 0`), macOS App Naps Otos as it does Mail and
+**App Nap.** With the user away (`UserIsActive 0`), macOS App Naps Otos as it does Mail and
 Safari: every thread runs at priority 4 and indexing, like enrichment, all but stops until the
 window is seen again. The measurement run turned App Nap off for the dev build
 (`NSAppSleepDisabled`) and removed the setting afterwards.
@@ -479,7 +479,7 @@ museum kept 9 of 27, train 39 of 76. Labels from the 256 px thumbnail gate as we
 
 ### Text in the photo: needed
 
-Words Vision reads in the owner's photos, searched with SigLIP alone: a photo holding the word
+Words Vision reads in the reference photos, searched with SigLIP alone: a photo holding the word
 reached the top 10 for 21% of 74 words, names and brands included. So text is read.
 Recognition on macOS 27: the accurate level failed for every image after a process's first
 (`e5rt_execution_stream_operation_create_precompiled_compute_operation_with_options`, error

@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 
 /// The dense assignment kernel this one replaced, kept as the differential tests' oracle
-/// (`KernelDifferentialTests`): measured on the owner's labelled faces, it is what the new
+/// (`KernelDifferentialTests`): measured on the reference library's labelled faces, it is what the new
 /// kernel must agree with. Its rules read the policy's own values.
 ///
 /// Face assignment policy guide
@@ -14,7 +14,7 @@ import Foundation
 /// result does not depend on the guesses it made before: run on its own output, it gives the
 /// same output.
 ///
-/// The rules and values were measured on the owner's labelled faces with the shipped model
+/// The rules and values were measured on the reference library's labelled faces with the shipped model
 /// (`docs/research/2026-11-07-face-recognition-models.md`;
 /// `docs/research/2026-11-12-face-auto-assignment.md`):
 /// - **Reach:** a face is compared with each person's faces: all of them when the person was
@@ -45,7 +45,7 @@ nonisolated enum ReferenceAssignment {
     static let threshold = FaceAssignmentPolicy.threshold
     static let margin = FaceAssignmentPolicy.margin
     static let groupLink = FaceAssignmentPolicy.groupLink
-    /// The strongest links each face keeps for grouping. Measured on the owner's labels: 10,
+    /// The strongest links each face keeps for grouping. Measured on the reference library's labels: 10,
     /// 20 or every link give the same groups; fewer links make grouping cost proportional to
     /// the faces, not their pairs.
     static let groupLinks = FaceAssignmentPolicy.groupLinks
@@ -383,7 +383,7 @@ nonisolated struct ReferenceFill {
     /// Raises each open row's best similarity per person with the new evidence within reach:
     /// one matrix product for the round, then one vectorised maximum per person and row.
     /// Every round visits each open row once per person with new evidence (75 million visits
-    /// a pass on the owner's 89,474 faces and 682 people), so a visit is pointer reads and
+    /// a pass on the reference library's 89,474 faces and 682 people), so a visit is pointer reads and
     /// the one reach scan, `ReferencePersonRun.best(in:)`, with no copy or allocation.
     private static func raise(
         _ best: inout [Float],

@@ -2,9 +2,16 @@ name: CI
 
 on:
   pull_request:
+    # `edited`: a description fixed after the push re-runs the checks that read it. Every job runs
+    # on it, so the newest `CI gate` on a commit always reflects all the checks.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches:
       - main
+  schedule:
+    # The weekly run on main, off the hour: the full suite on a fresh runner image, so rot from
+    # a new Xcode or runner shows up even in a week without merges.
+    - cron: "37 5 * * 2"
   workflow_dispatch:
 
 permissions:
@@ -21,7 +28,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Verify clean checkout
         run: |
@@ -35,7 +44,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Validate workflow YAML and script shape
         run: script/ci-repo-shape.sh
@@ -51,6 +62,8 @@ jobs:
           script/perf.sh self-test
           /usr/bin/python3 -I script/lib/test-shards.py self-test
           script/release-test.sh
+          script/ci-tested-tree.sh self-test
+          script/requirements-authority-check.sh self-test
 
   text-hygiene:
     name: Text Hygiene
@@ -58,9 +71,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check whitespace, conflict markers, requirement authority, and tagged time
         env:
@@ -72,13 +86,32 @@ jobs:
           script/requirements-authority-check.sh
           script/time-guard.sh
 
+  # Requirements, Validates tags and doc links agree (script/process-check); on a pull request,
+  # its description fills the template and a `fix` changes a test (script/pr-check).
+  process:
+    name: Process
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # pr-check diffs the pull request's base and head
+          persist-credentials: false
+      - name: process-check
+        run: script/process-check
+      - name: pr-check
+        if: github.event_name == 'pull_request'
+        run: script/pr-check
+
   lint:
     name: SwiftFormat And SwiftLint
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # `script/lint.sh` fetches the pinned, checksummed SwiftFormat and SwiftLint
       # itself (`script/lint-tools.sh`) and never uses whatever the image ships. The Linux
@@ -89,7 +122,7 @@ jobs:
       # trusted copy; a cached result is reused only for a file whose bytes, options and tool
       # version are unchanged (ADR 0044).
       - name: Restore the lint caches
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/net.melisma.Otos.lint-tools
           key: lint-${{ runner.os }}-${{ github.sha }}
@@ -100,21 +133,51 @@ jobs:
 
       - name: Save the lint caches
         if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/net.melisma.Otos.lint-tools
           key: lint-${{ runner.os }}-${{ github.sha }}
 
+  # Whether this push to main is a tree CI already built and tested (ADR 0062): the ruleset
+  # keeps every pull request up to date with main, so its squash merge's tree is the tree of
+  # the pull request's head, whose `CI gate` passed before the merge. Then the shards below
+  # are skipped; every other event (a pull request, the weekly run, a dispatch, or a push whose
+  # tree differs) runs them.
+  tested:
+    name: Already Tested
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the pull request a main commit came from
+      checks: read # that pull request's `CI gate`
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Was this tree tested on its pull request?
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: script/ci-tested-tree.sh "$EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
   # The build and the tests: the one run of script/check.sh that verifies a change made
-  # where there is no Xcode, such as a Claude Code cloud session (AGENTS.md, "Cloud
-  # Sessions"). It runs the same gates first, then the full tier's build and suite, and
-  # prints one `op=test.failure` line per failed test.
+  # where there is no Xcode, such as a Claude Code cloud session (CLAUDE.md, "Commands"). It
+  # runs the same gates first, then the full tier's build and suite, and prints one
+  # `op=test.failure` line per failed test.
   # Three shards side by side: the suite is about 420 CPU-seconds, four minutes on one
-  # 3-core runner, which alone broke the five-minute budget (ADR 0044 items 13 and 17).
-  # Each shard builds from the restored caches and runs a third of the suite; the last one
-  # runs everything the other two do not, so no test can fall between them.
+  # 3-core runner (ADR 0044 items 13 and 17). Each shard builds from the restored caches and
+  # runs a third of the suite; the last one runs everything the other two do not, so no test
+  # can fall between them. Main's caches are saved by the Build Cache workflow.
   build-and-test:
     name: Build And Test (Xcode 27) ${{ matrix.shard }}/3
+    needs: [tested]
+    if: ${{ needs.tested.outputs.tested != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 120
     strategy:
@@ -123,27 +186,23 @@ jobs:
         shard: [1, 2, 3]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # check.sh picks its tier from the diff against origin/main's merge base.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Select the newest Xcode 27
         id: xcode
-        run: |
-          set -euo pipefail
-          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
-          sudo xcode-select --switch "$xcode/Contents/Developer"
-          xcodebuild -version
-          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+        run: script/ci-select-xcode.sh >> "$GITHUB_OUTPUT"
 
-      # The compilation cache (ADR 0044) and the lint caches, as main's newest run left them.
-      # Every compile job is keyed by its inputs with the checkout path mapped away, so a
-      # restored store replays every job this tree shares with main and compiles only what
-      # changed. Only a push to main saves. The key names the Xcode build: another Xcode's
-      # entries could never be hits.
+      # The compilation cache (ADR 0044) and the lint caches, as main's newest Build Cache run
+      # left them. Every compile job is keyed by its inputs with the checkout path mapped
+      # away, so a restored store replays every job this tree shares with main and compiles
+      # only what changed. The key names the Xcode build: another Xcode's entries could never
+      # be hits.
       - name: Restore the build caches
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
@@ -181,23 +240,12 @@ jobs:
 
       - name: Upload the captures
         if: ${{ always() && matrix.shard == 3 }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: app-captures-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/captures/
           if-no-files-found: ignore
           retention-days: 14
-
-      # Every shard builds the same tree, so one shard's store is every shard's.
-      - name: Save the build caches
-        if: ${{ success() && matrix.shard == 1 && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
-            ~/Library/Caches/net.melisma.Otos.lint-tools
-            build/DerivedData/SourcePackages
-          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
 
       # A failed run's diagnostics: the test log, and on a hang the `sample` and
       # `swift-inspect dump-concurrency` that check.sh writes (op=check.hang names them).
@@ -205,38 +253,25 @@ jobs:
       # personal data, which is why this public repository can publish them.
       - name: Upload check logs
         if: ${{ !success() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: check-logs-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
           path: logs/
           if-no-files-found: warn
           retention-days: 14
 
-  required-ci-gate:
-    name: Required CI Gate
+  # The one required status check. It needs every other job and passes only when each of them
+  # succeeded or was skipped, so a cancelled or failed job can never be merged around.
+  gate:
+    name: CI gate
+    if: always()
+    needs: [checkout-sanity, repo-shape, text-hygiene, process, lint, tested, build-and-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs:
-      - checkout-sanity
-      - repo-shape
-      - text-hygiene
-      - lint
-      - build-and-test
-    if: always()
     steps:
-      - name: Check required job results
+      - name: Every job passed
         env:
-          CHECKOUT_RESULT: ${{ needs.checkout-sanity.result }}
-          YAML_RESULT: ${{ needs.repo-shape.result }}
-          TEXT_RESULT: ${{ needs.text-hygiene.result }}
-          LINT_RESULT: ${{ needs.lint.result }}
-          BUILD_RESULT: ${{ needs.build-and-test.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          set -euo pipefail
-          for result in "$CHECKOUT_RESULT" "$YAML_RESULT" "$TEXT_RESULT" "$LINT_RESULT" "$BUILD_RESULT"; do
-            if [[ "$result" != "success" ]]; then
-              echo "Required verification failed or was cancelled: $result" >&2
-              exit 1
-            fi
-          done
-          echo "Required CI gate passed."
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' >/dev/null

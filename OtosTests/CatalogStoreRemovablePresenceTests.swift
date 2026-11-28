@@ -35,6 +35,7 @@ struct CatalogStoreRemovablePresenceTests {
         return rootPath
     }
 
+    // Validates: APP-017, APP-018
     @Test func aReturningSourceShowsOnlyTheFilesItsCurrentReadHasSeen() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -57,6 +58,7 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    // Validates: APP-017
     @Test func aReadCutShortByDetachLeavesTheOfflineSourceShowingWhatItLastHeld() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -75,6 +77,7 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    // Validates: APP-017
     /// ADR 0032 rule 4: a read that ends without completing proved neither presence nor
     /// absence, so the source shows the rows it last held rather than a fabricated
     /// partial — or empty — card.
@@ -95,6 +98,7 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    // Validates: APP-032
     /// `.alreadyGone` removes a row and its overlay, so it needs proof: the card mounted
     /// and the path answering ENOENT. A card that is not mounted proves nothing.
     @Test func anEraseOnlyCallsAFileGoneWhenTheMountedCardSaysSo() async throws {
@@ -118,6 +122,7 @@ struct CatalogStoreRemovablePresenceTests {
         #expect(await erase(unmounted) == .failed)
     }
 
+    // Validates: APP-017
     @Test func aProcessThatEndedMidReadLeavesNoRowHiddenAtTheNextLaunch() async throws {
         let temp = try makeTestDirectory()
         let database = temp.appending(path: "catalog.sqlite")
@@ -136,6 +141,7 @@ struct CatalogStoreRemovablePresenceTests {
         await relaunched.shutdown()
     }
 
+    // Validates: APP-032
     @Test func anErasedFileLeavesTheCatalogTogetherWithItsJournal() async throws {
         let staging = try makeTestDirectory().appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -165,6 +171,7 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    // Validates: APP-017
     /// Field trace 2026-11-06: an inserted card waited 12.8 s for a launch rescan of a
     /// 16,000-file library before its own one-second scan began.
     @Test func aCardIsReadWhileALibraryRescanHoldsTheLibraryLane() async throws {
@@ -203,6 +210,7 @@ struct CatalogStoreRemovablePresenceTests {
         await store.shutdown()
     }
 
+    // Validates: APP-017
     /// A refused eject resumes a card whose scan the quiesce cancelled, and rows that scan
     /// had not reached are still waiting to be seen: the card is read again.
     @Test func aCardResumedAfterARefusedEjectIsReadAgain() async throws {

@@ -5,11 +5,11 @@
 
 ## Question
 
-The owner asked On This Day to "show photos from months ago, if nothing newer is
-available". What does the owner's own library show today, and how should the scope's SQL
+On This Day should show photos from months ago when nothing newer is
+available. What does the reference library show today, and how should the scope's SQL
 match a day in earlier months?
 
-## The owner's library (read-only, installed app's catalog)
+## The reference library (read-only, installed app's catalog)
 
 `sqlite3 -readonly` over `~/Library/Application Support/net.melisma.Otos/Catalog/catalog.sqlite`
 on 2026-11-12: 19,502 items, one from June 2024 and the rest April–November 2026. Items on
@@ -48,13 +48,13 @@ zone applied. Synthetic table of 500,000 rows (one root, uniform dates 2000–20
 | months, ordered by the index, row 16,000 | 100 ms |
 | years as 26 `OR`ed ranges, count (the index answers) | 6 ms |
 | years as 26 ranges, `EXISTS` | 0.1 ms |
-| the owner's catalog, months `strftime` count (713 rows of 19,502) | 21 ms |
+| the reference catalog, months `strftime` count (713 rows of 19,502) | 21 ms |
 
 ## Conclusion
 
 The `strftime` predicate is linear in the scope's rows and about 20× slower than ranges on
 a 500,000-item library, but it has no size that grows with the library's span, no floor
-query, and no failure mode; on the owner's library it costs 21 ms off the main actor.
+query, and no failure mode; on the reference library it costs 21 ms off the main actor.
 Otos uses it for years and months alike (`AnniversaryMatch`). Benchmark cases
 `projection.windowState.onThisDay.years` and `.months` watch the cost; ranges come back
 only if a measurement shows the predicate is the bottleneck.

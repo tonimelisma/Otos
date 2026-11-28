@@ -70,6 +70,7 @@ struct CaptureLocalTimeTests {
         return (store, rootPath)
     }
 
+    // Validates: ENR-003
     /// A floating Exif time has no instant. The photo is still on the day its clock read,
     /// not the day its file was created (today, for a file just written), and it is ordered
     /// and matched by On This Day on that day.
@@ -102,6 +103,7 @@ struct CaptureLocalTimeTests {
         #expect(asset.captureLocalTime == CaptureLocalTime(seconds: Self.localSeconds(2024, 4, 25, 14, 51)))
     }
 
+    // Validates: ENR-003
     /// Two photos taken in different zones are each on their own clock's day, whatever
     /// zone this Mac is in: 20:00 in California is that California evening, though the
     /// instant is the next day in UTC and in Sydney.
@@ -138,6 +140,7 @@ struct CaptureLocalTimeTests {
         #expect(tenth.ids.map(\.relativePath.rawValue) == ["sydney.heic"])
     }
 
+    // Validates: ENR-003
     /// The zone assumed for an absolute time is made once for that time and kept: an
     /// unchanged time keeps its offset in any later zone, a changed one takes the zone of
     /// the moment it is recorded, and no time has no offset.
@@ -161,6 +164,7 @@ struct CaptureLocalTimeTests {
             == nil)
     }
 
+    // Validates: ENR-003
     /// A reading is written as its own clock showed it in every zone, and its presentation
     /// date is when a clock in a zone shows that reading.
     @Test func aReadingIsWrittenAsItsClockShowedIt() throws {

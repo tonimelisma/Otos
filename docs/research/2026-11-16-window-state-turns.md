@@ -83,5 +83,5 @@ Optimised dev build, the same sandbox home (28 generated JPEGs), one tour on the
   Projection before its publication (`publish=6226`), not in the window. Tour 2 painted
   the same return in 156 ms (the base: 461 ms). It is not attributed here.
 - Not measured: the Time Profiler split of a main-thread turn after the change, and the
-  owner-scale grid (158,000 tiles); the daily benchmarks' `window.apply.*` cases are not
+  reference-scale grid (158,000 tiles); the daily benchmarks' `window.apply.*` cases are not
   measured until the next daily run.

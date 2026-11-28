@@ -2,29 +2,29 @@
 
 Date: 2026-11-16. Context: plan 0116's first version proposed a work ledger (A), derived data
 in separate files (B) and search vectors as a mapped file (C) to fix 3 to 15 s sidebar clicks.
-The owner asked for its soft spots, a full review and experiments before accepting it. This
+Its soft spots, a full review and experiments were asked for before accepting it. This
 note records what was measured. The plan document carries the design that survived.
 
-Method common to all: no benchmarks; the owner's catalog (2.56 GB, 166,990 assets) was opened
+Method common to all: no benchmarks; the reference catalog (2.56 GB, 166,990 assets) was opened
 read-only for schema, counts, plans and timings, never written or copied; destructive and
-write measurements used generated catalogs of the owner's shape; "cold" means the file's
+write measurements used generated catalogs of the reference catalog's shape; "cold" means the file's
 pages were dropped with `msync(MS_INVALIDATE)` and checked with `mincore`. Throwaway scripts
 were not kept.
 
 ## 1. The stall reproduces (P0)
 
-`OtosTests/StallReproductionTests.swift` and `OwnerShapedCatalog.swift`, merged in #798; full
+`OtosTests/StallReproductionTests.swift` and `ReferenceShapedCatalog.swift`, merged in #798; full
 tables in `2026-11-16-stall-reproduction-baseline.md`. On a generated 2.27 GB catalog with a
 realistic backlog and every background owner running, window reads waited 1.0 to 1.5 s for a
 main-pool connection with `lockMs`, `storeMs` and `snapshotMs` near 0, behind the holders the
-owner's log named. Rows visited per pass to return 0 to 24 items: descriptions 984,811,
+reference log named. Rows visited per pass to return 0 to 24 items: descriptions 984,811,
 embeddings 329,489, text 309,181, render signatures 164,766, mirror probe 294,129; metadata
 refresh, which keeps a cursor, 408. Of 21 Store changes in 14.6 s, 12 were enrichment
 recording what it could not read and 9 were the render refresher waking itself.
 
 ## 2. Independent critique (P5), with what was re-run
 
-Read-only on the owner's catalog, Otos not running.
+Read-only on the reference catalog, Otos not running.
 
 | Read | As written | Changed | Owed now |
 | --- | --- | --- | --- |
@@ -59,7 +59,7 @@ Findings beyond the plan's own soft spots:
 
 ## 3. Can a ledger be kept correct, and which shape (P2)
 
-Generated catalog, 2.49 GB, the owner's real DDL including the copy triggers; 1,629
+Generated catalog, 2.49 GB, the reference catalog's real DDL including the copy triggers; 1,629
 embeddings and 51,119 descriptions owed.
 
 | Shape | Next 16, little owed | Count owed | Write overhead | A revision bump | To maintain |
@@ -99,17 +99,17 @@ embeddings and 51,119 descriptions owed.
 - Costs of one large file, measured: WAL recovery 0.02 s regardless of size; the search
   reconcile 317k pages, or 6.9k with a `(key, source)` index; `peopleSnapshot` 161k pages
   because each face row carries its embedding.
-- The owner's asset table is 1.2 % sequential on disk. A synthetic table fragmented the same
+- The reference asset table is 1.2 % sequential on disk. A synthetic table fragmented the same
   way scanned 7 times slower cold.
 - An in-file split and one `VACUUM`: catalog 2.56 GB to about 1.0 GB (about 0.73 GB if
   `sort_key` and its two indexes are dropped; no SQL was found that reads them). Measured
   steps on the generated file: drop column 2.5 s, `VACUUM` in place 13 to 17 s with a peak of
-  twice the final size in temporary disk. Estimated 45 to 60 s on the owner's fragmented
+  twice the final size in temporary disk. Estimated 45 to 60 s on the reference catalog's fragmented
   file, not measured on it.
 
 ## 5. Mapped search vectors (P4)
 
-On the owner's 165,652 real vectors (unit-norm; the score is a dot product).
+On the reference catalog's 165,652 real vectors (unit-norm; the score is a dot product).
 
 | | Text queries (1,303 label names) | Image queries (500) |
 | --- | --- | --- |

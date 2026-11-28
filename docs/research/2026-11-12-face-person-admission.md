@@ -1,6 +1,6 @@
 # Face admission: Vision's classifier tells faces from objects
 
-Date: 2026-11-12. Question: an unnamed person in the owner's People gallery was 13 photos of
+Date: 2026-11-12. Question: an unnamed person in the reference library's People gallery was 13 photos of
 lace, a bucket, a storefront, a mascot, pixel art and costumed children. What let them in, and
 what keeps such detections out without losing real faces?
 
@@ -10,7 +10,7 @@ confidence reaches 0.2. AdaFace's own feature norm was measured first and does n
 them. Separately, a person the user said nothing about keeps its seeds only while they span two
 or more days. Decision: ADR 0047.
 
-The research material is in `~/Development/Otos-face-research` (owner photos, never
+The research material is in `~/Development/Otos-face-research` (private photos, never
 committed). The tools named below are in its `tools/`, and the numbers come from its `run3/`.
 
 ## 1. What the person was
@@ -124,8 +124,8 @@ eye.
   children (0.33 to 0.62).
 
 **The labelled set:** `tools/cropclass` ran the same request on run 2's 192 px review crops,
-which frame each face at about half the square, as the context crop does. Of the 2,196 faces
-the owner labelled, 1 reads under 0.2 (one of Sam's, at 0.187, labelled `structure` and
+which frame each face at about half the square, as the context crop does. Of the 2,196 labelled
+faces, 1 reads under 0.2 (one of Sam's, at 0.187, labelled `structure` and
 `furniture`). The 744 children's faces have a minimum of 0.187 and a 1st percentile of 0.440.
 47 of the 2,253 unlabelled detections read under 0.2.
 

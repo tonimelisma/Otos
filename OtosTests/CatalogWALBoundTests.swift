@@ -12,6 +12,7 @@ import Testing
 struct CatalogWALBoundTests {
     private static let server = URL(string: "https://photos.example.com")!
 
+    // Validates: ARC-063
     /// A long read in flight when a bulk write passes the WAL's budget holds up neither that
     /// write, nor a window read, nor a user's write. A checkpoint that waits for readers would
     /// keep every one of them waiting until the read ended.
@@ -26,6 +27,7 @@ struct CatalogWALBoundTests {
         }
     }
 
+    // Validates: ARC-063
     /// Writes during a long read grow the file past its limit, since the frames that read's
     /// snapshot needs stay in the log. Once it ends, the next write's checkpoint copies every
     /// frame, the write after it restarts the log, and that commit truncates the file to the

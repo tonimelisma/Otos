@@ -5,12 +5,12 @@
 
 ## Question
 
-The owner's Immich server mirrors the OneDrive folders Otos also has as libraries, so every
+The test Immich server mirrors the OneDrive folders Otos also has as libraries, so every
 photo there showed twice in All Media. What do other apps do, which fact can pair a library
 file with an Immich asset without downloading the asset, and what does showing one copy cost
-on the owner's catalog?
+on the reference catalog?
 
-## The owner's catalog (read-only, 2026-11-14)
+## The reference catalog (read-only, 2026-11-14)
 
 Read from the installed app's catalog, opened read-only (`mode=ro`).
 
@@ -78,7 +78,7 @@ A 3 MB HEIC hashes in about 1.5 ms and a 50 MB RAW in about 25 ms, against tens 
 ms to read and render each, so the digest is not what sets enrichment's pace. XXH3 was not
 measured here.
 
-## Showing one copy: query cost on a copy of the owner's catalog
+## Showing one copy: query cost on a copy of the reference catalog
 
 Measured on a scratch copy made with `.backup` (2.5 GB, 164,517 rows in the three roots), never
 opened by Otos. Immich rows were given their library twin's digest where name and size matched
@@ -117,7 +117,7 @@ and fills one write at a time.
 With the stored column, All Media's 164,517 rows show as 146,755. The 17,762 hidden rows are
 the Immich twins of library files, plus duplicates inside the account.
 
-## Migration v60 and the triggers at owner scale
+## Migration v60 and the triggers at reference-library scale
 
 Measured on a `VACUUM INTO` snapshot of the installed catalog (2.4 GB). `.backup` kept
 restarting while the running Otos wrote to the catalog, so it could not produce a copy.
@@ -147,7 +147,7 @@ The same loaded Mac as above.
   | Without | 0.70 ms |
 
   So the triggers add about 0.4–1.1 ms per digest write, one to three minutes over a full
-  resync of the owner's account. The recompute's plan is index seeks only:
+  resync of the test account. The recompute's plan is index seeks only:
   `idx_media_asset_content_sha1` for the group, the root's primary key for its kind.
 
 ## Every digest at once: Duplicates and a virtual column

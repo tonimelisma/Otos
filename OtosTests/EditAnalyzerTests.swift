@@ -6,6 +6,7 @@ import Testing
 /// The analyzer runs one reading at a time on its own queue (ADR 0045). These pin what a
 /// reading whose caller gave up does while it waits its turn.
 struct EditAnalyzerTests {
+    // Validates: APP-048
     /// Two readings wait behind a held queue; the first one's caller is cancelled before the
     /// queue runs. When the queue goes on, the cancelled reading throws without running its
     /// model, and the one still wanted is read.
@@ -25,6 +26,7 @@ struct EditAnalyzerTests {
         _ = try await wanted.value
     }
 
+    // Validates: APP-048
     /// The level reading honours cancellation the same way.
     @Test func aLevelReadingCancelledWhileItWaitsNeverRuns() async throws {
         let queue = DispatchSerialQueue(label: "test.edit.analysis", qos: .userInitiated)

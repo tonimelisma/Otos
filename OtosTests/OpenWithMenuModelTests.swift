@@ -6,6 +6,7 @@ import Testing
 /// is a table-driven stand-in for LaunchServices so the tests assert the model's
 /// grouping, title, and intersection rules rather than what this Mac has installed.
 struct OpenWithMenuModelTests {
+    // Validates: APP-051
     /// ADR 0046 §4: an account's original not yet staged has no file, and LaunchServices
     /// answers nothing for a path with no file; the workspace asks by its type, so Open and
     /// Open With offer the apps they will use once the hand-off fetches it.
@@ -16,6 +17,7 @@ struct OpenWithMenuModelTests {
         #expect(!workspace.applicationURLs(toOpen: absent).isEmpty)
     }
 
+    // Validates: APP-035
     @Test func sharedDefaultTitlesOpenInThatApp() {
         let workspace = TableWorkspace(
             defaults: ["jpg": .preview, "jpeg": .preview],
@@ -36,6 +38,7 @@ struct OpenWithMenuModelTests {
         #expect(groups.first?.targets == targets)
     }
 
+    // Validates: APP-035
     @Test func mixedDefaultsTitlePlainOpenAndGroupByApp() {
         let workspace = TableWorkspace(
             defaults: ["jpg": .preview, "mov": .quickTime],
@@ -54,6 +57,7 @@ struct OpenWithMenuModelTests {
         #expect(groups[1].targets == [url("b.mov")])
     }
 
+    // Validates: APP-035
     @Test func applicationsAreTheIntersectionInBestFirstOrder() {
         let workspace = TableWorkspace(
             defaults: ["jpg": .preview, "mov": .quickTime],

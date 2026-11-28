@@ -56,12 +56,12 @@ set's size it used most recently (ADR 0006, "What the tile store keeps"); the by
 as a cap. Deterministic twins: `TileContentStoreTests.offScreenTilesBeyondTheLimitAreDroppedLeastRecentFirst`,
 `GridBacklogMemoryTests.aBacklogOfPublicationsHoldsWhatTheWindowShows` (1,000 backlog
 publications over 8,000 photos scrolled to 200 places: two orders alive, no index edit across
-reads, the store at its limit) and, at the owner's size on demand,
-`GridBacklogMemoryTests.aBacklogAtTheOwnersSizeStaysWithinItsFootprint`.
+reads, the store at its limit) and, at the reference library's size on demand,
+`GridBacklogMemoryTests.aBacklogAtTheReferenceSizeStaysWithinItsFootprint`.
 
 ## After the change
 
-The owner-size twin, run alone (`OTOS_SCALE_TEST=1`): 160,000 photos, 1,500 backlog
+The reference-size twin, run alone (`OTOS_SCALE_TEST=1`): 160,000 photos, 1,500 backlog
 publications, scrolled to 100 places, 90 tiles visible.
 
 | Store | Tiles held | Images counted | Footprint growth past the settled window |
@@ -72,7 +72,7 @@ publications, scrolled to 100 places, 90 tiles visible.
 Both runs held two grid orders at the end, an index edit of 0 across reads, and an edit of 4
 positions from the order the grid last applied to the newest.
 
-Two tours of the changed build, one at a time under the owner-scale lock, in an occluded
+Two tours of the changed build, one at a time under the reference-scale lock, in an occluded
 window. Act values in ms from the act to its main-actor commit.
 
 | Tour | Peak footprint | Peak during | Grid tile images max | Dislike / Like / Not Rated | Move to Trash | five in a row | Put Back | five in a row |

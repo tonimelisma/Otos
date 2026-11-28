@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct ViewModelDefaultSelectionTests {
+    // Validates: ARC-005
     @MainActor
     @Test func startupSelectsSingleLibraryWhenAllMediaIsHidden() async throws {
         let temp = try makeTestDirectory()
@@ -77,6 +78,7 @@ struct ViewModelDefaultSelectionTests {
         #expect(model.sidebarSelection == .library(library.path))
     }
 
+    // Validates: ARC-005, APP-002
     /// Inserting a card takes the user to it even after they chose another row
     /// (APP-002): the one-time startup default is not the only automatic jump.
     @MainActor

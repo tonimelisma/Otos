@@ -7,8 +7,8 @@ import ImageIO
 /// The one producer of faces: every still in a library or an Immich account is read for its
 /// faces from its **stored preview** in Application Support — Otos's 2560 px rendering
 /// (ADR 0035), or until there is one, the source's own preview (an Immich preview, ADR 0046
-/// §7). It never opens an original, so it never downloads one. Measured on the owner's
-/// labels, faces read from the preview make the same identity decisions as faces read from
+/// §7). It never opens an original, so it never downloads one. Measured on a private
+/// labelled set, faces read from the preview make the same identity decisions as faces read from
 /// the original at full resolution
 /// (`docs/research/2026-11-12-faces-from-the-preview.md`).
 ///

@@ -35,7 +35,7 @@ nonisolated enum MirrorGateway {
     }
 
     /// Library files a walk reads, and writes the pairs of, in one transaction: each pair
-    /// that comes or goes regroups its photo's copies (about 0.7 ms on the owner's catalog),
+    /// that comes or goes regroups its photo's copies (about 0.7 ms on the reference catalog),
     /// so a first pairing of a whole library never holds the writer for seconds.
     static let pairBatchSize = 500
 
@@ -45,7 +45,7 @@ nonisolated enum MirrorGateway {
     /// path checksum: each unpaired library row probes the account's size index. The join
     /// order is pinned (`CROSS JOIN`, the library outer): with no statistics SQLite chose the
     /// account as the outer loop, walking its 147,064 rows to probe the library, over 75 s on
-    /// the owner's catalog against 0.16 s this way round
+    /// the reference catalog against 0.16 s this way round
     /// (`docs/research/2026-11-16-plan-0116-due-diligence.md` §2).
     static let candidateSQL = """
     SELECT library.relative_path, asset.relative_path, asset.source_item_id, asset.source_path_sha1

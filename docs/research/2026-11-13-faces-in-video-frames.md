@@ -1,9 +1,9 @@
 # Faces in video frames
 
-Date: 2026-11-13. A measurement on the owner's own videos of how often one frame of a video
-holds a face Otos would read, and which frame to take. It opened when the owner asked why
-People finds no faces in videos and whether the first frame would do (owner, 2026-11-12:
-"measure first"). No decision is recorded here; the owner decides whether videos get faces.
+Date: 2026-11-13. A measurement on the reference library's videos of how often one frame of a video
+holds a face Otos would read, and which frame to take. It opened on the question why
+People finds no faces in videos and whether the first frame would do (2026-11-12: measure
+first). No decision is recorded here; whether videos get faces is a product decision.
 
 ## What was measured
 
@@ -18,7 +18,7 @@ People finds no faces in videos and whether the first frame would do (owner, 202
   ≥ 0.3; eyes, nose and lips found. This is close to, but not, `FaceAnalyzer`'s admission
   for stills (ADR 0047: quality ≥ 0.28 plus the alignment and person rules). The alignment-scale rule and the embedding model were not run, so this counts faces
   Otos would read, not faces it would recognise.
-- The tool was a throwaway Swift program; owner media and results stay outside the repo.
+- The tool was a throwaway Swift program; the reference media and results stay outside the repo.
 
 ## Results
 
@@ -51,7 +51,7 @@ People finds no faces in videos and whether the first frame would do (owner, 202
 
 - **Recognition:** whether a frame's face is matched to the right person was not measured. A
   video frame is compressed and may be motion-blurred; the quality score catches some of it.
-  Running the embedding model on these frames against the owner's named people would answer
+  Running the embedding model on these frames against the reference library's named people would answer
   it.
 - **The same person in several frames:** six frames of one video often show one person
   several times. A video would need one face per person, not one per frame.
@@ -64,7 +64,7 @@ People finds no faces in videos and whether the first frame would do (owner, 202
 ## Recognition (2026-11-13, second pass)
 
 The six frames of the 12 videos with a face were decoded again, read with `FaceAnalyzer`
-(revision 3) and compared with the faces the owner's catalog gives each named person (the
+(revision 3) and compared with the faces the reference catalog gives each named person (the
 user's, the seeds and Otos's guesses), by best cosine, against assignment's threshold
 (0.434) and margin (0.16). Every video was left as found: downloaded only when dataless, and
 evicted after.
@@ -78,8 +78,8 @@ evicted after.
   person's frames and no two people.
 - **Unrecognisable faces:** none of the 60 reaches `FaceRecognisability.limit` (the highest
   reads 0.124).
-- A contact sheet of one face per person per video, with the name Otos would give, was shown
-  to the owner and not committed (family photos).
+- A contact sheet of one face per person per video, with the name Otos would give, was reviewed
+  and not committed (private photos).
 
 **Conclusion:** a video's faces are read from these six frames, one face per person per
 video, with the frame it was sharpest in (ADR 0047, ENR-031).

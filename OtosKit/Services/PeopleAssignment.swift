@@ -698,7 +698,7 @@ actor PeopleGallery: QuiescentOwner {
 /// (`FaceVector`), read from the catalog once a launch and afterwards only as new readings write
 /// them (`FaceEmbeddingSQL`). They live in a file of their own, never on the heap: a mapped
 /// file's clean pages are not counted in the process's footprint, and the system may drop and
-/// read them again (`FaceVectorFile`). About 105 MB for the owner's 103k faces, none of it in the
+/// read them again (`FaceVectorFile`). About 105 MB for the reference library's 103k faces, none of it in the
 /// footprint.
 ///
 /// Two types, so that only one value can write the file:

@@ -203,7 +203,7 @@ out of scope; PTP mode covers photo ingestion from Android.
    in USB reader, USB stick, USB SSD, camera in mass-storage mode), log
    `volumeIsRemovable`, `volumeIsEjectable`, `volumeIsInternal`,
    `volumeUUIDString`, DA `MediaUUID`, filesystem type. Confirms the
-   removable-only filter matches the devices Taylor actually wants listed.
+   removable-only filter matches the devices the user actually wants listed.
 2. **UUID presence on FAT32/exFAT**: cards are typically FAT32/exFAT;
    `volumeUUIDString` may be nil there. Confirm mediaUUID fallback fires and
    is stable across remounts and across readers.
@@ -238,7 +238,7 @@ out of scope; PTP mode covers photo ingestion from Android.
 
 ## POC results (2026-07-06)
 
-Run on real hardware: `CAMERA` (FAT32 USB stick), `4152150790` (exFAT SD card,
+Run on real hardware: `CAMERA` (FAT32 USB stick), `CARD` (exFAT SD card,
 Sony camera card with 2,801 files, in the built-in reader), and a Sony ILCE-6700
 (A6700) connected over USB in MTP mode. Swift CLIs compiled against the macOS 27
 SDK; sources in the session scratchpad (`volume-poc.swift`, `browser-poc.swift`,
@@ -382,14 +382,14 @@ The same body switched from MTP to MSC mode, with the reader card still
 inserted in the Mac:
 
 - The camera card mounts as an ordinary USB volume. **Its label is also
-  `4152150790`** (Sony formatting), so it mounted at `/Volumes/4152150790 1` —
+  `CARD`** (Sony formatting), so it mounted at `/Volumes/CARD 1` —
   the same-label mount-path-drift case observed for real. The two cards'
-  volume UUIDs differ (`7524C26D-…` vs `C3194A6F-…`): UUID identity
+  volume UUIDs differ: UUID identity
   disambiguates where labels and paths cannot. Path-based root identity would
   have merged/confused them (open item 2 settled).
 - The MTP `ILCE-6700` device disappears; the MSC camera is dual-listed as a
   third mass-storage `ICCameraDevice` named after its *mount point*
-  (`4152150790 1`), again with `mountPoint=nil` and
+  (`CARD 1`), again with `mountPoint=nil` and
   `serialNumberString=nil` — in MSC mode the camera body identity (serial)
   is invisible to the system; it is purely a card reader.
 - **Enumeration: 379 files in 153 ms (0.40 ms/item)** — ~170× faster than the
@@ -630,7 +630,7 @@ have "an eviction policy for never-imported files" was not implemented: staged b
 are released only by a whole-tree discard at app close or at launch, never when an item
 is copied into the library. July also asked for staging "survival across app restarts";
 the current product decision is the opposite (discard at quit, sweep stale trees at
-launch, owner decision 2026-08-30), so that item is superseded rather than outstanding.
+launch), so that item is superseded rather than outstanding.
 
 Consequences and fixes shipped; see "Outcome (2026-08-31)" below.
 

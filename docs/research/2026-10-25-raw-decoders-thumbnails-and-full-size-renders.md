@@ -41,8 +41,8 @@ community or press report; **[U]** unconfirmed.
   | RAW8 render | 17.75 |
 
 - The camera JPEG has visibly more contrast and saturation than the RAW9 default render,
-  which is flatter [M, images compared side by side]. Showing RAW9 defaults (owner
-  decision 6) therefore changes how every RAW looks in the grid and the loupe, not only
+  which is flatter [M, images compared side by side]. Showing RAW9 defaults
+  (decision 6) therefore changes how every RAW looks in the grid and the loupe, not only
   edited ones.
 - Side observation: Quick Look failed on the same file in place inside the OneDrive
   folder when called from a command-line probe (`GSLibraryErrorDomain` 3, "Generation

@@ -59,6 +59,7 @@ struct LibraryRootKindCapabilityTests {
         }
     }
 
+    // Validates: APP-062
     /// ADR 0046 §3: an account is a library in browsing — the Libraries section and All
     /// Media — and in nothing that changes files. Its rows come from its server's listing,
     /// its originals are staged when fetched, and its rows stay while the server is gone.

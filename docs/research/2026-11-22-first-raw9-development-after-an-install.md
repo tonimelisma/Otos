@@ -1,7 +1,7 @@
 # The first RAW9 development after an install
 
 2026-11-22. macOS 27.0 (26A434), Xcode 27.2 (MacOSX27.2 SDK), MacBookPro18,3. Installed Otos
-at 4eb13c44, read-only, on the owner's library. Command-line probes read one local ARW.
+at 4eb13c44, read-only, on the reference library. Command-line probes read one local ARW.
 System logs were read with `log show` for `aned`, `ANECompilerService` and the processes
 named below. Evidence tags: [M] measured here, [V] verified in logs, files or headers.
 

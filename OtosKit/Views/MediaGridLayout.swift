@@ -13,7 +13,7 @@ import AppKit
 ///
 /// It replaces `NSCollectionViewCompositionalLayout` for the grid, which solved every
 /// section on each invalidation — about 0.5 M instructions per section, so about 300 ms of
-/// main thread for each structural apply at the owner's 4,800 days
+/// main thread for each structural apply at the reference library's 4,800 days
 /// (`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). The pixel
 /// geometry is the compositional layout's, measured and kept as the oracle in
 /// `MediaGridLayoutTests`: a section inset of 12 pt on every side, each tile inset 4 pt
@@ -342,7 +342,7 @@ nonisolated struct MediaGridHeaderUpdates: Equatable, Sendable {
 /// are this layout's alone, mapped to and from positions by `MediaGridLayoutGeometry`.
 /// AppKit does work for every section it holds on each update — it re-asks every count,
 /// walks every section's supplementaries and maps every section — which made a batch at
-/// the owner's 5,000 days cost about 93 M instructions for one removed photo, where one
+/// the reference library's 5,000 days cost about 93 M instructions for one removed photo, where one
 /// section costs about 17 M (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
 final class MediaGridLayout: NSCollectionViewLayout {
     let columnCount: Int

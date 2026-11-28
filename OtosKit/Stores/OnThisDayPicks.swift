@@ -1,7 +1,7 @@
 import Foundation
 
-/// Which of a day's photos On This Day shows and in what order (ADR 0049, owner direction
-/// 2026-11-13, following Apple Photos' Memories): never a photo the user Disliked, never one
+/// Which of a day's photos On This Day shows and in what order (ADR 0049,
+/// following Apple Photos' Memories): never a photo the user Disliked, never one
 /// Vision is confident is a screenshot or a document, and a day's Liked photos first. Labels
 /// count only from the photo's current search row, the one read from the thumbnail it has
 /// now (`SearchEmbeddingStorage.currentSource`): a photo not yet read for search, or whose
@@ -26,7 +26,7 @@ nonisolated enum OnThisDayPicks {
     /// row's own search row is sought by its key, only for a row the day's other terms kept.
     /// A `NOT IN` over every left-out row was rejected on measurement: when a read starts
     /// from another table — the filter's place options start from the named cells — SQLite
-    /// ran it for each outer row, 9–12 s on the owner's 166,554-photo catalog against 0.15 s
+    /// ran it for each outer row, 9–12 s on the reference library's 166,554-photo catalog against 0.15 s
     /// for this form (2026-11-13).
     static var exclusionSQL: String {
         """
@@ -63,8 +63,8 @@ nonisolated enum OnThisDayPicks {
         !stacks.isInStackWithDislikedKey(id)
     }
 
-    /// The most photos one anniversary shows (owner, 2026-11-12, from the day sizes in
-    /// `docs/research/2026-11-13-on-this-day-picks.md`: 73 % of the owner's days hold no more).
+    /// The most photos one anniversary shows (from the day sizes in
+    /// `docs/research/2026-11-13-on-this-day-picks.md`: 73 % of the reference library's days hold no more).
     static let anniversaryCap = 25
 
     /// The positions of `dayBuckets` On This Day keeps: the first `anniversaryCap` of each

@@ -5,7 +5,7 @@ import MetricKit
 ///
 /// macOS hands an app the hangs, crashes, CPU and disk-write exceptions it had, as MetricKit
 /// diagnostic reports delivered to the app itself. Nothing else tells a session that cannot
-/// reach the owner's Mac what the installed app ran into, so each report is kept as its own
+/// reach the test Mac what the installed app ran into, so each report is kept as its own
 /// JSON (`DiagnosticReport` is `Codable`) in Otos's Application Support folder
 /// (`Diagnostics/MetricKit`), where Help ▸ Export Diagnostics… copies it from (ADR 0060). Its
 /// call stacks are binary images and offsets; a session symbolicates them against the

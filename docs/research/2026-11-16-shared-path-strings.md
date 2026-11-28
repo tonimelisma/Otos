@@ -2,7 +2,7 @@
 
 ## Question
 
-On the owner's library with every background owner off, the app peaked at about 350–494 MB,
+On the reference library with every background owner off, the app peaked at about 350–494 MB,
 and a heap taken at the full app's peak held 0.9–1.25 million Swift strings (87–128 MB) and
 52 MB of `[MediaAssetID]` in about 35,000 arrays. Each order read makes a new string for every
 row's relative path, so orders read at different times hold their own copies of the same
@@ -12,9 +12,9 @@ paths does the window hold, and does sharing them lower the footprint?
 
 ## Method
 
-`OtosTests/WindowMemoryTests.swift` on a generated catalog of the owner's size and shape
-(`OwnerShapedCatalog`, scale 1, 166,990 rows, 164,766 in All Media; `OTOS_SCALE_TEST=1`), one
-owner-size run at a time on the Mac, in the test process (Debug, unoptimized). The projection
+`OtosTests/WindowMemoryTests.swift` on a generated catalog of the reference library's size and shape
+(`ReferenceShapedCatalog`, scale 1, 166,990 rows, 164,766 in All Media; `OTOS_SCALE_TEST=1`), one
+reference-size run at a time on the Mac, in the test process (Debug, unoptimized). The projection
 runs with every background owner off and its states drained unkept. After All Media's first
 publication, and again after 20 scope changes (three libraries, the newest import batch, All
 Media, in turn), each followed by a choice changed on its first row so the shown order and its

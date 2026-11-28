@@ -22,6 +22,7 @@ struct MediaGridStructureTests {
         #expect(MediaGridStructure.empty.numberOfSections == 0)
     }
 
+    // Validates: APP-030
     @Test func contiguousSameDayRunsAreOneSectionEach() {
         let ids = Self.ids("a", "b", "c", "d")
         let structure = MediaGridStructure(orderedIDs: ids, dayBuckets: [Self.dayTwo, Self.dayTwo, Self.dayOne, Self.dayOne])
@@ -32,6 +33,7 @@ struct MediaGridStructureTests {
         #expect(structure.day(inSection: 1) == MediaGridDayBarPolicy.Day(date: Self.dayOne, itemCount: 2))
     }
 
+    // Validates: APP-030
     @Test func anUnknownDayIsItsOwnSection() {
         let ids = Self.ids("a", "b", "c")
         let structure = MediaGridStructure(orderedIDs: ids, dayBuckets: [Self.dayOne, nil, nil])
@@ -75,6 +77,7 @@ struct MediaGridStructureTests {
 
     // MARK: - Day headers
 
+    // Validates: ARC-023
     /// A day's header keeps its index path in every structure holding that day, so a batch
     /// keeps its view while days before it come and go.
     @Test func aDaysHeaderSitsAtTheSamePathInEveryStructure() throws {
@@ -133,6 +136,7 @@ struct MediaGridStructureTests {
         try Self.replay(updates, from: old, to: new)
     }
 
+    // Validates: ARC-023
     @Test func aReorderMovesOnlyTheItemThatMoved() throws {
         let names = (0 ..< 50).map { "p\($0)" }
         let old = MediaGridStructure(orderedIDs: names.map(Self.id))
@@ -145,6 +149,7 @@ struct MediaGridStructureTests {
         try Self.replay(updates, from: old, to: new)
     }
 
+    // Validates: ARC-023
     @Test func aDayGainingItsFirstItemIsAnInsertedSection() throws {
         let old = Self.structure([("a", Self.dayThree), ("b", Self.dayOne)])
         let new = Self.structure([("a", Self.dayThree), ("n", Self.dayTwo), ("b", Self.dayOne)])
@@ -156,6 +161,7 @@ struct MediaGridStructureTests {
         try Self.replay(updates, from: old, to: new)
     }
 
+    // Validates: ARC-023
     @Test func aDayLosingItsLastItemIsADeletedSection() throws {
         let old = Self.structure([("a", Self.dayThree), ("b", Self.dayTwo), ("c", Self.dayOne)])
         let new = Self.structure([("a", Self.dayThree), ("c", Self.dayOne)])
@@ -180,6 +186,7 @@ struct MediaGridStructureTests {
         try Self.replay(updates, from: old, to: new)
     }
 
+    // Validates: ARC-023
     /// A photo moving to a new day and leaving its old one empty keeps its view: a move,
     /// with one day's header going and the other's coming.
     @Test func aPhotoMovingToANewDayLeavingItsOldDayEmptyKeepsItsView() throws {
@@ -237,6 +244,7 @@ struct MediaGridStructureTests {
         #expect(MediaGridBatchUpdates.between(old, new) == nil)
     }
 
+    // Validates: ARC-023
     /// Randomized changes to a day-grouped grid: inserts, removals, reorders and date
     /// changes at once, each batch replayed against the structure it must produce.
     @Test func randomChangesReplayToTheNewStructure() throws {
@@ -359,6 +367,7 @@ extension AppKitWindowTests {
     /// source's, so a wrong derivation fails here as a crash rather than a quiet misdraw.
     @MainActor
     struct MediaGridBatchApplyTests {
+        // Validates: ARC-023
         @Test func animatedAppliesKeepTheCollectionViewAndStructureInStep() async throws {
             let controller = MediaGridViewController()
             _ = controller.view
@@ -443,6 +452,7 @@ extension AppKitWindowTests {
             }
         }
 
+        // Validates: ARC-023
         /// Five Move to Trash hides and a Put Back, each delivered while every earlier apply's
         /// tiles are still moving: each is on screen as its own commit returns, and none waits
         /// for another's motion (DES-119). The motion is lengthened so it is provably still
@@ -515,6 +525,7 @@ extension AppKitWindowTests {
             }
         }
 
+        // Validates: ARC-023
         /// Under Reduce Motion the apply runs with no motion at all (DES-075) and shows its
         /// result as its commit returns, as it does with motion.
         @Test func underReduceMotionAnApplyHasNoMotionAndShowsAtOnce() async throws {

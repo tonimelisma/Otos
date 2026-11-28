@@ -1,11 +1,11 @@
-# A new library at the owner's size (2026-11-17)
+# A new library at the reference library's size (2026-11-17)
 
 ## Question
 
 A brand-new library of 160,002 small generated files, added through Add Library on an
 optimised dev build in a sandbox home, is toured while enrichment has the whole library as its
 backlog (`script/scorecard.sh --tour --dev --optimized --seed 160000 --seed-media small
---settled --settle-deadline 60`). On the owner's settled library of the same size every target
+--settled --settle-deadline 60`). On the reference library, settled and of the same size, every target
 passes; on the new library six tours measured the first paint of the library at 3,166–4,265 ms
 (target 1,000), the first search's first results at 378–1,347 ms (1,000) and the peak
 footprint at 554–821 MB (700). What does each wait on, and what is Otos's to change?
@@ -36,7 +36,7 @@ The order read took 7 ms and the grid's apply 3 ms; the window waited on two thi
 
 - **The first batch's write.** The scanner flushed on a one-second cadence only, so its first
   batch held every file the walk met in its first second, 8,729 of them, and their write took
-  2.6 s (about 0.3 ms a row at the owner's schema). No row reached the catalog before it
+  2.6 s (about 0.3 ms a row at the reference catalog's schema). No row reached the catalog before it
   committed.
 - **The cadence after it.** The batch's change (`assetsAdded`) is a background change, so the
   projection took it up on its next cadence tick, 0.93 s later. The same cadence held the Add
@@ -75,7 +75,7 @@ So the tower's first query prediction spent its time reading back about 330 MB. 
 been loaded and warmed 112 s earlier (`search.encoder phase=prepared warmUpMs=41`), and its
 pages were evicted in between. The Mac had 65–170 MB free, 3.7–4.0 GB compressed and
 5.2–5.7 GB of swap in use, with other worktrees' builds and tests running. Otos's own footprint
-was 343 MB. The same query against the owner's settled library, on a Mac not under this
+was 343 MB. The same query against the settled reference library, on a Mac not under this
 pressure, showed first results in 253–278 ms (`2026-11-16-performance-baseline.md`).
 
 **What is Otos's.** Nothing in this wait is a read or an owner Otos can change while keeping

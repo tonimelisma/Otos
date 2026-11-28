@@ -32,6 +32,7 @@ struct OrderReadDifferentialTests {
         let shown: Bool
     }
 
+    // Validates: ARC-022
     @Test func everyOrderIsTheTablesOrderAndTheV75IndexesOrder() async throws {
         let temp = try makeTestDirectory()
         let queue = try makeTestDatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
@@ -58,6 +59,7 @@ struct OrderReadDifferentialTests {
         }
     }
 
+    // Validates: ARC-022
     /// A keyed re-read (`CatalogStore.orderedAssetIDs(ofRows:…)`) places a changed row by its
     /// capture time under the date order, the one order it answers: the rows it reads by their
     /// keys carry the time the whole order's read gives them.

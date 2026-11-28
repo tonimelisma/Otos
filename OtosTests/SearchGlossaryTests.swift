@@ -8,6 +8,7 @@ import Testing
 struct SearchGlossaryTests {
     private static let bundle = Bundle(for: CatalogWindowViewModel.self)
 
+    // Validates: APP-068
     @Test func casesCompoundsAndUnknownWordsAreRead() throws {
         let glossary = try #require(try SearchGlossary(language: "et", bundle: Self.bundle))
         #expect(glossary.reading(of: "rand") == "beach")
@@ -29,6 +30,7 @@ struct SearchGlossaryTests {
         #expect(try SearchGlossary(language: "xx", bundle: Self.bundle) == nil)
     }
 
+    // Validates: APP-068
     @Test func aWrittenGlossaryIsReadAsItSays() throws {
         let glossary = try SearchGlossary(language: "et", contents: """
         # comment
@@ -50,6 +52,7 @@ struct SearchGlossaryTests {
         }
     }
 
+    // Validates: APP-068
     /// A form has one sense, and the file says which: one listed for two is refused, so the
     /// order of the lines never decides it.
     @Test func aFormListedTwiceDoesNotLoad() {
@@ -61,6 +64,7 @@ struct SearchGlossaryTests {
         }
     }
 
+    // Validates: APP-068
     /// The shipped glossary reads a word in the sense a photo search means by it.
     @Test func theShippedGlossaryReadsTheSenseASearchMeans() throws {
         let glossary = try #require(try SearchGlossary(language: "et", bundle: Self.bundle))
@@ -77,6 +81,7 @@ struct SearchGlossaryTests {
         #expect(glossary.reading(of: "kuus") == nil)
     }
 
+    // Validates: APP-068
     /// Estonian, which Translation does not offer, is glossed after its facts are read: the
     /// picture is searched for in English.
     @Test func anEstonianQueryIsSearchedInEnglish() async throws {

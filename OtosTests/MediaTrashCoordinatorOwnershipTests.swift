@@ -90,6 +90,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         }
     }
 
+    // Validates: ARC-058
     /// A failing read must not turn into an empty queue. The item is mid-download, so the
     /// bar says one item is pending; two failed reads in a row must leave that standing.
     @Test func aFailedPendingReadPublishesNothingAndTheNextWakeRetries() async throws {
@@ -143,6 +144,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-058
     /// Shutdown lands while a pass is suspended in its pending-item read, after shutdown has
     /// already cancelled the download in flight and that download has cleared its slot. The
     /// pass then resumes holding a snapshot in which the item looks un-downloaded; it must not
@@ -219,6 +221,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         return box.withLock { $0 }
     }
 
+    // Validates: ARC-058
     /// The user takes an item back while a pass is partway through its snapshot: the pass
     /// must skip it. The hook delivers `restore` at exactly the suspension a real answer
     /// could land in.
@@ -262,6 +265,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-058
     @Test func aDownloadSizeThatCannotBeReadIsUnknownNotZero() async throws {
         let fixture = try await Fixture.make(names: ["a.jpg"])
         let store = fixture.store
@@ -283,6 +287,7 @@ struct MediaTrashCoordinatorOwnershipTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-045, APP-085
     /// A command whose files are all local is sized from their own flags: the catalog is not
     /// read, so the common Move to Trash never waits on it (APP-045).
     @Test func aLocalCommandIsSizedWithoutReadingTheCatalog() async throws {

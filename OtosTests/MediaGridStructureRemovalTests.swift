@@ -66,6 +66,7 @@ struct MediaGridStructureRemovalTests {
         try Self.expectFollowsTheRemoval(shown, shown.hiding([Self.id(0), Self.id(7), Self.id(9), Self.id(21)]))
     }
 
+    // Validates: ARC-023
     /// A day losing its every photo is gone, and a removal from the unknown-date run
     /// keeps that run's section.
     @Test func aDayLeftEmptyIsDroppedAndTheUnknownRunKeepsItsSection() throws {
@@ -105,6 +106,7 @@ struct MediaGridStructureRemovalTests {
         #expect(MediaGridStructure(grid: shown.hiding([Self.id(2)]), following: shownStructure).numberOfSections == 1)
     }
 
+    // Validates: ARC-023
     /// A grid made from a publication the window skipped follows the order on screen by the
     /// two removals composed; one made from an order not made from the one on screen is
     /// built afresh.
@@ -123,6 +125,7 @@ struct MediaGridStructureRemovalTests {
         #expect(structure.sections == MediaGridStructure(grid: Self.fresh(other)).sections)
     }
 
+    // Validates: ARC-023
     @Test func randomRemovalsFollowTheRemovedPositions() throws {
         var generator = SplitMix(seed: 23)
         var followed = 0
@@ -169,6 +172,7 @@ struct MediaGridStructureRemovalTests {
         return shown.replacingContent(content)
     }
 
+    // Validates: ARC-023
     @Test func randomEditsFollowTheEdit() throws {
         var generator = SplitMix(seed: 31)
         for _ in 0 ..< 200 {

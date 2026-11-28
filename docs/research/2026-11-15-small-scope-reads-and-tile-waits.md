@@ -7,7 +7,7 @@ queries now log it apart as `resumeMs`.
 ## Question
 
 On 2026-11-15 (06:29–06:33, installed build 32f39417, about 164,500 rows, three libraries
-and an Immich account) the owner opened a running card import's batch. #764 fixed the
+and an Immich account) the user opened a running card import's batch. #764 fixed the
 batch's order and place-option plans (`2026-11-15-keyed-scope-query-plans.md`). Three
 questions were left:
 
@@ -31,7 +31,7 @@ questions were left:
   The clone was deleted afterwards.
 - **Measures:** each read's `EXPLAIN QUERY PLAN`, its warm time, and the pages a fresh
   read-only connection with no memory map read for it (`SQLITE_DBSTATUS_CACHE_MISS`): pages
-  are what a read costs on a machine whose cache was paged out, which the owner's was.
+  are what a read costs on a machine whose cache was paged out, which the test Mac's was.
   The copy's digests form no duplicate group, so the Duplicates scopes read zero rows.
 - **Probe:** a GRDB 7 program (`DatabasePool` as `CatalogStore` configures it, a second
   read-only pool of two readers as `interactiveReader`) timing a read on the second pool

@@ -301,9 +301,9 @@ extension CatalogProjection {
     /// The held order for `descriptor` with only the rows the Store's changes since its read
     /// named read again and merged in (`CatalogOrderPatch`), when every such change moved only
     /// capture dates (`CatalogChangeLog.keyedRows`) and nothing the held stacks are built from;
-    /// nil when a full read is owed. On the owner's catalog, while a sync brought metadata for
+    /// nil when a full read is owed. On the reference catalog, while a sync brought metadata for
     /// 152 rows, the order was read whole 125 times
-    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+    /// (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
     private func keyedOrder(
         _ held: CatalogProjectionReads.Order?,
         descriptor: CatalogQueryDescriptor,

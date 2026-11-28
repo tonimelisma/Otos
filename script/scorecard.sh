@@ -62,7 +62,7 @@ descriptions duplicates people immich. --home gives the dev build a sandbox home
 must not exist, or under build/sandbox-homes/) with a library of that many generated photos
 on a volume of its own (script/sandbox-library.sh), has the app register it through its own
 Add Library intent, and removes all of it when the run ends, however it ends. --seed-media
-small makes the library of the owner's size (--seed 160000) out of 64 x 64 JPEGs in a folder
+small makes the library of the reference size (--seed 160000) out of 64 x 64 JPEGs in a folder
 tree instead of camera-size photos (script/sandbox-library.sh --media). The tour's act
 steps (Move to Trash and Put Back among them) run only on such a library: on any other the
 app skips them (`trashOutsideSandbox`), because a sandbox home on the account's volume
@@ -129,7 +129,7 @@ if [[ "$OPTIMIZED" == 1 && ( "$DEV" != 1 || "$TOUR$MATRIX" == "00" ) ]]; then
 fi
 
 # Builds the dev app the way script/install.sh builds the installed one, so a sandbox tour
-# measures the code the owner runs, and points DEV_APP at it. Its own DerivedData, held for
+# measures the code the installed app runs, and points DEV_APP at it. Its own DerivedData, held for
 # this run, so a check's or an install's build folder is never touched.
 build_optimized_dev_app() {
   otos_require_full_xcode
@@ -239,7 +239,7 @@ capture() {
 # The log's store keeps a busy session's lines only until it rotates them, so a tour read
 # back with `log show` after it quit can come back short. A tour is captured live instead:
 # one `log stream` of the toured executable's lines at info and above (no line the scorecard
-# reads is logged at debug, which at the owner's library size is half the volume), opened
+# reads is logged at debug, which at the reference library size is half the volume), opened
 # before the launch.
 # Compact style, because it is the style in which `log stream` reports messages it dropped
 # (`=== Messages dropped during live streaming`); the JSON styles drop them silently
@@ -306,7 +306,7 @@ run_one_tour() {
   [[ "$DEV" == 1 ]] && app="$DEV_APP"
   [[ -x "$app/Contents/MacOS/$APP_NAME" ]] || { echo "No app at $app" >&2; exit 1; }
   if [[ "$DEV" != 1 && -n "$HOME_DIR" ]]; then
-    echo "--home is for the dev build only: the installed app is toured on the owner's own library." >&2
+    echo "--home is for the dev build only: the installed app is toured on its own library." >&2
     exit 2
   fi
   # An instance of this app already running is a session someone is in: refuse, never adopt

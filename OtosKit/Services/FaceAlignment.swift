@@ -85,8 +85,8 @@ nonisolated enum FaceAlignment {
     }
 
     /// The accepted range of the face box's height in pixels times the alignment scale. A real
-    /// face maps to about the template's own face height (median 93 measured on the owner's
-    /// photos); below 50 Vision's landmarks were spread over the scene rather than one face, and
+    /// face maps to about the template's own face height (median 93 measured on a reference
+    /// library's photos); below 50 Vision's landmarks were spread over the scene rather than one face, and
     /// above 150 the "face" was an object. Measured: 61 of 3,293 detections fall outside.
     static let admittedScaledHeight = 50.0 ... 150.0
 

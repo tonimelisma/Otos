@@ -9,6 +9,7 @@ check_root() {
     echo "FAIL: MED-004 forbids audio workflows" >&2; return 1
   fi
 }
+# Validates: MED-004
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
   if check_root "$d/missing" 2>/dev/null; then echo "guard-no-audio self-test failed (a missing scan root passed)" >&2; return 1; fi

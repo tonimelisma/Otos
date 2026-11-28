@@ -33,7 +33,7 @@ pressure, or another process recompiling it) while a test process loads it. The 
 file was missing at load time; that the purge removed it is likely, not proven.
 
 - The cache is regenerable, and deleting it is safe. It is outside the repository, so that is
-  the owner's call. Freeing disk space removes the pressure that drives purges.
+  the user's call. Freeing disk space removes the pressure that drives purges.
 - The growth is an Otos-side question still open: what makes the runtime compile a new entry
   for the same model and shape. Until that is known, both caches keep growing.
 
@@ -81,7 +81,7 @@ benchmark's 1,200 × 800 sign, run with `CFFIXED_USER_HOME` set to a scratch hom
 **Conclusion:** no Otos-side defect explains error 13. It is a load racing a cache purge that
 disk pressure drives. This reading's keys are stable, so the growth seen at 19:19 is not it
 recompiling under new keys; which callers wrote the other entries stays unmeasured. Freeing disk space is what
-removes the failure, and that is the owner's to do: the space is held by data outside the
+removes the failure, and that is the user's to do: the space is held by data outside the
 repository.
 
 ## Follow-up: error 10 is Vision's own deadline, not the cache

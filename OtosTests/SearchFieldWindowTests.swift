@@ -9,6 +9,7 @@ extension AppKitWindowTests {
     /// search, and Edit ▸ Find's intent puts the keyboard in the field.
     @MainActor
     struct SearchFieldWindowTests {
+        // Validates: APP-068
         @Test func typingInTheToolbarFieldSearchesAndFindFocusesIt() async throws {
             let model = CatalogWindowViewModel(
                 catalogStore: makeTestStore(location: .inMemory),
@@ -44,6 +45,7 @@ extension AppKitWindowTests {
             try await waitUntil { isEditing(field, in: window) }
         }
 
+        // Validates: APP-068
         /// The field and the search never disagree: however the field is emptied — its clear
         /// button clicked or pressed by VoiceOver while the field is not being edited, which
         /// `.searchable` alone does not report, or Escape while it is — the search ends.
@@ -113,6 +115,7 @@ extension AppKitWindowTests {
             return view.subviews.lazy.compactMap { clearButton(in: $0, action: action) }.first
         }
 
+        // Validates: APP-012
         /// DES-093: what holds the keyboard is the key window's first responder. While the
         /// toolbar search field is edited, Edit ▸ Copy and Paste act on its text; once it is
         /// left, Copy acts on photos, and stays available while photos are targeted whatever

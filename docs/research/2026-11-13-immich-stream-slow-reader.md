@@ -1,6 +1,6 @@
 # An Immich sync stream read as slowly as the Store applies it times out
 
-Date: 2026-11-13. Context: the owner's Immich account (about 95,000 assets) showed Connecting for
+Date: 2026-11-13. Context: the test Immich server's account (about 95,000 assets) showed Connecting for
 its whole first sync, then Offline, while its server was answering throughout.
 
 ## Evidence from the installed app

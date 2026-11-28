@@ -6,6 +6,7 @@ import Testing
 
 @Suite(.testScope)
 struct ContentHasherTests {
+    // Validates: ENR-013
     @Test func fipsVectorsAndDigestRoundTrip() throws {
         // FIPS 180 examples: the empty message, "abc", and the 448-bit two-block message.
         let vectors: [(Data, String)] = [

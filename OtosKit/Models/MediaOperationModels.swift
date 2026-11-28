@@ -238,7 +238,7 @@ typealias VolumeCapacityReader = @Sendable (URL) -> Int64?
 /// The free space Otos never takes a volume below (ADR 0027), and the one way every
 /// writer asks about it: import admits an entry, Move to Trash starts a download, and
 /// `MaterializationCoordinator` starts a background or device download only while the
-/// volume keeps this much after that write lands, counted through the owner's
+/// volume keeps this much after that write lands, counted through the writer's
 /// `FreeSpaceLedger` when it has several writes at once.
 /// One constant and one check with one home — the promise is the same wherever Otos
 /// writes.
@@ -475,7 +475,7 @@ nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
     case destinationUnavailable
     /// Every attempted entry failed `SourceValidation` with the same
     /// non-per-file reason — the source itself wasn't ready, not any one
-    /// file. Per the owner decision, `ImportSourceReadiness` (ADR 0024)
+    /// file. `ImportSourceReadiness` (ADR 0024)
     /// should make this unreachable in practice; it exists so that if it
     /// ever happens, the bar says something true instead of "Done".
     case sourceNotReady

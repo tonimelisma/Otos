@@ -252,7 +252,7 @@ nonisolated struct PhotoInfo: Equatable, Sendable {
         )
     }
 
-    /// A still's Description first, what the user reads (owner, 2026-11-14); then People, In
+    /// A still's Description first, what the user reads; then People, In
     /// This Photo, Location and File, the facts the user acts on and looks for; then the
     /// capture's own: Camera, then Exposure for a still or Video for a movie. A movie has no
     /// description.

@@ -10,6 +10,7 @@ import Testing
 /// (see `docs/research/2026-07-11-onedrive-materialization-fsevents.md`).
 @Suite(.testScope)
 struct FileMaterializationTests {
+    // Validates: ARC-034
     @Test func localFileIsMaterialized() throws {
         let directory = try makeTestDirectory()
 
@@ -62,6 +63,7 @@ struct FileMaterializationTests {
         #expect(result.rerequestCount == 0)
     }
 
+    // Validates: ENR-008
     @Test func providerUnavailableShortCircuitsAfterTwoConsecutiveProbes() async {
         let url = URL(fileURLWithPath: "/tmp/otos-provider-unavailable-\(UUID().uuidString).jpg")
         // Simulate dataless that never materializes and provider probe returns
@@ -127,6 +129,7 @@ struct FileMaterializationTests {
         #expect(probeCalls.withLock { $0 } == answers.count)
     }
 
+    // Validates: APP-023
     /// APP-023's persistence rule, by construction: a provider that is merely slow returns
     /// `ETIMEDOUT` on a one-byte probe exactly as a dead one does, so a probe or a run of
     /// re-requests abandoned the image in front of the user (measured 2026-08-31: 43
@@ -176,6 +179,7 @@ struct FileMaterializationTests {
         #expect(await download(.cancelled, arrives: false).outcome == .cancelled)
     }
 
+    // Validates: APP-023
     /// The production coordinated read grants a read of a file that is there, through a
     /// coordinator on its own queue.
     @Test func aCoordinatedReadOfALocalFileIsGranted() async throws {
@@ -186,6 +190,7 @@ struct FileMaterializationTests {
         #expect(await FileMaterialization.coordinatedRead(of: file) == .read)
     }
 
+    // Validates: ARC-034
     /// Arrival is reported, not polled for: an attribute change on the file wakes the
     /// wait, which reads the flag and returns, with the next re-request an hour away.
     @Test func anAttributeChangeEndsTheWaitBeforeAnyRerequest() async throws {
@@ -226,6 +231,7 @@ struct FileMaterializationTests {
         #expect(result.rerequestCount == 0)
     }
 
+    // Validates: ARC-034
     /// The live watch reports a change to a file's attributes through an event-only
     /// descriptor. `chmod` stands in for the kernel clearing `SF_DATALESS`, which only a
     /// File Provider can do.

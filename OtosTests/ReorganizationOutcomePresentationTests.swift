@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct ReorganizationOutcomePresentationTests {
+    // Validates: ARC-052
     @Test func aRunThatCouldNotStartSaysSoInItsTitle() {
         #expect(ReorganizationOutcomePresentation.alert(for: .libraryBusy(.importPublication)) == ReorganizationAlert(
             title: "Couldn’t Reorganize Library",
@@ -10,6 +11,7 @@ struct ReorganizationOutcomePresentationTests {
         ))
     }
 
+    // Validates: ARC-052
     @Test func aRunThatStoppedSaysSoInItsTitleAndTheMessageDoesNotRepeatIt() {
         let path = MediaRelativePath(rawValue: "2024/05")
         let none = ReorganizationStop(

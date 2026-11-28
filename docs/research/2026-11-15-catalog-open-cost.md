@@ -5,12 +5,12 @@ opens).
 
 ## Question
 
-The owner's launch of build `191ffe1a` spent 43.1 s in `op=catalog.start`'s `openMs`, with a bare
+A launch of build `191ffe1a` on the reference catalog spent 43.1 s in `op=catalog.start`'s `openMs`, with a bare
 spinner and an empty sidebar; nothing in the log said what the open did. What does an open
-spend its time on, what does each migration from v59 to v64 cost on a catalog shaped like his,
+spend its time on, what does each migration from v59 to v64 cost on a catalog shaped like the reference catalog,
 and which part of that cost is waste?
 
-## The owner's catalog (read only)
+## The reference catalog (read only)
 
 Read with `sqlite3 -readonly "file:…/catalog.sqlite?mode=ro"`; nothing was written or copied.
 
@@ -24,29 +24,29 @@ Read with `sqlite3 -readonly "file:…/catalog.sqlite?mode=ro"`; nothing was wri
 - Nine roots: two libraries, one Immich account, two removable volumes, four cameras.
 - Twelve tables declare a foreign key; the five above hold nearly all of the file.
 
-His app's log for the launch has nothing between `op=removableVolume.refresh` at 19:53:25.928 and
+The installed app's log for the launch has nothing between `op=removableVolume.refresh` at 19:53:25.928 and
 `op=catalog.database.open phase=finish` at 19:54:08.227: the open logged no step.
 
 ## Method
 
 A test that was never committed (and deleted afterwards) built a catalog at v58 with
-`CatalogStore.migrator` and filled it in SQL to the owner's shape: 166,982 `media_asset` rows
+`CatalogStore.migrator` and filled it in SQL to the reference catalog's shape: 166,982 `media_asset` rows
 (16,000 in a library, 1,000 in a second, the rest in an account; a 1 KB `render_gray` on four
 rows in five, a 200-byte sort key, one row in fifty Liked), 140,010 `asset_metadata` rows with a
 1.1 KB record and half of them located, 96,000 faces with 2 KB embeddings on 48,000 rows,
 165,630 search embeddings of 3 KB, 55,660 text readings. The file was 1,958,600,704 bytes: 76 %
-of his. Thumbnails are files, not rows, so nothing else makes his larger.
+of the reference catalog. Thumbnails are files, not rows, so nothing else makes the reference larger.
 
 It then applied v59 to v64 one at a time on a fresh `DatabasePool` with Otos's configuration,
 timing each, and timed `PRAGMA foreign_key_check` alone before each. Before v63 it gave 16,000
 library rows and 16,000 account rows one shared digest each (32,000 copies), so v64's row writes
-are measured on a catalog with copies; his had none. v64's statements were also run one by one
+are measured on a catalog with copies; the reference catalog had none. v64's statements were also run one by one
 inside a transaction that was rolled back, in the order v64 shipped with and in the order of
 this change, twice each. The machine was running other sessions' checks; times are loose,
 ratios between neighbouring runs hold.
 
 What could not be reproduced: a cold read. Nothing in a test can empty the system's file cache
-(`purge` needs root), and a file just written is in it. His launch read a file the previous
+(`purge` needs root), and a file just written is in it. The reference launch read a file the previous
 session had written hours earlier, with Otos and other apps holding memory on a 16 GB Mac.
 
 ## Findings
@@ -74,7 +74,7 @@ Before this change (`191ffe1a`, GRDB's default foreign-key handling):
   each. The copies the probe meant to give the catalog did not satisfy v64's copy test
   (`changes=0`), so both orders wrote no `has_copies` row and timed the same (2.38–2.64 s,
   two runs each): writing rows before the builds saves an index update per written row in
-  each of six indexes by construction, and is not measured here. On the owner's catalog v64
+  each of six indexes by construction, and is not measured here. On the reference catalog v64
   wrote no such row either.
 - **No migration rebuilt an index whose definition was unchanged.** v59, v60 and v64 drop and
   recreate only indexes whose column lists or predicates change (a column added to a covering
@@ -103,16 +103,16 @@ alone (0.6–0.9 s each, 4.3 s): the two runs were on a loaded machine, minutes 
 first had just written the file. What the change removes is one full read of the foreign-key
 tables per migration; what each migration then costs is its own statements.
 
-## Where the owner's 43 s went
+## Where the reference launch's 43 s went
 
 What the evidence shows: the time was inside the migrator (v63 and v64 were the only work the
 open had; the catalog's history ends with them, and a launch with no migration opens in
 9–86 ms). On the generated catalog the same two migrations took 4.9 s warm, 2.1 s of it the two
-foreign-key checks. The owner's open took nine times that. The generated catalog's one cold
+foreign-key checks. The reference open took nine times that. The generated catalog's one cold
 check took fourteen times its warm one, so reading the file from disk rather than from memory
 is the likeliest multiplier: v63 and v64 together read the five foreign-key tables twice
 (≈3.4 GB), `media_asset` seven times for its index builds (≈3.8 GB) and `asset_metadata` once.
-That is an inference: his launch logged nothing that times a read, so how the 43 s divide
+That is an inference: the reference launch logged nothing that times a read, so how the 43 s divide
 between the checks and the index builds stays unknown. From the next migration on, each one's
 own line (`op=catalog.migration phase=finish … ms=`) answers it.
 
@@ -124,7 +124,7 @@ own line (`op=catalog.migration phase=finish … ms=`) answers it.
 - Write rows before building the indexes that hold them (v64 now does; its outcome — schema
   text, object order, rows — is the same), and rebuild only indexes whose definitions change.
 - Log every migration's cost, and every step of the open, so `openMs` is never unexplained.
-- A migration's PR states its cost measured on this owner-shaped catalog (ADR 0002).
+- A migration's PR states its cost measured on this reference-shaped catalog (ADR 0002).
 - No deferred-index mechanism: an index left for after launch would leave every `INDEXED BY`
   read failing or falling back to reading the 544 MB table while it builds, and the build would
   hold the one writer for the same seconds, so every act's write would wait behind it with

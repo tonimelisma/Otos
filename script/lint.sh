@@ -35,7 +35,7 @@ fi
 # rule that needs it: `statement_position`, and all of `custom_rules`, since some of them
 # match by syntax kind. SwiftLint says so only on an uncached run, so one file is linted
 # uncached to read which rules it skipped, and the run names them: a pass there is partial.
-# The macOS build-and-test CI job checks them (AGENTS.md, "Cloud Sessions").
+# The macOS build-and-test CI job checks them (CLAUDE.md, "Where sessions run").
 skipped="$("$SWIFTLINT" lint --no-cache --quiet --config "$ROOT_DIR/.swiftlint.yml" "$ROOT_DIR/OtosKit/OtosApp.swift" 2>&1 >/dev/null \
   | sed -n "s/.*Skipping enabled rule '\([^']*\)' because it requires SourceKit.*/\1/p" | sort -u | paste -sd, -)" || true
 if [[ -n "$skipped" ]]; then

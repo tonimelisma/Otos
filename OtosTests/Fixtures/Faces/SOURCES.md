@@ -14,5 +14,5 @@ different one.
 | `williams-2018.jpg` | Sunita Williams, NASA portrait, 2018 | [File:Sunita Williams in 2018.jpg](https://commons.wikimedia.org/wiki/File:Sunita_Williams_in_2018.jpg), NASA | Public domain |
 | `obama-2013.jpg` | Michelle Obama, official portrait, 2013 | [File:Michelle Obama 2013 official portrait.jpg](https://commons.wikimedia.org/wiki/File:Michelle_Obama_2013_official_portrait.jpg), White House, Chuck Kennedy | Public domain |
 
-Never add a photo of the owner's family or any other private person here: the labelled
-family set lives outside the repository (`script/face-accuracy.sh`).
+Never add a photo of a private person here: the labelled set the face rules were measured
+on lives outside the repository (`docs/research/2026-11-07-face-recognition-models.md`).

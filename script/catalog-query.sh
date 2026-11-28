@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A catalog is named explicitly, never defaulted: the installed app's catalog is the owner's
-# production data, which no check or diagnostic reads (owner, 2026-11-15).
+# A catalog is named explicitly, never defaulted: the installed app's catalog is a user's
+# production data, which no check or diagnostic reads.
 usage() {
   echo "usage: script/catalog-query.sh name-vs-capture <catalog.sqlite>" >&2
   exit 2

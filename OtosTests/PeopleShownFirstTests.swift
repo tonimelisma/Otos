@@ -10,6 +10,7 @@ import Testing
 struct PeopleShownFirstTests {
     typealias Fixture = PeopleViewModelTests.Fixture
 
+    // Validates: APP-087
     /// Add to Favorites moves the person to the front of the gallery in the click's step, by
     /// the builder's own order; its undo is on the stack before the store answers; a refusal
     /// withdraws it and says so.
@@ -38,6 +39,7 @@ struct PeopleShownFirstTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// A written act stays shown over every People state built before its write, and leaves
     /// once a state covering the request its answer named arrives.
     @Test func aWrittenActStaysShownUntilABuildCoversIt() async throws {
@@ -67,6 +69,7 @@ struct PeopleShownFirstTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// This Is Not Sam: the face loses her on the photo menus in the step it is chosen;
     /// ⌘Z before the store answers gives it back at once, and the undo is written after the act.
     @Test func aFaceLeavesItsPersonAtOnceAndAnUndoFirstPutsItBack() async throws {
@@ -93,6 +96,7 @@ struct PeopleShownFirstTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// Two acts on one person before either is answered: the later is shown; the earlier's
     /// refusal leaves it shown.
     @Test func aSecondActOnTheSamePersonWins() async throws {

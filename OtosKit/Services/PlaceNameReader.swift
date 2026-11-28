@@ -169,7 +169,7 @@ actor PlaceNameReader: QuiescentOwner {
     /// changes since named. A change of a located record's cell can leave only that record's
     /// cell unnamed, so a write that names its rows is answered by a keyed read of their cells,
     /// never a walk of every located record: an enrichment flush names its rows, and on the
-    /// owner's catalog the walk ran once per flush (152 runs, 6.6 s, in one tour).
+    /// reference catalog the walk ran once per flush (152 runs, 6.6 s, in one tour).
     private var owesFullDrain = true
     private var owedRows: Set<MediaAssetID> = []
 

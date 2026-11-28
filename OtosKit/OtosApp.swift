@@ -2,7 +2,6 @@
 //  OtosApp.swift
 //  Otos
 //
-//  Created by Taylor on 6/2/26.
 //
 
 import AppKit
@@ -561,7 +560,7 @@ public struct OtosApp: App {
                 }
             }
             // Help ▸ Export Diagnostics… (ADR 0060): what this Mac's Otos ran into, written
-            // into a folder the owner chooses and hands to a session.
+            // into a folder the user chooses and hands to a session.
             CommandGroup(replacing: .help) {
                 Button("Export Diagnostics…") {
                     lifecycle.diagnostics.chooseFolderAndExport()

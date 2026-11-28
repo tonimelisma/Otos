@@ -5,6 +5,7 @@ import Testing
 /// The catalog's byte form for stored vectors (face and search embeddings, face landmarks):
 /// little-endian Float32, the same on every machine.
 struct Float32StorageTests {
+    // Validates: ENR-022
     @Test func valuesAreLittleEndianFloat32() {
         let data = Float32Storage.data([1, -2.5])
         #expect(data == Data([0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x20, 0xC0]))

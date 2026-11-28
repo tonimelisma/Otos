@@ -11,6 +11,7 @@ import Testing
 /// of it after every step; and a launch lists it only when a fact says leftovers can exist.
 @Suite(.testScope)
 struct DerivedFileLifecycleTests {
+    // Validates: ENR-004
     @Test func theDerivedFolderHoldsExactlyWhatTheRowsNameAndItsCountersMatch() async throws {
         let library = try await GeneratedLibrary.make(["a.jpg", "b.jpg", "c.jpg"])
         let store = library.store
@@ -56,6 +57,7 @@ struct DerivedFileLifecycleTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-004
     /// What a crash between a promotion and its row, or an older build, left: removed by the
     /// next launch's reconciliation, which the unclean exit owes; a present row's own unnamed
     /// name is kept. A clean quit owes nothing, and the next launch lists nothing.
@@ -113,6 +115,7 @@ struct DerivedFileLifecycleTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-004
     /// The counters equal a census after a seeded random run of renders, re-renders, moves,
     /// deletions, new files and camera thumbnails.
     @Test func theCountersEqualACensusAfterRandomOperations() async throws {
@@ -231,6 +234,7 @@ struct DerivedFileLifecycleTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-004
     /// A write that rolls back after promoting leaves a file no row names, so its session
     /// cannot end clean.
     @Test func aRolledBackPromotionKeepsTheSessionsMarker() throws {

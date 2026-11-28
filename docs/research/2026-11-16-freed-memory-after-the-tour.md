@@ -2,7 +2,7 @@
 
 ## Question
 
-At idle after a ten-minute tour on the owner's library (installed 5f77e2e5), the app held
+At idle after a ten-minute tour on the reference library (installed 5f77e2e5), the app held
 627 MB. Its malloc regions were 460 MB dirty, and its live heap was 324 MB, so malloc held
 about 136 MB of freed blocks. On macOS 27 a freed block of 4 KB or more stays in the
 footprint until malloc reuses it (`2026-11-16-freed-memory-stays-in-the-footprint.md`).
@@ -10,7 +10,7 @@ Which code makes and frees those blocks?
 
 ## Method
 
-`TransientMemoryTests` runs a generated catalog of the owner's shape (`OwnerShapedCatalog`,
+`TransientMemoryTests` runs a generated catalog of the reference library's shape (`ReferenceShapedCatalog`,
 scale 1, about 167k rows) with every background owner running (`RunningBackgroundOwners`).
 It runs the launch, then the tour's scope visits: All Media's first grid, a library, People,
 a person, Places with its clusters, On This Day, Duplicates, All Media again, a video filter
@@ -22,8 +22,8 @@ and a sort by name. The test bundle holds no search model, so the test makes no 
 - **Throughout:** `MallocSiteProbe` hooks libmalloc's `malloc_logger`. For every block of 4 KB
   or more it records the call stack, the bytes allocated, and the bytes freed again before
   the sequence ends. Its tables are mapped memory, so the probe allocates nothing itself.
-- **Scope:** a Debug test host, one run each way, with the owner-scale lock held. Nothing was
-  run on the owner's app or his catalog.
+- **Scope:** a Debug test host, one run each way, with the reference-scale lock held. Nothing was
+  run on the installed app or the reference catalog.
 
 ## Before (commit b42f9800, the tests alone)
 
@@ -64,7 +64,7 @@ and a sort by name. The test bundle holds no search model, so the test makes no 
 
 ## The pattern
 
-- **What an owner-scale read collects goes into mapped memory first.** `MappedArrayBuilder`
+- **What a reference-scale read collects goes into mapped memory first.** `MappedArrayBuilder`
   (`Otos/Support/MappedArrayBuilder.swift`) grows in mapped regions and unmaps each region it
   outgrows. It hands back an array of exactly its count. `collect` does this for a cursor or
   for a sequence's filter or compactMap. `withElements` lets a build group or count rows
@@ -128,15 +128,15 @@ below every run before.
 
 ## Guards
 
-- **Every run** (`theTourSequenceOnASmallCatalog`, at 2 % of the owner's size): no
-  owner-scale read grows an array past a 16 KB buffer while it holds a catalog connection,
+- **Every run** (`theTourSequenceOnASmallCatalog`, at 2 % of the reference library's size): no
+  reference-scale read grows an array past a 16 KB buffer while it holds a catalog connection,
   and 16 KB is more than a bounded page needs. The reads are the order and its stacks, the
   filter options, the duplicates candidates, the People snapshot, a root's rows and the
   derived folder's walk. The process's identity table grows by design and is not counted.
-- **On demand** (`OTOS_SCALE_TEST=1`, `theTourSequenceAtTheOwnersSize`): malloc dirty minus
+- **On demand** (`OTOS_SCALE_TEST=1`, `theTourSequenceAtTheReferenceSize`): malloc dirty minus
   allocated after the sequence is at most 64 MB.
 
 ## Not measured here
 
-- The owner's app: the next tour on his library.
+- The installed app: the next tour on the reference library.
 - Search's own reads: the test bundle holds no search model.

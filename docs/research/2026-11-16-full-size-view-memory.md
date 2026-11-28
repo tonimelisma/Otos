@@ -2,14 +2,14 @@
 
 ## Question
 
-The owner's tour on 5f77e2e5 (with the loader's three-photo hold, #866) opened a photo, stepped
+A tour of the reference library on 5f77e2e5 (with the loader's three-photo hold, #866) opened a photo, stepped
 next ×3 and previous ×3, then compared two: the footprint went from about 565 MB to about
 790 MB, with transient peaks to 830 MB, and came back to about 655 MB only after the view was
 left. The loader's own test measured +63 MB for ten photos walked. What holds the rest?
 
 ## Method
 
-- **The owner's derived folder, read-only:** the pixel size of a few stored previews
+- **The reference library's derived folder, read-only:** the pixel size of a few stored previews
   (`sips -g pixelWidth -g pixelHeight`, a header read). They are 1920 × 1440 and
   2160 × 1440 (an Immich account's previews, 1440 px on the short edge), 220–700 KB each:
   about 12 MB each decoded at 4 bytes a pixel. The display is 3024 × 1964 pixels, so a

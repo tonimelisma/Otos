@@ -105,7 +105,7 @@ nonisolated struct SearchPerson: Hashable, Sendable {
 
 /// Search query encoder guide (ADR 0048)
 ///
-/// Turns what the user typed into a text embedding, in the order the owner's library proved
+/// Turns what the user typed into a text embedding, in the order the reference library proved
 /// best (`docs/research/2026-11-09-keyword-search.md`):
 ///
 /// 1. **Language:** `NLLanguageRecognizer`, constrained to English and the languages Apple

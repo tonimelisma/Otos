@@ -9,6 +9,7 @@ import Testing
 /// never be invalidated once the live device inventory landed.
 @Suite(.testScope)
 struct CatalogStoreDeviceInventoryTests {
+    // Validates: ARC-047
     @Test func changedBatchEmitsPlanningChangeForDeviceRoot() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
@@ -43,6 +44,7 @@ struct CatalogStoreDeviceInventoryTests {
         #expect(change?.namespaceRevision == occupancyAfterBatch)
     }
 
+    // Validates: ARC-047
     @Test func completionAlwaysEmitsPlanningChangeEvenWithoutRowChanges() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)

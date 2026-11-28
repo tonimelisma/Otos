@@ -7,7 +7,7 @@ import Foundation
 /// Reads a library video's faces from six of its frames, at fixed fractions of its length
 /// (`samples`), decoded upright at full resolution with no tolerance, so a re-read finds the
 /// same frames. Each frame goes through `FaceAnalyzer`, the same analysis a still's preview
-/// gets. Measured on the owner's videos (`docs/research/2026-11-13-faces-in-video-frames.md`):
+/// gets. Measured on the reference library's videos (`docs/research/2026-11-13-faces-in-video-frames.md`):
 /// these six frames find a face in every video where any frame of the measured set has one,
 /// and the model names the same person in every frame of a video.
 ///
@@ -41,12 +41,12 @@ nonisolated enum VideoFaceReader {
     /// (`VideoFaceReaderError.trackNotDecodable`), or by a frame's read — or it has no image
     /// at a sampled time. Each is the platform's answer
     /// to the bytes it was given, and every read of them gives it again (measured on the
-    /// owner's library: 67 videos each answered the same code on every read, up to 33 reads
+    /// reference library: 67 videos each answered the same code on every read, up to 33 reads
     /// in three days, `docs/research/2026-11-14-videos-avfoundation-cannot-decode.md`).
     /// One `unknown` is a verdict too, by its underlying status: an AVI whose data stops
     /// before its header says it does (`truncatedAVIStatus`). Every truncation of an AVI
     /// tried answered it on every read, an intact AVI answered `decodeFailed`, and truncated
-    /// MP4 and MOV files answered other codes; in the owner's log only three truncated AVIs
+    /// MP4 and MOV files answered other codes; in the reference library's log only three truncated AVIs
     /// answered it (`docs/research/2026-11-14-derived-owners-and-face-checks.md`).
     /// Classified by domain and code only, and the underlying status's domain and code.
     /// Anything else — another unknown error (an outage once gave MKVs `unknown` over
@@ -116,7 +116,7 @@ nonisolated enum VideoFaceReader {
     /// sync frame `syncFrame` names near it. AVFoundation decodes a frame by seeking to the
     /// sync frame before it and decoding forward; in some HEVC videos with open groups of
     /// pictures its seek fails on the few frames just before a sync frame every time they
-    /// are asked for, though the same frames decode in order (measured on the owner's
+    /// are asked for, though the same frames decode in order (measured on the reference library's
     /// account videos, `docs/research/2026-11-19-account-videos-unread-faces.md`). A sync
     /// frame needs no other frame, so a seek always reaches it, and it is the same frame on
     /// every read. A sampled frame that is itself a sync frame has no fallback: its failure

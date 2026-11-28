@@ -1,22 +1,22 @@
 # Duplicates review: what a user needs to decide, and how to show it
 
 Date: 2026-11-02. A research pass and design study for the Duplicates list's second
-design. It starts from the first design on screen with the owner's own library (166
+design. It starts from the first design on screen with the reference library (166
 groups, all pairs of identical videos imported twice), what competitors show, and the HIG,
 and ends in the spec at `docs/design/duplicates.md`. The adversarial reviews that shaped
 the spec are recorded at the end.
 
 Labels: **[D]** documented by the vendor or Apple; **[E]** reported by users or reviewers;
-**[M]** measured on the owner's library; **[U]** inferred.
+**[M]** measured on the reference library; **[U]** inferred.
 
 ## What the first design put on screen
 
-A screenshot of the shipped list, 2026-11-02, on the owner's Camera Roll:
+A screenshot of the shipped list, 2026-11-02, on the reference library's Camera Roll:
 
 - Every group header read `Identical · 2 copies`, 166 times. Nothing in a header told one
   group from the next: no picture, no date, no size.
 - Every row led with `Camera Roll ▸ 2026/07` at L2 — the same string on both rows of
-  every group, because every one of the owner's pairs sits in one folder. The one fact
+  every group, because every one of the reference library's pairs sits in one folder. The one fact
   that told the copies apart, the file name, sat at L3 in secondary colour.
 - Each row carried its own 48 pt thumbnail of the same frame. Two identical thumbnails
   say nothing a single one does not, and 48 pt of a 4K frame shows little either way.
@@ -32,7 +32,7 @@ A screenshot of the shipped list, 2026-11-02, on the owner's Camera Roll:
 - The bar read `166 photos with duplicates` over a list of videos.
 - The window subtitle read `Filtered` while the list ignores the filter.
 
-Profile of the owner's duplicates in the dev catalog, 2026-11-02 **[M]**: 110 groups, all
+Profile of the reference library's duplicates in the dev catalog, 2026-11-02 **[M]**: 110 groups, all
 pairs, all in one folder of one library; 204 video copies and 16 image copies; no copy
 with an edit, a choice or companions. Pairs are the same bytes under names seven hours
 apart (`20260801_175635.mp4` / `20260802_005635.mp4`: one import named in UTC, one in
@@ -55,7 +55,7 @@ The situations the policy produces (ADR 0042), and what each needs on screen:
 
 | Situation | Where it comes from | What the decision needs |
 | --- | --- | --- |
-| **Twin in one folder** (the owner's whole library today) | A card imported twice; a double save | One glance: one picture, the shared facts once, the two names, which stays. Nothing else. |
+| **Twin in one folder** (the reference library's whole set today) | A card imported twice; a double save | One glance: one picture, the shared facts once, the two names, which stays. Nothing else. |
 | **Copy elsewhere in one library** | Finder duplicate, a download saved twice, a reorganized folder | The two locations and names; which carries the ` copy` / ` (1)` suffix; which is older. |
 | **A mirror across two libraries** | A backup library | A library-level decision. The groups under it are noise until the user opens them. |
 | **Versions of one photo** | An export, a resize, a stripped copy | The pictures; dimensions, size, format; which is the camera original. Compare. |
@@ -216,7 +216,7 @@ Taken under advisement, not changed:
   a common, undoable act is no alert (DES-076, ADR 0042), and the act is undoable and the
   Trash recoverable; the button's tooltip says so. Photos confirms a merge, which is not
   undoable.
-- **A group joining above the viewport moves rows.** The owner wants every group listed at
+- **A group joining above the viewport moves rows.** Every group is listed at
   once (ADR 0042); a List keeps its selection by identity, and joins are rare after the
   first build.
 - **What Trash means for a OneDrive file.** Otos cannot verify what OneDrive does with a
@@ -225,7 +225,7 @@ Taken under advisement, not changed:
   cannot be used; its tooltip is the only meaning it carries, and swapping a pair's keeper
   is check the other, then uncheck this one.
 
-### Round 2 — the built screen on the owner's library
+### Round 2 — the built screen on the reference library
 
 Four captures from the dev build (`OTOS_SMOKE_SELECT_ROOT=duplicates`, dark and light,
 top and scrolled), reviewed by two personas — Dana again, and "Marcus", 34, impatient,
@@ -258,7 +258,7 @@ Taken under advisement, not changed:
   with Undo answers the fear it serves (DES-076, HIG Alerts).
 - **Sort by size.** Marcus could not find the 0.5 GB videos under newest-first. The
   toolbar's sort control is the place for it, and that is a change to the toolbar's
-  contract, not this list; recorded for the owner.
+  contract, not this list; recorded as an open question.
 - **The kind headline over the date.** Lens C would lead the card with the date, the fact
   that tells groups apart. The sameness is what the user must trust, so the kind stays the
   headline and VoiceOver leads with the date.
@@ -291,7 +291,7 @@ The same three reviewers on fresh captures. Findings taken, and the design's ans
 
 Taken under advisement, not changed: a confirmation dialog (both personas now accept
 Undo and the receipt); sort by size and group-jump keys (the toolbar's and the key map's
-contract, recorded for the owner); ⌫ as a mark (unbound app-wide, APP-027); dimming the
+contract, recorded as an open question); ⌫ as a mark (unbound app-wide, APP-027); dimming the
 shared prefix of file names (a refinement for a later pass); naming OneDrive (Otos cannot
 verify what a provider does with a trashed file).
 

@@ -42,6 +42,7 @@ struct DecodeBudgetMachineTests {
         #expect(machine.handle(.release(2)) == [.grant(3)])
     }
 
+    // Validates: ENR-016
     /// The photo on screen is decoded at once, however full the budget is, and nothing of
     /// enrichment's starts while it runs.
     @Test func aDecodeTheUserWaitsOnRunsAtOnceAndEnrichmentWaitsForIt() {
@@ -54,6 +55,7 @@ struct DecodeBudgetMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(2)])
     }
 
+    // Validates: ENR-016
     /// The pane asking for the photo enrichment is about to render makes that waiting render
     /// the user's: it runs at once, ahead of the renders asked before it.
     @Test func aRenderTheUserComesToWaitOnIsTheUsers() {
@@ -68,6 +70,7 @@ struct DecodeBudgetMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(2)])
     }
 
+    // Validates: ENR-016
     /// Enrichment's decodes running never cost more than the budget together, the user's
     /// decodes beside them never more than what each costs, and every decode asked for runs.
     @Test func theBudgetIsNeverExceeded() {
@@ -144,6 +147,7 @@ struct DecodeBudgetMachineTests {
             == 4032 * 3024 * 4 + 2560 * 1920 * 4)
     }
 
+    // Validates: ENR-016
     /// Both lanes together render four HEIC previews at once, three of a 24 MP JPEG, and one 12
     /// MP JPEG, which decodes whole and is charged what that route was measured to hold.
     @Test func bothLanesHoldFourHEICPreviews() {

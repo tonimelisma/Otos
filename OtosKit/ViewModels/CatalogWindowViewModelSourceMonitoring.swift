@@ -59,7 +59,7 @@ extension CatalogWindowViewModel {
     /// that has ended — a clean quit should already have cleared its own tree, and a crash
     /// will not have. Sweeping every *other* instance's tree here is the backstop that keeps
     /// the cache from growing across crashes, and it must happen before monitoring starts so
-    /// a camera attaching immediately cannot race it (APP-018, owner decision 2026-08-30).
+    /// a camera attaching immediately cannot race it (APP-018).
     ///
     /// `Task.detached` rather than `Task`: this type is `@MainActor`, so a plain `Task`
     /// inherits that isolation and would run a recursive delete of potentially tens of

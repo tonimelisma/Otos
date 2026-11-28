@@ -65,6 +65,7 @@ struct OnThisDayPolicyTests {
         }
     }
 
+    // Validates: APP-069
     /// The day's month and day before the day's own year — the first and last second of
     /// it, a century back alike — never the days around it, this year, or an undated row.
     @Test func yearsMatchTheDayInEveryEarlierYearAndNothingElse() throws {
@@ -80,6 +81,7 @@ struct OnThisDayPolicyTests {
         ])
     }
 
+    // Validates: APP-069
     /// The day of the month in every earlier month, never in the day's own month; a month
     /// without the day (31 April) has nothing to match.
     @Test func monthsMatchTheDayOfTheMonthInEveryEarlierMonth() throws {
@@ -94,6 +96,7 @@ struct OnThisDayPolicyTests {
         ])
     }
 
+    // Validates: APP-069
     /// Clocks went forward on 30 March 2025 and back on 26 October 2025 in Helsinki, but a
     /// photo's day is a day of its own clock's readings: midnight to midnight, whatever the
     /// zone did that day.
@@ -109,6 +112,7 @@ struct OnThisDayPolicyTests {
         #expect(try Self.selected(by: autumn, from: around(10, 26)) == [Self.local(2025, 10, 26), Self.local(2025, 10, 26, 23, 3599)])
     }
 
+    // Validates: APP-069
     @Test func aLeapDayMatchesOnlyLeapYears() throws {
         let match = AnniversaryMatch.years(for: CalendarDay(year: 2028, month: 2, day: 29))
         let times = [Self.local(2024, 2, 29), Self.local(2023, 3, 1), Self.local(2020, 2, 29), Self.local(2023, 2, 28)]
@@ -119,6 +123,7 @@ struct OnThisDayPolicyTests {
 
     // MARK: - Anniversaries
 
+    // Validates: APP-070
     @Test func yearsAreContiguousRunsNewestFirstWithTheirKeyItem() throws {
         let utc = Self.calendar("UTC")
         let day = CalendarDay(year: 2026, month: 11, day: 9)
@@ -154,6 +159,7 @@ struct OnThisDayPolicyTests {
         ) == nil)
     }
 
+    // Validates: APP-070
     /// A scope that matched earlier months groups into one run per month, newest first, and
     /// each run's distance is in months — past a year too, never a rounded year.
     @Test func monthsAreRunsNewestFirstAndCountedInMonths() throws {
@@ -196,6 +202,7 @@ struct OnThisDayPolicyTests {
         return (ids, years)
     }
 
+    // Validates: APP-071
     @Test func aStoryStartsAtTheChosenAnniversaryOrTheNewestAndMovesAcrossThem() throws {
         let (ids, years) = Self.storyFixture()
         let day = CalendarDay(year: 2025, month: 11, day: 9)
@@ -214,6 +221,7 @@ struct OnThisDayPolicyTests {
         #expect(place.position == 2)
     }
 
+    // Validates: APP-071
     @Test func aRemovedItemLeavesTheStoryOnItsSurvivor() {
         let (ids, _) = Self.storyFixture()
 
@@ -225,6 +233,7 @@ struct OnThisDayPolicyTests {
         #expect(StoryPlaybackPolicy.survivor(of: ids[0], previousOrderedIDs: ids, survivingOrderedIDs: []) == nil)
     }
 
+    // Validates: APP-071
     @Test func aHoldStartsOnlyOnceThePictureIsSettledAndTheItemIsNoPlayableVideo() {
         #expect(StoryPlaybackPolicy.holdCanStart(kind: .image, pane: .shown, video: .notVideo))
         #expect(StoryPlaybackPolicy.holdCanStart(kind: .raw, pane: .none, video: .notVideo))
@@ -237,6 +246,7 @@ struct OnThisDayPolicyTests {
         #expect(StoryPlaybackPolicy.holdCanStart(kind: .video, pane: .shown, video: .unavailable))
     }
 
+    // Validates: APP-071
     @Test func aPausedHoldKeepsItsRemainderAndResumesFromIt() {
         let start = ContinuousClock.now
         let hold = StoryHold(startingAt: start)
@@ -256,6 +266,7 @@ struct OnThisDayPolicyTests {
 
     // MARK: - The calendar
 
+    // Validates: APP-069
     /// On This Day counts Gregorian days and years in the user's zone whatever calendar the
     /// user reads dates in: under the Japanese calendar the year is an era year (Reiwa 5 is
     /// 2023) and under the Buddhist one 2566, so neither could compare with a capture year.
@@ -279,6 +290,7 @@ struct OnThisDayPolicyTests {
 
     // MARK: - Covers
 
+    // Validates: APP-070
     /// A card draws the cover it painted for its key item, else the store's decode for it —
     /// so a card made again shows the cover at once — and a cover painted for another key
     /// item never.
@@ -295,6 +307,7 @@ struct OnThisDayPolicyTests {
 
     // MARK: - Words
 
+    // Validates: APP-070, APP-078
     @Test func theSurfacesWordTheirFactsInTheUsersLocale() {
         let british = Locale(identifier: "en_GB")
         let gregorian = Calendar(identifier: .gregorian)
@@ -347,6 +360,7 @@ struct OnThisDayPolicyTests {
 
     // MARK: - Search
 
+    // Validates: APP-069
     /// A search on On This Day only narrows: its order stays the scope's, so each year is
     /// still one contiguous run; elsewhere relevance orders as chosen (ADR 0048, 0049).
     @Test func aSearchOnOnThisDayNarrowsWithoutReorderingItsYears() throws {
@@ -374,7 +388,8 @@ struct OnThisDayPolicyTests {
         #expect(narrowed.dayBuckets == buckets)
     }
 
-    /// An anniversary shows at most 25 photos (owner, 2026-11-12): the first of its run in
+    // Validates: APP-069
+    /// An anniversary shows at most 25 photos: the first of its run in
     /// play order, Liked first, then newest; a day within the cap is untouched.
     @Test func anAnniversaryShowsAtMostTwentyFivePhotos() throws {
         let big = Date(timeIntervalSince1970: 1_600_000_000)

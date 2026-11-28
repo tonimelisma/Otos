@@ -13,7 +13,7 @@ policy in plan 0056. Conclusions feed ADR 0009 and ARC materialization rows.
 
 ## Library size distribution (facts only, no byte reads)
 
-Root: `~/Library/CloudStorage/OneDrive-Personal/Pictures/Camera Roll` (sample of
+Root: `~/Library/CloudStorage/OneDrive/Pictures/Camera Roll` (sample of
 2001 media files under `2026/03` walk):
 
 | metric | value |

@@ -5,7 +5,7 @@ import Foundation
 import SwiftUI
 import Testing
 
-/// Generated People states at the owner's scale (738 people, about 100,000 faces) and
+/// Generated People states at the reference scale (738 people, about 100,000 faces) and
 /// beyond, for the gallery's render cost. No catalog: the states are built as the gallery's
 /// read would give them, off the main actor (`states`), since a test that
 /// held the main actor for the seconds this takes would starve every other test waiting on it.
@@ -165,11 +165,12 @@ private struct PeopleGalleryHost: View {
 }
 
 extension AppKitWindowTests {
-    /// The People gallery's main-thread cost at the owner's scale and beyond: opening it,
+    /// The People gallery's main-thread cost at the reference scale and beyond: opening it,
     /// and applying the People update a face read publishes every few seconds.
     @MainActor
     @Suite(.testScope)
     struct PeopleGalleryRenderTests {
+        // Validates: APP-072
         @Test(arguments: [738, 5000])
         func openingAndUpdatingTheGallery(people count: Int) async throws {
             let faces = max(4, 102_753 / count)
@@ -261,8 +262,9 @@ extension AppKitWindowTests {
             #expect(unrelated.allSatisfy { $0.menus == 0 })
         }
 
-        /// Opening a person and coming Back to People finds the gallery scrolled where it was
-        /// (owner, 2026-11-20): the gallery leaves the screen with how far it was scrolled and
+        // Validates: APP-072
+        /// Opening a person and coming Back to People finds the gallery scrolled where it was:
+        /// the gallery leaves the screen with how far it was scrolled and
         /// comes back scrolled there.
         @Test func theGalleryComesBackScrolledWhereItWas() async throws {
             let state = try #require(await PeopleGalleryFixture.states(people: 738, facesPerPerson: 4, bumps: [nil]).first)

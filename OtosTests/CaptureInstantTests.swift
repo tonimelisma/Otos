@@ -15,6 +15,7 @@ struct CaptureInstantTests {
         Date(timeIntervalSince1970: seconds)
     }
 
+    // Validates: ENR-003
     @Test func theCameraClockComesBeforeTheContainerAndGPS() {
         // A floating original pins no instant; the digitized time is the next camera
         // clock, ahead of QuickTime's creation date and the GPS fix.
@@ -27,6 +28,7 @@ struct CaptureInstantTests {
         #expect(instant(records) == at(200))
     }
 
+    // Validates: ENR-003
     /// A stored record that is not a capture time — an unknown precision, missing or
     /// out-of-range components, a role this build does not know — is left out, so the next
     /// role answers.

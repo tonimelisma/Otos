@@ -1,5 +1,5 @@
 # The query plan of every runtime statement that names an asset's key, on a generated
-# catalog of the owner's shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
+# catalog of the reference shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
 # here is a changed plan: record it only on purpose, from the file the failing run names.
 == CatalogQueryGateway.metadataExtraSQL
 SEARCH asset_metadata USING INDEX sqlite_autoindex_asset_metadata_1 (library_root_id=? AND relative_path=?)

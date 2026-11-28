@@ -6,6 +6,7 @@ import Testing
 /// Loupe zoom geometry (APP-040) as pure numbers: fit, ceiling, toggle, step, and when
 /// a sharper decode is needed.
 struct LoupeZoomPolicyTests {
+    // Validates: APP-040
     /// A HEIF rotated by `irot` records its stored landscape size while the decoder shows
     /// it upright: the document follows the upright decode, at the original's resolution,
     /// so the picture is never stretched.
@@ -21,6 +22,7 @@ struct LoupeZoomPolicyTests {
         #expect(decodeOnly == CGSize(width: 400, height: 300))
     }
 
+    // Validates: APP-040
     @Test func fitAndCeiling() {
         // A 1500 × 1000 decode of a 6000 × 4000 px original on a 2× display is a
         // 3000 × 2000 pt document.
@@ -45,6 +47,7 @@ struct LoupeZoomPolicyTests {
         #expect(LoupeZoomPolicy.toggleTarget(current: small, fit: small) == small)
     }
 
+    // Validates: APP-040
     @Test func toggleAndStep() {
         let fit: CGFloat = 0.5
         #expect(LoupeZoomPolicy.toggleTarget(current: 0.5, fit: fit) == 1)
@@ -59,6 +62,7 @@ struct LoupeZoomPolicyTests {
         #expect(!LoupeZoomPolicy.isFit(0.6, fit: fit))
     }
 
+    // Validates: APP-040
     @Test func fullResolutionIsNeededOnlyWhenTheDecodeIsShort() {
         // A 4096-px decode of a 6000-px image is enough at fit (0.5 → 3000 px needed).
         #expect(!LoupeZoomPolicy.needsFullResolution(decodedLongEdge: 4096, nativeLongEdge: 6000, magnification: 0.5))

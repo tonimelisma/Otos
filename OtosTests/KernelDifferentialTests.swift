@@ -3,11 +3,12 @@ import Foundation
 import Testing
 
 /// Assignment's kernel against the one it replaced (`ReferenceAssignment`, the dense kernel
-/// measured on the owner's labelled faces): on generated libraries with every complication —
+/// measured on the reference library's labelled faces): on generated libraries with every complication —
 /// children across years, adults, birthdays, rejections, shared photos, undated faces, held
 /// faces, people found among strangers — both give the same guesses, the same new people and
 /// the same lapsed seeds, and likenesses within the precision a likeness is written at.
 struct KernelDifferentialTests {
+    // Validates: ENR-025
     @Test func theKernelGivesTheReferenceAssignment() {
         for (count, people, seed) in [(400, 5, UInt64(11)), (3000, 12, 23), (2500, 40, 31)] {
             var generator = SplitMix64(seed: seed)
@@ -24,6 +25,7 @@ struct KernelDifferentialTests {
         }
     }
 
+    // Validates: ENR-025
     /// A family archive's shape at a tenth of it, and a cold start where nobody is named.
     @Test func theKernelGivesTheReferenceAssignmentOnAnArchive() {
         let (faces, people) = BenchmarkTests.groupingLibrary(faces: 6000, people: 20, confirmedEach: 30)

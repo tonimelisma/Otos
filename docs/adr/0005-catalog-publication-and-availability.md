@@ -152,7 +152,7 @@ with what the read was for
 (the resolved descriptor or sidebar row, the available roots, the place-name languages; the order
 is for the descriptor without its search, which narrows the order after it is read, so a
 search, a change of it and its clear read no order — each read All Media's 164,762 rows again
-on the owner's catalog — and a scope's collapse is held apart from its last search's) and
+on the reference catalog — and a scope's collapse is held apart from its last search's) and
 the revisions its pass started from (`CatalogProjectionReads`). A pass reuses an answer
 while what it was for is unchanged and no kind it depends on moved, and reads it again
 otherwise. The order depends on rows shown, capture dates, kinds, formats, grouping and
@@ -162,7 +162,7 @@ options depend on rows held, kinds, formats, grouping, locations and place names
 (`filterOptionsInputs(of:)`), never on which file is a copy: they are read with every copy
 of identical files, which share their kinds, formats and places, so a scope that shows one
 copy offers what it would offer with all, and a place's count, which only orders the places,
-counts each copy (227 of the 277 changes in the owner's four-minute tour named copies, and
+counts each copy (227 of the 277 changes in a four-minute tour of the reference library named copies, and
 each read All Media's options again); the collapse is a pure step over the scoped order, its stacks
 and expansions. A shown search's answer is held the same way, keyed also by the search
 index's own revision, which only the index moves (ADR 0048); its Store fact matches depend
@@ -182,7 +182,7 @@ by a kind, so a write the table does not name cannot leave an owner unwoken.
 
 Before this, the only distinction was detail-only versus structural, and every enrichment
 write that moved a stored date by any amount, every face assignment, every place name and
-every digest was structural: on the owner's 166,555-asset catalog, while faces and Immich
+every digest was structural: on the reference library's 166,555-asset catalog, while faces and Immich
 metadata were read, the window re-read the 164k-row order (2–4 s), the options (0.9–1.2 s)
 and the collapse (0.4–0.9 s) back to back at over 300% CPU, and 368 of 642 order reads in
 three hours returned the order it already showed
@@ -277,9 +277,9 @@ write the window learns of from its own act — a Move to Trash's mark, a Put Ba
 a choice — often lands before the Store's change for it reaches the projection; the act's
 report records it there as that change would, with the rows it wrote, so the pass that retires
 the act's hold reads the write whole instead of patching the held order with no rows. On the
-owner's catalog, while
+reference catalog, while
 a sync brought metadata for 152 rows, the order was read whole 125 times, 33.7 s of reader
-time (installed 66153b4a; `docs/research/2026-11-16-window-reads-owner-catalog.md`).
+time (installed 66153b4a; `docs/research/2026-11-16-window-reads-reference-catalog.md`).
 
 The filter's options are re-read by key the same way. An options read keeps, beside its
 answer, what each row of the sidebar row's scope gave it (`CatalogFilterOptionTally`): per
@@ -287,7 +287,7 @@ row, its SQLite row id and the indexes of its file type and its map cell in smal
 the types and cells present, with a count per type and per cell (about 2.2 MB for All Media's
 159,000 rows), and, in the catalog's one language, the names of the cells its rows give, each
 read by the cell's key once the walk has counted them (never every named cell's: 1,435 on the
-owner's catalog, more than an import batch's rows); the options are derived
+reference catalog, more than an import batch's rows); the options are derived
 from the counts. When every change since the tally was read that moved a fact the options
 depend on moved only locations or file types of named rows, or the cells' names
 (`CatalogChangeLog.keyedOptionRows`), the read seeks those rows by key through the scope's own
@@ -303,7 +303,7 @@ unnamed, more rows than `rowCapacity`, and a scope a key cannot test (Places, a 
 a person). The whole read is one walk of the scope's rows with each row's kind, format and
 located cell: a wide scope walks `idx_media_asset_stack_candidate`, which holds the kind, the
 format, the key and what tests visibility, and finds
-each located row's coordinate by its key in the location index. On the owner's library a sync
+each located row's coordinate by its key in the location index. On the reference library a sync
 re-read All Media's options whole 92 times while 152 metadata changes arrived.
 
 **An ID is a place in the process's identity table.** `MediaAssetID` is 4 bytes: the place of
@@ -311,7 +311,7 @@ its (library root, relative path) pair in `MediaAssetIdentityTable`, which holds
 pair's bytes once, in mapped regions outside the malloc heap, for the rest of the process.
 Equal pairs are one place, so IDs compare and hash as integers, and an order, a collapse, a
 position index or a stack's members hold no string. An ID that carries its own relative-path
-string is 56 bytes, and every read makes a new one per row: after a tour of the owner's shape
+string is 56 bytes, and every read makes a new one per row: after a tour of the reference shape
 the window, People and the stacks held 691,102 strings (86 MB) and 40 MB of ID arrays that way
 (`docs/research/2026-11-17-asset-identity-memory.md`). The place is never persisted or logged;
 the catalog's key and the overlay's identity stay the pair (ADR 0008). Rejected: the catalog's
@@ -360,7 +360,7 @@ process's table counts nothing.
   reading entries without a lock (they never change once published, but the reads go through
   a raw pointer shared across threads, which ARC-042's gate forbids); and a second lock for
   the index alone, which needs every place's key copied beside the index (about 5 MB of heap
-  on the owner's catalog) to probe without the entries, for a rebuild that sizing at open
+  on the reference catalog) to probe without the entries, for a rebuild that sizing at open
   keeps out of every session within the catalog's size; and sizing again before a bulk add
   from its count, since the Immich sync stream announces no total, and a reorganization's
   plan, whose size is known, would still rebuild under the lock at its start, moving every
@@ -380,7 +380,7 @@ day buckets, coordinates and sort keys, each where it is equal
 (`CatalogOrderedAssets.holdingArrays(of:)`) — so the collapse it reuses, the published window
 and the order slot hold one copy. Before this, a re-read that changed nothing left the reused
 collapse and the window on the first read's copy and the slot on the new one: All Media held
-twice, 340,808 path strings for 164,766 paths, about 25 MB on the owner's shape. Rejected: a
+twice, 340,808 path strings for 164,766 paths, about 25 MB on the reference shape. Rejected: a
 table of the paths every read hands out, one string each. It held one string per path and
 raised the footprint by about 90 MB, because strings that never die, scattered among a
 read's freed temporaries, keep those pages in the footprint
@@ -399,8 +399,8 @@ For the same reason a change of which rows exist (`.membership`) publishes immed
 while the published window shows no item. The cadence spares the main actor the apply of
 a shown grid that a background change reorders; a window that shows no item has none, and
 what it waits for is its first rows. A newly added library's first scan batch waited
-0.9 s for the next tick at the owner's library size
-(`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`). Once the window shows
+0.9 s for the next tick at the reference library's size
+(`docs/research/2026-11-17-a-new-library-at-the-reference-size.md`). Once the window shows
 an item, such changes wait for the cadence again (ARC-019).
 
 When Projection receives `.libraryRemoved(path)` for its selected root, it
@@ -427,11 +427,11 @@ either. The superseded pass publishes nothing, covers nothing and rings the loop
 the new request is built next; whatever a superseded build read, its result is discarded
 even if it finished in spite of the cancellation, because a cancelled GRDB read holds
 errors, not a catalog, and a superseded build stops before it touches the search reader or
-counts a read. On the owner's catalog the next pass started 3.2–6.6 s after a People build
+counts a read. On the reference catalog the next pass started 3.2–6.6 s after a People build
 was superseded, the pass waiting for that build to end
 (`docs/research/2026-11-15-scope-returns-and-superseded-builds.md`). A store change supersedes nothing: the
 build in flight is for what is shown, and the next pass takes the change up. Teardown
-cancels the loop, and a torn-down pass publishes nothing. On the owner's catalog a sidebar
+cancels the loop, and a torn-down pass publishes nothing. On the reference catalog a sidebar
 click waited 2–9 s for the All Media build it left, then 1.4 s on the main thread applying
 it (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
 
@@ -442,8 +442,8 @@ for the options and covers its request. The options are read as their own work, 
 a time, with their own revision counter: an ask while a read runs for other revisions is read
 when it ends, and a read's answer is kept and the window republished with it in the step the
 read ends in. An intent on the same row is built while they are read. Waiting for them was
-the larger part of the owner's slowest steps: a search, a clear and a sort each waited
-15–23 s for the options read of the pass before (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+the larger part of the slowest steps on the reference library: a search, a clear and a sort each waited
+15–23 s for the options read of the pass before (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
 A wide scope's places are read walking its date order index, each located row's cell found
 by its coordinate in the location index; starting from the named cells read every located
 row of the catalog through its table row (8.4 s against 0.57 s cold for All Media). The People gallery shows people, not items: its window reads no order, stacks, search
@@ -469,7 +469,7 @@ depends on moved since; when one had moved it publishes that window, logs
 `op=projection.publish phase=held`, covers nothing, and the next pass reads again whatever
 moved and republishes. The window then shows, for the length of one read, what it would
 have shown had the user stayed on the scope and waited for the cadence's catch-up; a scope
-with nothing held is read before it paints. On the owner's catalog, with enrichment moving
+with nothing held is read before it paints. On the reference catalog, with enrichment moving
 capture dates, digests and stacks in the background, a return to All Media re-read the
 164,747-row order and every stack candidate and painted after 12.1 s
 (`docs/research/2026-11-15-scope-returns-and-superseded-builds.md`). Rejected: holding every
@@ -518,7 +518,7 @@ A database-loaded library is checked as the catalog loads: one `stat` of its fol
 unavailable before the first publication, so a reachable library's rows show at once and
 its launch scan only reconciles them (ADR 0008). Waiting for the scan to start was wrong:
 the fixed libraries scan one at a time on one lane, so a library queued behind another
-showed none of its rows until that scan finished — 11,714 of the owner's rows arrived in two
+showed none of its rows until that scan finished — 11,714 of the reference library's rows arrived in two
 later publications (`docs/research/2026-11-14-scope-switch-and-background-laps.md`). A root
 added in this process begins unknown until its first check. Availability is never persisted
 to SQLite. The pre-scan check still answers it again; a scan failure rechecks the root so
@@ -534,7 +534,7 @@ opportunity can mark the root available and reconcile normally.
 
 ### A Second Holder Of The Window's Answer
 
-Measured on the owner's library and a generated catalog of its shape
+Measured on the reference library and a generated catalog of its shape
 (`docs/research/2026-11-16-plan-0116-due-diligence.md`, P3;
 `docs/research/2026-11-16-performance-baseline.md`), and rejected:
 

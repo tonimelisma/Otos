@@ -24,10 +24,10 @@ and mtime. The Store reads the copies (`CatalogStore.duplicateCopies`, through
 publishes the groups as `CatalogWindowState.duplicates` in every scope, so the sidebar's
 Duplicates row exists exactly while a group is active.
 
-**Duplicates compares copies within each library, unless the user widens it** (owner,
+**Duplicates compares copies within each library, unless the user widens it** (decided
 2026-11-15). A library the user keeps a second time on purpose — an Immich server that
 indexes the same OneDrive folders Otos has as a library — is a mirror, not waste, and its
-pairs buried the copies worth clearing (16,001 groups on the owner's catalog). So by default
+pairs buried the copies worth clearing (16,001 groups on the reference catalog). So by default
 a group's copies are all in one library or one account (`DuplicatesReach.withinEachLibrary`):
 
 - an identical group is a digest in one library, `DuplicateGroupID.identical(_, library:)`,
@@ -59,7 +59,7 @@ to paint, queued behind a 1.5 s same-photo build (2026-11-01 log). `duplicates` 
 until the first build: the row has no count and the list draws nothing until then, rather
 than claiming "No duplicates".
 
-**Every group has a default, and no default loses work** (owner, 2026-11-01, Plan 0111).
+**Every group has a default, and no default loses work** (2026-11-01, Plan 0111).
 The default is what a group keeps until the user clicks a photo or sets its folder's
 rule.
 
@@ -90,7 +90,7 @@ rule.
   library keeps its own, or which work conflicts and in which library; a waiting group's
   header names the conflict.
 
-**The list is laid out by the attention a group needs** (owner, 2026-11-14,
+**The list is laid out by the attention a group needs** (2026-11-14,
 `docs/research/2026-11-14-duplicates-by-attention.md`). `CatalogDuplicatesState` publishes
 the groups as a `DuplicatesLayout`, built once per build, off the main actor:
 
@@ -121,7 +121,7 @@ undoable, delivered on one ordered intent stream (ADR 0032 rule 5); Review Again
 kept group's pairs on the same stream, undoable by its own name, so a kept group is never a
 dismissal without a way back.
 
-**Choosing what stays: one click, or one rule for a folder** (owner, 2026-11-04). Every
+**Choosing what stays: one click, or one rule for a folder**. Every
 group shows its copies as photos tagged Keep or Trash. What a group keeps is
 `DuplicateResolution`, pure, so what a photo shows, what the bar counts and what the act
 moves are one computation, resolved in this order:
@@ -158,8 +158,7 @@ mode saved with it is not restored.
 bytes, so a copy counts only with content (`byte_size > 0`). An empty file is a broken
 file, not a copy of another.
 
-**A file and its Immich mirror are never duplicates** (owner, 2026-11-15: "Never offer
-them"). An external library's asset (`source_path_sha1` set) is the server's view of a file on
+**A file and its Immich mirror are never duplicates**: they are never offered. An external library's asset (`source_path_sha1` set) is the server's view of a file on
 a disk it reads — for a mirrored library, the very file Otos holds (ADR 0054). Offered as a
 copy to keep, its Keep This Copy, or a folder rule for the account, moved the library file to
 the Trash, and with it the photo's only bytes. So `DuplicatesGateway.countsAsCopy`, the one rule
@@ -175,7 +174,7 @@ on two different choices; versions of one photo still can.
 
 | Alternative | Why rejected |
 | --- | --- |
-| Listing copies across libraries by default (2026-11-14 to 2026-11-15) | A mirror the user keeps on purpose filled the list with pairs nobody wants removed, and hid the copies within a library that are waste (owner, 2026-11-15). |
+| Listing copies across libraries by default (2026-11-14 to 2026-11-15) | A mirror the user keeps on purpose filled the list with pairs nobody wants removed, and hid the copies within a library that are waste. |
 | Leaving mirrors out by recognising them (a folder set whose every file has a twin) | A guess about intent; a backup library the user is consolidating looks the same. One stated preference decides it. |
 | Leaving out only an external asset whose path pairing is recorded | The pairing is not stored per asset, and an external asset whose digest came from a download may still be a file a library holds at another path; it holds no bytes of its own either way. |
 | Offering a mirror pair one way only (keep the file) | The pair is one photo, not waste; a group of one file and its mirror has nothing to clean up. |
@@ -185,13 +184,13 @@ on two different choices; versions of one photo still can.
 | A trigger-maintained log of the rows whose same-photo inputs changed | Proportional work per changed row, but a second copy of every column the reads name, kept by triggers on every enrichment write; the narrow read already costs what the compared stills are, and a stamp says which evidence moved. |
 | Keeping the copies a group lists with the evidence, by a stamp | A copy's facts (choice, edit, companions, sizes, dates) span many columns and a second table; a stamp over them would be a second list to keep right. They are read for the group's members alone, every build. |
 | Preselect across libraries by sidebar order | Empties a mirror library in one unread bulk act (review finding 1). A library goes only when the user picks it in its folder rule. |
-| Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe (owner, 2026-11-01). |
+| Let groups with authored work, or versions of the same photo, wait without a default | Nothing in the act's count until the user decides each group; competitors default every group (Photos, Lightroom web, PhotoSweeper, Mylio). Carrying the work makes a default safe. |
 | One list of every group, newest first, with the folder rules in a block above it (2026-11-04 to 2026-11-14) | Date is a browsing order: the few groups that need a person sat among hundreds that need nobody, a rule sat a scroll away from what it decided, and identical copies drew the same picture twice with the one thing that differed, the name, in a tooltip. |
 | A folder rule that also decides versions of one photo in that folder | The rule's control sits on the exact copies' header; reaching into another section is action at a distance, on the groups whose files differ most. |
-| A Keep checkbox per copy (the 2026-11-02 design) | Shipped as a list of rows, then as tiles; the owner rejected both on sight. A tag on the photo and a click on it say the same thing with nothing to read. |
-| Photos' Merge (built 2026-11-04, never merged) | It hides which copy stays and offers no way to choose it short of a context menu; the owner asked for a clean way to choose. |
+| A Keep checkbox per copy (the 2026-11-02 design) | Shipped as a list of rows, then as tiles; both were rejected on sight. A tag on the photo and a click on it say the same thing with nothing to read. |
+| Photos' Merge (built 2026-11-04, never merged) | It hides which copy stays and offers no way to choose it short of a context menu, where a clean way to choose was asked for. |
 | Library pair summary rows | A folder set covers them: two folders in two libraries are one of its cases, with `Both` as the default. |
-| Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The owner wants the list to show every duplicate, always (2026-11-01). |
+| Hold groups found mid-visit behind `N more found · Show` | A second answer to "which groups exist", besides the published state. It snapshotted the catalog before its first load at launch and hid every group behind `0 photos · 164 more found`. The list shows every duplicate, always (2026-11-01). |
 | Return as the bulk act's key | Return opens a group; a bulk move must not be one keystroke from a list. |
 | A confirmation before the act | Every Keep and Trash is on screen before the click, the act is the ordinary undoable Move to Trash, and the HIG reserves alerts for uncommon acts that cannot be undone (DES-076). |
 | Rules that apply across the whole library at once | A folder is the unit a user knows ("my imports folder", "the backup"); a library-wide rule would decide groups the user has not looked at in folders they did not name. |
@@ -219,7 +218,7 @@ captures by capture metadata (`SamePhotoPolicy`):
    - the body serial agrees, where both files carry one;
    - both records carry the EXIF sub-seconds, and they agree.
 
-   This gate is what separates a still-scene burst. On the owner's library, 5 % of
+   This gate is what separates a still-scene burst. On the reference library, 5 % of
    same-second burst pairs are as pixel-close as true copies, and every checked pair
    differed in sub-seconds (`docs/research/2026-10-31-duplicate-calibration.md`). So
    sub-seconds are the proof, and a missing value is unknown, not agreement: a record may
@@ -249,7 +248,7 @@ Other rules:
   file on a disk the server reads, which for a mirrored library is the very file Otos holds,
   so it is never a copy to keep in place of another (the identical-copies rule above). Pairing
   two of them offered the server's view of one library's photos as a second set of groups: on
-  the owner's catalog, 128,671 of the 144,410 stills compared were external assets, and most of
+  the reference catalog, 128,671 of the 144,410 stills compared were external assets, and most of
   the 42,425 proposed pairs paired them with each other (2026-11-16).
 - Same-photo groups keep the camera original by the keeper rule above. Keep All Copies sets
   them aside by the same per-pair memory.
@@ -258,7 +257,7 @@ Other rules:
   pairing facts only (`SamePhotoCandidate`), from two indexes that hold exactly the compared
   stills and their record's pairing columns (`SamePhotoSQL`, v67), so the read touches no
   wide row. It walked every row of every root before, 545 MB of asset rows and the 190 MB
-  record table: 37 s cold on the owner's catalog, five times in a four-minute session.
+  record table: 37 s cold on the reference catalog, five times in a four-minute session.
 - The evidence that confirms a pair — the grayscale render and the sub-seconds, which live in
   the stored metadata record (`SamePhotoEvidence`) — is read only for the stills a proposed pair
   names. The copy a group lists is read only for the stills a group holds, in every build,
@@ -278,7 +277,7 @@ Other rules:
   after the write: a compared still, or a copy whose digest another copy holds
   (`DuplicatesHoldSQL`, one probe of each index). The build's own inputs are rows shown, Live
   Photo grouping, copies, choices and `.duplicateFacts`, not those kinds in general. With
-  #814 installed, the owner's tour ran the build 87 times while 226 newly listed Immich
+  #814 installed, the reference library's tour ran the build 87 times while 226 newly listed Immich
   assets had their records read.
 - The build is written for the Debug build the app is installed as (ADR 0030), where every
   collection call costs. A still without capture metadata is tested against its aspect

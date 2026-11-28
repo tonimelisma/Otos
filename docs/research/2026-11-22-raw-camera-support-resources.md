@@ -22,7 +22,7 @@ fetch cost when it is already there, and how should a failed fetch be handled?
   fetches is RAW9's demosaic and denoise model for its camera.
 - **The resources are per camera and not part of the OS.** They are MobileAsset assets
   of type `com_apple_MobileAsset_RawCamera_Camera` under `/System/Library/AssetsV2/`. On the
-  owner's Mac two are installed, both for the Sony ILCE-6700 (`arw.sony.394`,
+  test Mac two are installed, both for the Sony ILCE-6700 (`arw.sony.394`,
   `dng.adobe.sonyilce-6700`), 3.2 MB together. Each asset's `Info.plist` says
   `__InstallWithOS = false`, `__RequiredByOS = false`,
   `__AssetDefaultGarbageCollectionBehavior = NeverCollected`, and names a

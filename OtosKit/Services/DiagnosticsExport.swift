@@ -3,9 +3,9 @@ import OSLog
 
 /// Diagnostics export guide
 ///
-/// The owner develops Otos from sessions that cannot reach his Mac (ADR 0061), so what the
-/// installed app experienced reaches a session only when he hands it over. Help ▸ Export
-/// Diagnostics… writes one new folder into a folder he chooses (ADR 0060):
+/// Otos is developed from sessions that cannot reach the user's Mac (ADR 0061), so what the
+/// installed app experienced reaches a session only when the user hands it over. Help ▸
+/// Export Diagnostics… writes one new folder into a folder the user chooses (ADR 0060):
 ///
 /// - `about.json`: the build, the Mac, when it was written, and where the log lines came
 ///   from or why there are none;

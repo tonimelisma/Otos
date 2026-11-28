@@ -15,7 +15,7 @@ import OSLog
 /// hundreds of gigabytes to correct a few fields (`docs/research/2026-10-25-mediametadata-0.7.md`).
 /// A skipped row is offered again on the next pass, so it is re-read once it is local.
 ///
-/// One exception, by the owner's decision: an Apple-made record that predates the content
+/// One exception: an Apple-made record that predates the content
 /// identifier may be half of a Live Photo, and the pair cannot form without its bytes
 /// (ADR 0041). This pass reads nothing for it; it hands the row to enrichment
 /// (`CatalogStore.requestEnrichmentDownload`), which downloads it once and derives every

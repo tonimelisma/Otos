@@ -46,6 +46,7 @@ struct RootRegistryTests {
         )
     }
 
+    // Validates: ARC-003, ARC-022
     @Test func scopePredicateHonorsAllMediaAndLibraryScope() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1))
@@ -103,6 +104,7 @@ struct RootRegistryTests {
         #expect(prioritized.fixed == [1])
     }
 
+    // Validates: APP-017
     /// An ejecting source stays available for the sidebar, but enrichment claims
     /// nothing new on it, so the eject drain waits on finite work.
     @Test func aQuiescedSourceIsNotEnrichable() {

@@ -171,7 +171,7 @@ that a partial catalog snapshot cannot be trusted enough to show.
 Failure modes: the exact bug this ADR fixes, just with a number attached
 instead of a static plan.
 
-**Rejected — explicit owner decision, 2026-08-17.**
+**Rejected — an explicit product decision, 2026-08-17.**
 
 ### B. Compare live occupancy against the plan's snapshot occupancy directly
 

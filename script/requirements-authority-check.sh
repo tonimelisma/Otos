@@ -2,29 +2,30 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The whole check is one Python pass over docs/requirements.md, reading each cited
-# file once. A process per row or per citation would be thousands of spawns, and
-# this gate runs before every build in script/check.sh. `self-test` below drives
-# this function as a black box against seeded fixtures.
+# Checks that docs/requirements.md holds only current, implemented behavior and that the
+# Validates tags in the Swift tests sit on tests that can fail. script/process-check owns the
+# rest of the traceability: each ID declared once, every tag naming a declared ID, and
+# [verified] / unverified: agreeing with the tags.
+#
+# The whole check is one Python pass, reading each test file once: a process per item or per
+# tag would be thousands of spawns, and this gate runs before every build in script/check.sh.
+# `self-test` below drives this function as a black box against seeded fixtures.
 check_root() {
   python3 - "$1" <<'PY'
 import os
 import re
 import sys
-from collections import Counter
 
 root = sys.argv[1]
 requirements = os.path.join(root, "docs/requirements.md")
-roadmap = os.path.join(root, "docs/product/roadmap.md")
+ID = r"(?:ARC|APP|ENR|MED)-[0-9]{3}[A-Z]?"
+# Spelled in two parts so process-check, which reads this script for tags, finds none here.
+TAG = "Valid" + "ates:"
 
 
 def fail(message):
     print(f"requirements authority check failed: {message}", file=sys.stderr)
     raise SystemExit(1)
-
-
-def strip_spaces(text):
-    return text.strip(" ")
 
 
 def report_matches(lines, pattern):
@@ -42,308 +43,292 @@ if not os.path.isfile(requirements):
 
 lines = open(requirements, encoding="utf-8").read().splitlines()
 
-if report_matches(lines, r"\|\s*Proposed\s*\|"):
-    fail("docs/requirements.md must not contain Proposed requirement rows")
-if report_matches(lines, r"`Proposed`"):
-    fail("docs/requirements.md must not define Proposed as a requirement status")
-if report_matches(lines, r"^## Future Rows"):
-    fail("docs/requirements.md must not contain a future-row backlog section")
-if report_matches(lines, r"\|\s*(Process|Tooling|Testing)\s*\|"):
-    fail("docs/requirements.md must not contain Process/Tooling/Testing type columns (process rules live in AGENTS.md)")
-if os.path.isfile(roadmap) and report_matches(open(roadmap, encoding="utf-8").read().splitlines(), r"^Requirement IDs:"):
-    fail("docs/product/roadmap.md must not assign requirement IDs to unimplemented planning items")
+if report_matches(lines, r"`Proposed`|\[(?:Proposed|Planned)\]|^\s*Status:\s*Proposed"):
+    fail("docs/requirements.md must not contain Proposed requirements or define Proposed as a status")
+if report_matches(lines, r"^#+\s.*\b(?:Future|Planned|Backlog)\b"):
+    fail("docs/requirements.md must not contain a future-requirement section (future work lives in GitHub issues)")
+if report_matches(lines, r"^#+\s+(?:Process|Tooling|Testing)\b"):
+    fail("docs/requirements.md must not contain Process/Tooling/Testing sections (process rules live in CLAUDE.md)")
 
-rows = [line for line in lines if line.startswith("|")]
+# Items: `- **<ID>** ...` and the contiguous lines under it, up to a blank line, a heading or
+# the next `- **` item (the same block process-check reads).
+items = []
+for index, line in enumerate(lines):
+    m = re.match(r"^\s*[-*]\s+\*\*([^*]+)\*\*", line)
+    if not m:
+        continue
+    block = [line]
+    for follow in lines[index + 1:]:
+        if re.match(r"^\s*$|^#|^\s*[-*]\s+\*\*", follow):
+            break
+        block.append(follow)
+    items.append((m.group(1), index + 1, block))
 
-# Literal pipes inside cells must be escaped. Table rows are pipe-delimited with
-# exactly 7 fields (leading empty + 5 columns + trailing empty). Any extra pipe
-# inside a cell without escaping breaks the field count and fails here.
-for line in rows:
-    fields = len(line.split("|"))
-    if fields != 7:
-        fail(f"requirement row has {fields} pipe-delimited fields, expected 7 (literal pipes inside cells must be escaped): {line}")
+if not items:
+    fail("docs/requirements.md declares no requirements")
 
-sources = {}
+missing = False
+for requirement_id, number, block in items:
+    where = f"requirement {requirement_id} (docs/requirements.md:{number})"
+    if not re.fullmatch(ID, requirement_id):
+        fail(f"{where} has unrecognized ID '{requirement_id}'")
+    text = [b for b in block if not re.match(r"^\s*(Implemented in|Not covered by tests|unverified):", b)]
+    body = " ".join(text)
+    if re.search(r"animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k=", body):
+        fail(f"{where} contains implementation token")
+    if re.search(r"[0-9]+ ?ms\b", " ".join(block)):
+        fail(f"{where} contains bare timing constant")
+    if re.search(r"\bmanual:", " ".join(block)):
+        fail(f"{where} uses manual: verification (not machine-checked)")
+    if not any(re.match(r"^\s*Example:\s*\S", b) for b in block):
+        fail(f"{where} has no Example: line")
+    implemented = [b for b in block if re.match(r"^\s*Implemented in:", b)]
+    if len(implemented) != 1:
+        fail(f"{where} needs exactly one Implemented in: line")
+    paths = re.findall(r"`([^`]+)`", implemented[0])
+    if not paths:
+        fail(f"{where} Implemented in: names no backticked path")
+    for path in paths:
+        if "*" in path:
+            continue
+        if not os.path.exists(os.path.join(root, path.strip())):
+            print(f"missing path cited in requirements.md: {path} ({requirement_id})", file=sys.stderr)
+            missing = True
+if missing:
+    fail("one or more Implemented in: paths do not exist on disk")
+
+# Tags in the Swift tests. A tag line sits directly above the test it marks: above its doc
+# comment and any `// swiftlint:disable:next`, which must stay attached to the test, then its
+# attribute block (@Test, @Suite, @MainActor, a multi-line @Test(arguments: ...)) or the
+# declaration itself. The test it marks must be able to fail.
+DECLARATION = re.compile(
+    r"^\s*(?:(?:private|fileprivate|internal|public|static|nonisolated|final|override|mutating|async)\s+)*"
+    r"(?:func|struct|final\s+class|class|enum|extension|actor)\s+([A-Za-z_][\w.]*)"
+)
+ASSERTION_TOKENS = ("#expect(", "#require(", "Issue.record(")
 
 
-def source_of(path):
-    if path not in sources:
-        try:
-            sources[path] = open(path, encoding="utf-8").read()
-        except OSError:
-            sources[path] = None
-    return sources[path]
+def strip_attributes(line):
+    """A line without its leading attributes (`@Test`, `@Suite(.serialized)`, `@MainActor`)."""
+    while True:
+        stripped = re.sub(r"^@\w+(?:\([^()]*\))?\s*", "", line)
+        if stripped == line:
+            return line
+        line = stripped
 
 
-def check_swift_test_body(path, name, token, requirement_id):
-    source = source_of(path)
-    declaration = None if source is None else re.search(r"\bfunc\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", source)
-    if declaration is None:
-        fail(f"requirement {requirement_id} names missing Swift test {token}")
-    opening = source.find("{", declaration.start(), declaration.end())
+def body_of(source, start):
+    """The text inside the braces of the declaration that starts at offset start."""
+    opening = source.find("{", start)
+    if opening < 0:
+        return None
     depth = 0
-    closing = None
     for index in range(opening, len(source)):
         if source[index] == "{":
             depth += 1
         elif source[index] == "}":
             depth -= 1
             if depth == 0:
-                closing = index
-                break
-    if closing is None:
-        fail(f"requirement {requirement_id} has unterminated Swift test {path}#{name}")
-    body = re.sub(r"#expect\s*\(\s*true\b[^\n]*\)", "", source[opening + 1:closing])
-    if not any(token in body for token in ("#expect(", "#require(", "Issue.record(")) and re.search(
+                return source[opening + 1:index]
+    return None
+
+
+def can_fail(body):
+    body = re.sub(r"#expect\s*\(\s*true\b[^\n]*\)", "", body)
+    return any(token in body for token in ASSERTION_TOKENS) or re.search(
         r"\b(?:assert[A-Za-z_]*|waitFor[A-Za-z_]*|verify[A-Za-z_]*)\s*\(", body
-    ) is None:
-        fail(f"requirement {requirement_id} cites a Swift test with no failing assertion {path}#{name}")
+    ) is not None
 
 
-shared_proofs = Counter()
-for line in rows:
-    cells = line.split("|")
-    requirement_id = strip_spaces(cells[1])
-    if requirement_id in ("ID", "---"):
-        continue
-    if not requirement_id:
-        fail(f"requirement row missing ID: {line}")
-    if not re.fullmatch(r"(ARC|APP|ENR|MED)-[0-9]+[A-Z]*", requirement_id):
-        fail(f"requirement row has unrecognized ID '{requirement_id}': {line}")
-    requirement, acceptance, tested = strip_spaces(cells[2]), strip_spaces(cells[3]), strip_spaces(cells[5])
+tests_dir = os.path.join(root, "OtosTests")
+swift_files = []
+for directory, _, names in os.walk(tests_dir):
+    swift_files += [os.path.join(directory, n) for n in names if n.endswith(".swift")]
+tag_line = re.compile(r"^\s*//\s*" + TAG)
+tags = 0
+for path in sorted(swift_files):
+    relative = os.path.relpath(path, root)
+    source = open(path, encoding="utf-8").read()
+    source_lines = source.split("\n")
+    offsets, offset = [], 0
+    for text in source_lines:
+        offsets.append(offset)
+        offset += len(text) + 1
+    for index, text in enumerate(source_lines):
+        if not tag_line.match(text):
+            continue
+        where = f"{relative}:{index + 1}"
+        tags += 1
+        following = index + 1
+        while following < len(source_lines) and re.match(
+            r"\s*(///|// swiftlint:disable:next)", source_lines[following]
+        ):
+            following += 1
+        depth = 0
+        attributes = []
+        declaration = None
+        while following < len(source_lines):
+            line = source_lines[following].strip()
+            if depth == 0:
+                declaration = DECLARATION.match(strip_attributes(line))
+                if declaration or not line.startswith("@"):
+                    break
+            attributes.append(line)
+            depth += line.count("(") + line.count("[") - line.count(")") - line.count("]")
+            following += 1
+        if declaration is None:
+            fail(f"{where}: a {TAG} tag must sit directly above a test's attributes or declaration")
+        attributes.append(source_lines[following].strip())
+        if re.search(r"\bfunc\s", strip_attributes(source_lines[following])) and not any(
+            re.match(r"@(?:Test|MainActor)\b", a) for a in attributes
+        ):
+            fail(f"{where}: the tagged function {declaration.group(1)} is not a test")
+        body = body_of(source, offsets[following])
+        if body is None:
+            fail(f"{where}: tagged declaration {declaration.group(1)} has no terminated body")
+        if not can_fail(body):
+            fail(f"{where}: tagged test {declaration.group(1)} has no failing assertion")
 
-    if re.search(r"animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k=", f"{requirement} {acceptance}"):
-        fail(f"requirement {requirement_id} contains implementation token")
-    if re.search(r"[0-9]+ms|[0-9]+ ms", line):
-        fail(f"requirement {requirement_id} contains bare timing constant")
-    if "manual:" in tested:
-        fail(f"requirement {requirement_id} uses manual: verification (not machine-checked)")
-    if tested in ("—", ""):
-        fail(f"requirement {requirement_id} has no Tested by path")
-
-    # Verification-cell grammar:
-    # - executable proof: backticked `path#symbol` entries
-    # - honest debt: `unverified: <specific clause and reason>`
-    # `manual:` is already rejected above. At least one of the two valid forms must be present.
-    has_unverified = False
-    if "unverified:" in tested:
-        if not re.search(r"unverified:\s*\S+", tested):
-            fail(f"requirement {requirement_id} has malformed unverified: entry (must be 'unverified: <specific clause and reason>'): {tested}")
-        has_unverified = True
-    has_valid_proof = False
-    for inner in re.findall(r"`([^`]+)`", tested):
-        if "#" in inner:
-            has_valid_proof = True
-        elif inner.startswith("unverified:"):
-            has_unverified = True
-        else:
-            fail(f"requirement {requirement_id} has invalid verification grammar (backtick entries must be path#symbol): {tested}")
-    if not has_valid_proof and not has_unverified:
-        fail(f"requirement {requirement_id} Tested by has invalid verification grammar (must contain path#symbol or unverified: <reason>): {tested}")
-
-    # For each proof token, verify the file and symbol exist. Existence only, plus
-    # a Swift test's body must be able to fail.
-    for token in re.findall(r"`([^`]+#[^`]+)`", tested):
-        test_path, test_name = (strip_spaces(part) for part in token.split("#", 1))
-        test_file = os.path.join(root, test_path)
-        if test_path.endswith(".swift"):
-            check_swift_test_body(test_file, test_name, token, requirement_id)
-            shared_proofs[token] += 1
-        elif test_path.endswith(".sh"):
-            source = source_of(test_file)
-            if source is None or test_name not in source:
-                fail(f"requirement {requirement_id} names missing script self-test {token}")
-        else:
-            fail(f"requirement {requirement_id} names unsupported test file {test_path}")
-
-for token, count in sorted(shared_proofs.items()):
-    if count > 6:
-        print(f"requirements authority warning: proof {token} is cited by {count} rows", file=sys.stderr)
-
-# Every backtick path in Implemented-in / Tested-by cells must exist on disk.
-# Traceability only — validates that cited paths are real files, not that they prove semantics.
-missing = False
-for line in rows:
-    if line.startswith("| ID |") or line.startswith("| ---"):
-        continue
-    cells = line.split("|")
-    for cell in cells[4:6]:
-        for token in re.findall(r"`([^`]+)`", cell):
-            path = token.split("#", 1)[0]
-            if path.startswith(("manual:", "unverified:")) or "*" in path:
-                continue
-            path = strip_spaces(path)
-            if path and not os.path.exists(os.path.join(root, path)):
-                print(f"missing path cited in requirements.md: {path}", file=sys.stderr)
-                missing = True
-if missing:
-    fail("one or more Implemented-in / Tested-by paths do not exist on disk")
-
-print("requirements authority check: clean")
+print(f"requirements authority check: clean ({len(items)} requirements, {tags} tagged tests)")
 PY
 }
 
 self_test() {
   echo "requirements authority check self-test: start"
+  # Spelled in two parts so process-check, which reads this script for tags, finds none here.
+  local tag="// Valid""ates: ARC-999"
 
-  # Helper: create minimal valid requirements.md header
-  make_header() {
-    local file="$1"
-    cat > "$file" <<'HEADER'
+  # A valid fixture: one verified and one unverified item, the implementation file, and a test
+  # file whose tags sit above a plain @Test, a multi-line @Test(arguments:), an @MainActor
+  # function and a @Suite. Each failing case below starts from it and breaks one rule.
+  make_valid() {
+    local t="$1"
+    mkdir -p "$t/docs" "$t/OtosKit" "$t/OtosTests"
+    touch "$t/OtosKit/Foo.swift"
+    cat > "$t/docs/requirements.md" <<'DOC'
 # Otos Requirements
 
-| ID | Requirement | Acceptance example | Implemented in | Tested by |
-| --- | --- | --- | --- | --- |
-HEADER
+## Architecture And System
+
+- **ARC-999** The catalog shall keep one row per file. [verified]
+  - When a file is renamed, the catalog shall move its row.
+  Example: Given a file, the catalog holds one row for it.
+  Implemented in: `OtosKit/Foo.swift`
+
+- **ARC-002A** The grid shall show each row. [verified]
+  Example: Given a row, the grid shows it.
+  Implemented in: `OtosKit/Foo.swift`
+  Not covered by tests: the drawn tile, checked in the running app
+
+- **APP-998** Otos shall say what it does.
+  Example: Given work, the window says so.
+  Implemented in: `OtosKit/Foo.swift`
+  unverified: the wording is read from code, not seen in the app
+DOC
+    {
+      echo 'import Testing'
+      echo "$tag"
+      echo '@Suite struct FooTests {'
+      echo "    $tag"
+      echo '    @Test func keepsOneRow() { #expect(1 == 1) }'
+      echo "    $tag"
+      echo '    @Test(arguments: ['
+      echo '        (1, 2),'
+      echo '    ])'
+      echo '    func addsUp(a: Int, b: Int) { #expect(a < b) }'
+      echo "    $tag"
+      echo '    @MainActor'
+      echo '    static func scenario() throws { try #require(true == true) }'
+      echo '}'
+    } > "$t/OtosTests/FooTests.swift"
   }
 
-  # Helper: run check_root expecting failure (non-zero) or success (zero)
-  # Run in subshell so fail()'s exit does not kill the self-test harness (set -e).
   expect_fail() {
-    local desc="$1"
-    local tmpRoot="$2"
-    if (check_root "$tmpRoot") >/dev/null 2>&1; then
+    local desc="$1" t="$2"
+    if (check_root "$t") >/dev/null 2>&1; then
       echo "self-test failed: $desc should have failed but passed" >&2
       exit 1
-    else
-      echo "self-test ok: $desc correctly failed"
     fi
+    echo "self-test ok: $desc correctly failed"
   }
 
   expect_pass() {
-    local desc="$1"
-    local tmpRoot="$2"
-    if ! (check_root "$tmpRoot") >/dev/null 2>&1; then
+    local desc="$1" t="$2"
+    if ! (check_root "$t") >/dev/null 2>&1; then
       echo "self-test failed: $desc should have passed but failed" >&2
-      (check_root "$tmpRoot") 2>&1 | head -n 20 >&2
+      (check_root "$t") 2>&1 | head -n 20 >&2
       exit 1
-    else
-      echo "self-test ok: $desc correctly passed"
     fi
+    echo "self-test ok: $desc correctly passed"
   }
 
   tmpBase=$(mktemp -d)
   trap 'rm -rf "$tmpBase"' EXIT
+  n=0
+  # fixture: a fresh valid tree, echoed as its path.
+  fixture() { n=$((n + 1)); local t="$tmpBase/t$n"; make_valid "$t"; echo "$t"; }
+  # add_line FILE LINE: append a line to a fixture file.
+  add_line() { printf '%s\n' "$2" >> "$1"; }
 
-  # 1. malformed column count — 8 fields instead of 7
-  t="$tmpBase/t1"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | Extra | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "malformed column count" "$t"
+  t=$(fixture)
+  expect_pass "valid registry and tags" "$t"
 
-  # 2. missing/invalid ID
-  t="$tmpBase/t2"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| BAD-001 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "missing/invalid ID" "$t"
+  t=$(fixture)
+  longReq=$(printf 'a%.0s' {1..2000})"∪∪"
+  printf '\n- **ARC-997** The catalog shall %s. [verified]\n  Example: Given %s.\n  Implemented in: `OtosKit/Foo.swift`\n' "$longReq" "$longReq" >> "$t/docs/requirements.md"
+  expect_pass "long multibyte item (no length cap)" "$t"
 
-  # 3. long requirement cell (401 chars) — no length cap, should pass
-  t="$tmpBase/t3"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  longReq=$(printf 'a%.0s' {1..401})
-  echo "| ARC-999 | $longReq | Acc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "long requirement (no length cap)" "$t"
+  t=$(fixture)
+  add_line "$t/docs/requirements.md" '  Status: Proposed'
+  expect_fail "Proposed status" "$t"
 
-  # 4. long acceptance cell (401 chars) — no length cap, should pass
-  t="$tmpBase/t4"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  longAcc=$(printf 'a%.0s' {1..401})
-  echo "| ARC-999 | Req | $longAcc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "long acceptance (no length cap)" "$t"
+  t=$(fixture)
+  add_line "$t/docs/requirements.md" '## Future Requirements'
+  expect_fail "future-requirement section" "$t"
 
-  # 5. forbidden implementation token
-  t="$tmpBase/t5"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req with animatingDifferences | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "forbidden implementation token" "$t"
+  t=$(fixture)
+  add_line "$t/docs/requirements.md" '## Process'
+  expect_fail "process section" "$t"
 
-  # 6. missing implementation/test path
-  t="$tmpBase/t6"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/NoSuch.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "missing implementation path" "$t"
+  t=$(fixture)
+  printf '\n- **BAD-001** The catalog shall exist.\n  Example: x.\n  Implemented in: `OtosKit/Foo.swift`\n  unverified: none yet\n' >> "$t/docs/requirements.md"
+  expect_fail "unrecognized ID" "$t"
 
-  # 7. missing Swift test symbol
-  t="$tmpBase/t7"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#noSuchTest` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "missing Swift test symbol" "$t"
+  t=$(fixture)
+  sed -i.bak 's/keep one row per file/keep one row per file with animatingDifferences/' "$t/docs/requirements.md"
+  expect_fail "implementation token" "$t"
 
-  # 8. manual: verification
-  t="$tmpBase/t8"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | manual: do thing |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
+  t=$(fixture)
+  sed -i.bak 's/move its row/move its row within 250 ms/' "$t/docs/requirements.md"
+  expect_fail "bare timing constant" "$t"
+
+  t=$(fixture)
+  sed -i.bak 's/unverified: the wording.*/manual: read the window/' "$t/docs/requirements.md"
   expect_fail "manual: verification" "$t"
 
-  # 9. invalid verification grammar (no backtick proof nor unverified)
-  t="$tmpBase/t9"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | some random text |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "invalid verification grammar" "$t"
+  t=$(fixture)
+  sed -i.bak '/Given a file, the catalog/d' "$t/docs/requirements.md"
+  expect_fail "missing Example: line" "$t"
 
-  # 10. one valid named proof — should pass
-  t="$tmpBase/t10"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "one valid named proof" "$t"
+  t=$(fixture)
+  python3 -c 'import sys; p = sys.argv[1]; s = open(p).read(); open(p, "w").write(s.replace("  Implemented in: `OtosKit/Foo.swift`\n", "", 1))' "$t/docs/requirements.md"
+  expect_fail "missing Implemented in: line" "$t"
 
-  # 11. one valid bounded unverified entry — should pass
-  t="$tmpBase/t11"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | unverified: ledger release not yet proven until Stage 4 |' >> "$t/docs/requirements.md"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "one valid bounded unverified entry" "$t"
+  t=$(fixture)
+  sed -i.bak 's#`OtosKit/Foo.swift`#`OtosKit/NoSuch.swift`#' "$t/docs/requirements.md"
+  expect_fail "missing Implemented in: path" "$t"
 
-  # 12. script self-test proof — should pass when symbol exists
-  t="$tmpBase/t12"; mkdir -p "$t/docs" "$t/script"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `script/foo.sh#testBar` |' >> "$t/docs/requirements.md"
-  echo -e "#!/usr/bin/env bash\n# testBar" > "$t/script/foo.sh"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "valid script self-test proof" "$t"
+  t=$(fixture)
+  { echo "$tag"; echo 'let notATest = 1'; } >> "$t/OtosTests/FooTests.swift"
+  expect_fail "tag not above a test" "$t"
 
-  # 13. missing script self-test symbol — should fail
-  t="$tmpBase/t13"; mkdir -p "$t/docs" "$t/script"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `script/foo.sh#noSuch` |' >> "$t/docs/requirements.md"
-  echo -e "#!/usr/bin/env bash\n# testBar" > "$t/script/foo.sh"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "missing script self-test symbol" "$t"
+  t=$(fixture)
+  { echo "$tag"; echo '@Test func neverFails() { let x = 1; _ = x }'; } >> "$t/OtosTests/FooTests.swift"
+  expect_fail "tagged test with no failing assertion" "$t"
 
-  # 14. multibyte — 400 chars must pass (length cap removed, kept as regression)
-  t="$tmpBase/t14"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  mbReq=$(printf 'a%.0s' {1..398})"∪∪"
-  echo "| ARC-999 | $mbReq | Acc | \`OtosKit/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_pass "multibyte 400 chars passes (no length cap)" "$t"
-
-  # 15. tautological Swift proof — must fail
-  t="$tmpBase/t15"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  printf '%s\n' '| ARC-999 | Req | Acc | `OtosKit/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  printf '%s\n' 'import Foundation' 'func testFoo() { #expect(true, "tautology") }' > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/OtosKit"; touch "$t/OtosKit/Foo.swift"
-  expect_fail "tautological Swift proof" "$t"
+  t=$(fixture)
+  { echo "$tag"; echo '@Test func tautology() { #expect(true, "always") }'; } >> "$t/OtosTests/FooTests.swift"
+  expect_fail "tagged tautological test" "$t"
 
   rm -rf "$tmpBase"
   trap - EXIT

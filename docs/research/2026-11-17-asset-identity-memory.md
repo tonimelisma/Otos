@@ -2,7 +2,7 @@
 
 ## Question
 
-A heap of the owner's idle app after a full tour (installed 5f77e2e5, about 159,000 items in
+A heap of the installed app, idle on the reference library, after a full tour (installed 5f77e2e5, about 159,000 items in
 All Media, 103,000 faces) held 324 MB live in 1.41 M nodes, and about 190 MB of it was asset
 identity: 590,952 `Swift.StringStorage` (57.5 MB), 11,744 `[MediaAssetID]` (55.8 MB), 5,879
 `Set<MediaAssetID>` (16.8 MB), three `[MediaAssetID: Int]` (19.4 MB), one
@@ -11,7 +11,7 @@ each, and what is the smallest design that holds identity without them?
 
 ## Method
 
-A probe test on a generated catalog of the owner's shape (`OwnerShapedCatalog`, scale 1:
+A probe test on a generated catalog of the reference library's shape (`ReferenceShapedCatalog`, scale 1:
 166,990 rows, 159,382 in All Media, 102,979 faces) in the test host, Debug, with
 `MallocStackLogging=lite`. It builds the window's whole stack as the app does
 (`CatalogWindowViewModel` with People, Duplicates, the search index and place names
@@ -22,14 +22,14 @@ window's intents: All Media, the newest import, a library, People, the most phot
 person, Places, On This Day (Duplicates showed no row yet), All Media, three searches (the
 search index never answered in the test host; each waited 90 s), a kind filter, a name sort,
 and back. Then `heap -s`, `heap --addresses`, `malloc_history` for each block's allocation
-stack, and `leaks --trace` for the path from a root to each large block. Never on the owner's
+stack, and `leaks --trace` for the path from a root to each large block. Never on the installed
 app. The probe was not landed.
 
 `MemoryLayout<MediaAssetID>.stride` was 56 bytes (two path types of a `String` and a
-fingerprint each, and a fingerprint of the pair), not 16: 55.8 MB of ID arrays on the owner's
+fingerprint each, and a fingerprint of the pair), not 16: 55.8 MB of ID arrays on the installed app's
 heap is about 1.0 M IDs, about 6 per asset, not 22.
 
-## Results: who holds it (generated owner shape, after the tour)
+## Results: who holds it (generated reference shape, after the tour)
 
 Heap: 900,615 nodes, 283.7 MB live; footprint 405 MB.
 
@@ -47,11 +47,11 @@ Heap: 900,615 nodes, 283.7 MB live; footprint 405 MB.
 | `CatalogStacks` | `stackedMembers` `Set`, `pairOfMember` | 10,768 each | 0.9 + 1.6 MB | the collapse's probe and lookup |
 | `PhotoStackCollapse.Result` | `tiles` `[ID: TileStacks]`, `shownForHiddenMember`, `stackedPositions` | 5,384 / 5,384 / 10,768 | 2.7 + 0.9 + 1.0 MB | the window's stack tiles |
 | People (`keyOfMember` merged) | `[MediaAssetID: MediaAssetID]` | 10,768 | 1.8 MB | a face's photo to its stack's key |
-| `DuplicatesGateway.fetchSamePhotoCandidates` | `[SamePhotoCandidate]` | 144,391 | 50 MB | a Duplicates build in flight (on the owner's idle heap 4.5 MB) |
-| search text tokenizer (other owner) | `[[UInt8]: Int32]`, `[UInt64: UInt64]`, 258 k `[UInt8]` | — | ~40 MB on the owner's heap | the SigLIP vocabulary and merges; not in this probe (no query reached it) |
-| search index (other owner) | `rowOf: [MediaAssetID: Int32]` | ~165,000 | 16.8 MB on the owner's heap | the vector file's row of each asset |
+| `DuplicatesGateway.fetchSamePhotoCandidates` | `[SamePhotoCandidate]` | 144,391 | 50 MB | a Duplicates build in flight (on the installed app's idle heap 4.5 MB) |
+| search text tokenizer (other owner) | `[[UInt8]: Int32]`, `[UInt64: UInt64]`, 258 k `[UInt8]` | — | ~40 MB on the installed app's heap | the SigLIP vocabulary and merges; not in this probe (no query reached it) |
+| search index (other owner) | `rowOf: [MediaAssetID: Int32]` | ~165,000 | 16.8 MB on the installed app's heap | the vector file's row of each asset |
 
-The 11,744 arrays and 5,879 sets on the owner's heap are mostly the stacks: 5,384 pairs hold
+The 11,744 arrays and 5,879 sets on the installed app's heap are mostly the stacks: 5,384 pairs hold
 10,768 arrays and 5,384 sets of one or two IDs each. The bytes are in a few large structures:
 the orders, the window's position index, the change log and People's photos, each 56 bytes an
 ID, and the strings every ID carried.
@@ -90,14 +90,14 @@ A blank slate holds an asset's identity as a small value and its path once:
   buys less than 2 MB and is not done. The change log's sets and People's photos shrink the
   same way.
 - **Cost.** The table grows by one entry per distinct pair the process names, about 24 bytes
-  of entry, the path's bytes and 8 bytes of index; on the owner's 167,000 rows about 15 MB,
+  of entry, the path's bytes and 8 bytes of index; on the reference catalog's 167,000 rows about 15 MB,
   held for the session. Making an ID takes one lock, a hash probe and a byte compare; reading
   its path takes the lock and copies the bytes into a new string.
 
 ## Results: after
 
 The same probe and sequence on `main` (5f77e2e5) and with the table, both without stack
-logging (the attribution run above had it on), Debug test host, the generated owner shape at
+logging (the attribution run above had it on), Debug test host, the generated reference shape at
 scale 1. Footprint is the process's own `phys_footprint` after each step; the live heap is
 `heap -s` at the end, held idle.
 
@@ -123,14 +123,14 @@ as its collapse's input). What remains on the heap is Duplicates' candidate
 read in flight (25 MB, half of `main`'s now that each candidate's ID is 4 bytes), the order's
 day and capture arrays, People's face columns, and SQLite's own.
 
-`WindowMemoryTests` at the owner's size (`OTOS_SCALE_TEST=1`, background owners off, 20
+`WindowMemoryTests` at the reference library's size (`OTOS_SCALE_TEST=1`, background owners off, 20
 scope changes each with a whole re-read): the held structures hold 335,170 IDs for 164,766
 assets (2.03 per asset, 8.1 bytes per asset; 659,826 references), the same after 20 steps as
 after the first, and the identity table held 164,766 entries at both checkpoints: a re-read
 names no new pair. The test process's footprint after the 20 steps was 144 MB, against 212
 and 220 MB on `main` when that test counted path strings
 (`docs/research/2026-11-16-shared-path-strings.md`); the test now bounds it at 180 MB at the
-owner's size.
+reference library's size.
 
 Not measured until the next daily run: the benchmark cases that make or compare IDs in bulk
 (the window's apply, the projection's window state, Duplicates' build, People's pass).

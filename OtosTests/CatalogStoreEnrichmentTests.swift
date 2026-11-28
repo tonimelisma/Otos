@@ -7,6 +7,7 @@ import Testing
 struct CatalogStoreEnrichmentTests {
     // MARK: - Pure model: staleness signature and best-date
 
+    // Validates: ENR-006, ENR-007
     @Test func needsEnrichmentTracksSizeAndMtimeSignature() {
         let m1000 = Date(timeIntervalSince1970: 1000)
         let m2000 = Date(timeIntervalSince1970: 2000)
@@ -20,6 +21,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(touched.needsEnrichment(.products))
     }
 
+    // Validates: ENR-013
     @Test func missingOrMismatchedHashSignatureMakesCurrentAssetStale() {
         let modified = Date(timeIntervalSince1970: 1000)
         #expect(
@@ -53,6 +55,7 @@ struct CatalogStoreEnrichmentTests {
         )
     }
 
+    // Validates: ENR-007
     /// ENR-007: a `.removableVolume` source is never hashed in place (ADR 0018), so
     /// hash staleness is gated behind the claim — a metadata-current removable
     /// asset with no digest is fully enriched, while the same asset on a library root
@@ -72,6 +75,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(noHash.hashStale)
     }
 
+    // Validates: ENR-005
     /// A stored record that does not decode is an error, never an asset without metadata.
     @Test func anUndecodableMetadataRecordIsAnErrorNotAbsence() {
         #expect(throws: DecodingError.self) {
@@ -81,6 +85,7 @@ struct CatalogStoreEnrichmentTests {
 
     // MARK: - Store: rescan merge, persistence, and purge
 
+    // Validates: ENR-007
     @Test func rescanPreservesEnrichmentAndMtimeChangeMakesStale() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -138,6 +143,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.needsEnrichment(.products) == true)
     }
 
+    // Validates: ENR-005
     @Test func enrichmentPersistsAndReloads() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -193,6 +199,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.needsEnrichment(.products) == false)
     }
 
+    // Validates: ENR-007
     @Test func malformedStoredHashIsUnavailableAndStale() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -368,6 +375,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(afterSecond.captureLocalTime == CaptureLocalTime(readingOf: Date(timeIntervalSince1970: 500)))
     }
 
+    // Validates: ARC-033, ARC-053
     /// Overlay reuse clones the source's *stored* timestamp truth, and both date
     /// projections are rebuilt from it at the destination. Before the
     /// deduplication the destination's `ts_*_unix` values were copied from the
@@ -471,6 +479,7 @@ struct CatalogStoreEnrichmentTests {
         )
     }
 
+    // Validates: ARC-033, ENR-004
     @Test func provenDeletionPurgesThumbnailFile() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -566,6 +575,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(snapshot.testAssets.isEmpty)
     }
 
+    // Validates: ARC-053, ENR-004
     @Test func enrichmentWithoutThumbnailStampsDefinitiveUnavailableOutcome() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -609,6 +619,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(detail.renderedSourceMTimeSeconds == 1000)
     }
 
+    // Validates: ARC-053
     /// ARC-053: the copy is the card file, byte for byte, so each of the card's products
     /// becomes the copy's whenever its stamp names the bytes the import copied. The copy
     /// keeps the digest the import computed from it.
@@ -625,6 +636,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(!copy.needsEnrichment(.products))
     }
 
+    // Validates: ARC-053
     /// ADR 0009: a card row with its metadata but no rendering yet (its first pass) gives
     /// the copy its metadata; the rendering stays owed for enrichment.
     @Test func aCardRowWithoutARenderingGivesTheCopyItsMetadataAndOwesTheRendering() async throws {
@@ -640,6 +652,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(!copy.hashStale)
     }
 
+    // Validates: ARC-053
     /// ADR 0009 §9: a copy that settles owing a product is offered to enrichment before any
     /// other background row, because its bytes are local now and may not be once a
     /// cloud-synced library evicts it. The import itself never waits for the product.
@@ -669,6 +682,7 @@ struct CatalogStoreEnrichmentTests {
         }
     }
 
+    // Validates: ARC-053
     /// ARC-053: a card file that changed after it was enriched has an overlay for other
     /// bytes; the copy is enriched from its own.
     @Test func aCardImportWithAStaleOverlayEnrichesTheCopy() async throws {

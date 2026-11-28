@@ -48,6 +48,7 @@ struct CatalogOwnerInputsTests {
         ),
     ]
 
+    // Validates: ARC-018
     /// The oracle over the schema: every column of every table that an owner's statements
     /// read is one some kind of fact's writes change (`CatalogChangedFacts.writes`), or the
     /// owner's own. A column the table did not name would change with no owner told.
@@ -85,6 +86,7 @@ struct CatalogOwnerInputsTests {
         }
     }
 
+    // Validates: ARC-018
     /// What each owner's SQL reads, as derived: the kinds that move its work, and not its own
     /// writes or what it never reads.
     @Test func eachOwnersInputsAreWhatItsSQLReadsLessItsOwnWrites() async throws {
@@ -98,6 +100,7 @@ struct CatalogOwnerInputsTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// Rows only added wake no owner of a derived product; a removed library wakes every one.
     @Test func onlyAChangeOfAnInputTouchesAnOwner() {
         #expect(!CatalogStoreChange.assetsAdded.touches(.all))
@@ -108,6 +111,7 @@ struct CatalogOwnerInputsTests {
 
     // MARK: - Each owner's wakes, delivered through the Store
 
+    // Validates: ARC-018
     /// A change no input names (place names), the owner's own kind of write (a duplicates fact)
     /// and a change it reads (a library added), then a closing duplicates fact. Once the owner has
     /// heard every change a probe heard, it rang for exactly the changes that touch its inputs,
@@ -125,6 +129,7 @@ struct CatalogOwnerInputsTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     @Test func thePreviewFaceReaderWakesOnlyOnWhatItReads() async throws {
         let (store, library) = try await Self.store()
         let reader = PreviewFaceReader(store: store, thumbnailDirectory: nil) { _ in throw CocoaError(.featureUnsupported) }
@@ -140,6 +145,7 @@ struct CatalogOwnerInputsTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// The place name reader's own writes and a change it does not read ring nothing; a change
     /// of the user's locale, which the catalog does not hold, rings it.
     @Test func thePlaceNameReaderWakesOnItsInputsAndTheLocale() async throws {
@@ -161,6 +167,7 @@ struct CatalogOwnerInputsTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     @Test func theSearchIndexAsksForAPassOnlyOnWhatItReads() async throws {
         let (store, library) = try await Self.store()
         let index = try PhotoSearchIndex(
@@ -178,6 +185,7 @@ struct CatalogOwnerInputsTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A description waits for its still's search readings, which the Store now announces
     /// (`.searchContent`), so the writer needs no word from the search index.
     @Test func theDescriptionWriterAsksForAWalkOnlyOnWhatItReads() async throws {

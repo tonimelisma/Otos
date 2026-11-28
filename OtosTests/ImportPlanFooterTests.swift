@@ -33,6 +33,7 @@ struct ImportPlanFooterRenderedPrimaryTests {
         .tryAgain,
     ]
 
+    // Validates: APP-029
     /// APP-029: every action honors `drawn.primaryEnabled`, so the cancelling state
     /// (`primaryEnabled: false`) can never render a live button — one owner forces
     /// every case through the same derivation.
@@ -48,6 +49,7 @@ struct ImportPlanFooterRenderedPrimaryTests {
         }
     }
 
+    // Validates: APP-029
     @Test func onlyEraseIsDestructive() {
         for action in Self.allActions where action != .eraseItems(count: 3) {
             let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(
@@ -63,6 +65,7 @@ struct ImportPlanFooterRenderedPrimaryTests {
         #expect(erase.isDestructive)
     }
 
+    // Validates: APP-029
     @Test func onlyCancelIsNotDefault() {
         for action in Self.allActions where action != .cancel {
             let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(

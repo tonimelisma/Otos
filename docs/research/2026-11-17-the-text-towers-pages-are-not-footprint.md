@@ -5,7 +5,7 @@
 1. On a brand-new library the first search waits on the text tower's prediction, which read
    about 330 MB back from disk when macOS had evicted the tower's pages
    (`op=search.tower phase=predicted ms=860 pageIns=21058 diskReadMB=332`,
-   `2026-11-17-a-new-library-at-the-owners-size.md`). Is that memory part of the app's
+   `2026-11-17-a-new-library-at-the-reference-size.md`). Is that memory part of the app's
    `phys_footprint`, so that keeping it resident would cost the footprint target?
 2. What did the search field's focus do to a tower that was already prepared?
 
@@ -48,7 +48,7 @@ index to prepare (`PhotoSearchIndex.prepareForSearch`). The index's loop asked t
 prepare (`SearchQueryReader.prepare`) and the vectors to be read ahead (`MADV_WILLNEED`). The
 reader's loop asked the tower whether it was prepared and, when it was, marked the intent
 covered. It touched no model page. The 158 ms in `search.prepare phase=done admitted=false
-ms=158` on the owner's log is the index's step: the hop to the reader and the vectors'
+ms=158` on the installed app's log is the index's step: the hop to the reader and the vectors'
 advice. The log does not split the two.
 
 ## Conclusion

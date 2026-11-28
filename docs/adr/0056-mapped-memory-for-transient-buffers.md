@@ -1,4 +1,4 @@
-# ADR 0056: Transient and owner-scale buffers live in mapped memory, and a failed mapping traps
+# ADR 0056: Transient and library-scale buffers live in mapped memory, and a failed mapping traps
 
 - Status: Accepted
 - Date: 2026-11-16
@@ -15,7 +15,7 @@ and an intern table of path strings each left their freed blocks in the footprin
 `docs/research/2026-11-16-shared-path-strings.md`).
 
 Three owners keep memory outside the heap: `ScratchBuffer` (a pass's matrices and per-row
-tables of a size known at the start), `MappedArrayBuilder` (an owner-scale result whose length
+tables of a size known at the start), `MappedArrayBuilder` (a library-scale result whose length
 is learned while it is read) and `MediaAssetIdentityTable` (the process's asset identities,
 never freed). Each mapped with its own `mmap` call and its own failure handling.
 
@@ -27,7 +27,7 @@ window's reads, 0047 People's scratch) and the memory a process reports to ADR 0
 
 ## Decision
 
-- A transient buffer of 4 KB or more that is freed before the process ends, an owner-scale
+- A transient buffer of 4 KB or more that is freed before the process ends, a library-scale
   result whose length is learned while it is read, and the identity table's storage are mapped
   memory of their own. A region is unmapped when its owner lets it go, so the footprint goes
   back down when the work ends.
@@ -45,13 +45,13 @@ window's reads, 0047 People's scratch) and the memory a process reports to ADR 0
 
 - A throwing builder for the reads (the read fails, publishes nothing and stays owed, ADR
   0032 rule 4): it treats as transient a condition no allocation in the process survives, and
-  makes every owner-scale read carry an error that is never recoverable.
+  makes every library-scale read carry an error that is never recoverable.
 - Each type mapping for itself: three copies of one rule, which drifted in their messages and
   rounding.
 
 ## Consequences
 
-- A new owner of transient or owner-scale memory maps through `MappedMemory` and inherits the
+- A new owner of transient or library-scale memory maps through `MappedMemory` and inherits the
   policy; a file mapping (`SearchVectorFile`, People's vector file) is a read of a file, not
   scratch, and keeps its own failure handling.
 - The trap's line names the size asked for, so a crash report says which owner asked.

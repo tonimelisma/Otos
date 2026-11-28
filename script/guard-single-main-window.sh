@@ -10,6 +10,7 @@ check_root() {
     *) echo "FAIL: ARC-014 requires one Window and zero WindowGroup" >&2; return 1 ;;
   esac
 }
+# Validates: ARC-001, ARC-014
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
   mkdir -p "$d/OtosKit"; printf 'WindowGroup("bad") {}\n' > "$d/OtosKit/OtosApp.swift"

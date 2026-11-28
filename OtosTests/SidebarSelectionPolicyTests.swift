@@ -14,12 +14,14 @@ struct SidebarSelectionPolicyTests {
         activity: .idle
     )
 
+    // Validates: APP-002
     @Test func showsAllMediaRequiresTwoFixedLibraries() {
         #expect(!SidebarSelectionPolicy.showsAllMedia(libraries: []))
         #expect(!SidebarSelectionPolicy.showsAllMedia(libraries: [pictures]))
         #expect(SidebarSelectionPolicy.showsAllMedia(libraries: [pictures, archive]))
     }
 
+    // Validates: APP-057
     /// Places needs one fixed library to map and never a located item: the row is
     /// there to be found, and the sidebar does not reflow as enrichment finds places.
     @Test func showsPlacesRequiresOneFixedLibrary() {
@@ -30,6 +32,7 @@ struct SidebarSelectionPolicyTests {
         #expect(SidebarSelectionPolicy.showsPlaces(libraries: [pictures, archive]))
     }
 
+    // Validates: ARC-005, APP-002
     @Test func defaultSelectionPrefersConnectedRemovable() {
         let older = removableSource(
             path: "/Volumes/OLD",
@@ -64,6 +67,7 @@ struct SidebarSelectionPolicyTests {
         #expect(selection == .allMedia)
     }
 
+    // Validates: ARC-005
     @Test func selectionOnSelectedSourceRemovedMatchesDefault() {
         let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"))
         let removed = SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
@@ -92,11 +96,13 @@ struct SidebarSelectionPolicyTests {
 
     // MARK: - Selection on attach (APP-002)
 
+    // Validates: ARC-005
     @Test func selectionOnAttachSelectsANewlyAttachedCard() {
         let card = removableSource(path: "/Volumes/CARD", identity: .volume(uuid: "card"), attachmentGeneration: 1)
         #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [card]) == .library(card.path))
     }
 
+    // Validates: APP-002
     @Test func selectionOnAttachSelectsAReinsertedCardAgain() {
         let detached = removableSource(
             path: "/Volumes/CARD", identity: .volume(uuid: "card"), availability: .unavailable, attachmentGeneration: 1
@@ -106,6 +112,7 @@ struct SidebarSelectionPolicyTests {
         #expect(selection == .library(reinserted.path))
     }
 
+    // Validates: APP-002
     /// An availability or activity change is not an attach: the generation is the
     /// Store's proof that a mount happened, so a flap never moves the user again.
     @Test func selectionOnAttachIgnoresASourceWhoseAttachmentIsUnchanged() {
@@ -185,6 +192,7 @@ struct SidebarSelectionPolicyTests {
         )
     }
 
+    // Validates: APP-002, APP-029
     @Test func barOwnsStatusOnTheCardRowAndItsRunsBatchRow() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
@@ -219,6 +227,7 @@ struct SidebarSelectionPolicyTests {
             == .determinate(completed: 3, total: 10))
     }
 
+    // Validates: APP-002
     @Test func removableIndicatorHidesWhenBarOwnsStatus() {
         let pres = Self.presentation(state: .inventory)
         #expect(SidebarSelectionPolicy.removableIndicator(
@@ -243,6 +252,7 @@ struct SidebarSelectionPolicyTests {
         #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .none)
     }
 
+    // Validates: APP-002
     @Test func batchIndicatorHidesWhereverTheBarIsDrawn() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(

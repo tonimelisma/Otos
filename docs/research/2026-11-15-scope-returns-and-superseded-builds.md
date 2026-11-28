@@ -2,7 +2,7 @@
 
 ## Question
 
-On the installed build 3b5142ab (owner's catalog: 164,747 assets, 4,829 day sections, three
+On the installed build 3b5142ab (reference catalog: 164,747 assets, 4,829 day sections, three
 libraries and an Immich account enriching in the background, load average 60–104 on 8 cores)
 a sidebar click painted the library-sized scopes far over a second:
 
@@ -20,7 +20,7 @@ scope that is not drawn by the grid never measured?
 
 ## Method
 
-- The log excerpts of the owner's session quoted in the brief, and, before the owner's rule
+- The log excerpts of the reference session quoted in the brief, and, before the rule
   against reading the installed app's log arrived, one `log show` of the same session
   (12:09–12:17) for the lines around them. Nothing else was read from the installed app or
   its catalog; the file was deleted.

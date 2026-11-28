@@ -65,12 +65,12 @@ consumes them; use a log line instead.
   root: a Time Profiler trace attached to the pid, footprint and memory by region at each
   moment, disk, CPU and energy counters for Otos and every readable process, the
   neighbours' memory, folder sizes before and after, network bytes, and one
-  `summary.md`/`summary.json` holding names, counts and sizes only
+  summary.md/summary.json holding names, counts and sizes only
   (`docs/research/2026-11-16-broad-survey-static.md`).
 
 ### The performance loop's instruments
 
-Performance is judged on what the owner feels, on his library (owner, 2026-11-16). The
+Performance is judged on what the user feels, on the reference library. The
 weekly run (ADR 0043) owns when it is measured and what a miss means. These instruments are
 what the run's tour and a diagnosis read. The benchmarks' instruction counts cannot see a
 read waiting for a connection, a cold disk read, memory pressure, owners waking each other
@@ -115,8 +115,8 @@ or a real backlog, and these can:
   session (`MACHINE`: the level at launch, each change, seconds at each level) and the
   process tree's CPU and footprints, and judges `machine.pressureCaused`: from a launch at
   `normal`, a level that left `normal` came while Otos was the new workload (FAIL), except
-  the seconds description writing accounts for, which the owner accepts (2026-11-18: "OS will
-  swap running apps"; ADR 0057 decision 8): an episode above normal whose memory hold began
+  the seconds description writing accounts for, which is accepted because the OS
+  swaps running apps out (ADR 0057 decision 8): an episode above normal whose memory hold began
   with a description request running (`op=load.admission phase=memoryHold held=true
   running=description`) is the descriptions' whole, and in any other episode the seconds a
   request ran (its `phase=granted` time plus its `phase=released` `ms`) are; a session whose
@@ -134,7 +134,7 @@ or a real backlog, and these can:
   sort and sit idle, each through the gesture's own intent and each waiting on the fact
   the app reports (a paint, the visible thumbnails, the loupe's image, a query's state),
   then put the window back and quit. A tour writes no preference: its session's domain is
-  session-only (ADR 0020), so a tour ended at any point leaves the owner's saved place and
+  session-only (ADR 0020), so a tour ended at any point leaves the user's saved place and
   zoom as they were. A scroll ends when every visible tile shows what the
   catalog holds for it now (its detail read, and its thumbnail decoded or none rendered
   yet), on a report whose visible set holds the step's target; the report counts the
@@ -160,10 +160,10 @@ or a real backlog, and these can:
   (`script/sandbox-library.sh`, `script/scorecard.sh --seed <photos>`): a sparse APFS image
   mounted inside the sandbox home holding generated photos (words, skies, near-duplicates,
   GPS, anniversaries) and two short videos, either camera-size photos in one folder or, for
-  a library of the owner's size (`--seed 160000 --seed-media small`), 64 × 64 JPEGs of a few
+  a library of the reference size (`--seed 160000 --seed-media small`), 64 × 64 JPEGs of a few
   KB in a year / month / ten-day folder tree with the features a small share of it, so the
   costs that grow with the library (the window's apply and grid edit, the projection's
-  re-read, the Store's write) are met at his size without his library taking an act;
+  re-read, the Store's write) are met at the reference size without a real library taking an act;
   registered by the app itself through the
   window's Add Library intent (`OTOS_SANDBOX_LIBRARY`, `SandboxLibrary`, ADR 0020). After
   every tour in it the account's Trash is tested by path for each generated file; one found
@@ -215,7 +215,7 @@ or a real backlog, and these can:
   `--compare` reads a field an older saved scorecard lacks as unknown. `--tour` runs a tour and saves the scorecard
   under `build/scorecards/`. A tour is read from a live capture of its session, not from the
   log's store, which rotates a busy session's lines out before `log show` reads them (two
-  owner-size tours lost their act lines that way). The capture is one `log stream --style
+  reference-size tours lost their act lines that way). The capture is one `log stream --style
   compact --level info` of the toured executable (no line it reads is logged at debug). It opens before the launch and closes
   once a marker logged after the app's exit has come through. Compact style is used because
   it is the style in which the stream reports what it dropped; the JSON styles drop silently
@@ -259,7 +259,7 @@ or a real backlog, and these can:
   the kind is a launch tour's. Every tour ends by logging each owner's status, so a session
   whose owners never all settled names them and what each owed, ran or held. `--optimized` with `--dev` first builds the dev app with the
   installed app's compiler settings (ADR 0030) into a DerivedData of its own, so a sandbox
-  tour times the code the owner runs; `--ablation-matrix` tours with every owner off, each alone
+  tour times the code the installed app runs; `--ablation-matrix` tours with every owner off, each alone
   and none off, in one table. It never fails a run and is not part of `script/check.sh`; its
   parser is tested there against synthetic lines. Its `FAIL` rows decide a verdict in one place
   only, the weekly run (ADR 0043).
@@ -274,7 +274,7 @@ or a real backlog, and these can:
 | MetricKit hang diagnostics for stall attribution | Delivered to the app later in a payload, not beside the stall's own log line; the agent reads logs as the stall happens |
 | Time Profiler as the only way to name a stalled frame | A stall at launch, or one that happens once a day, is over before a trace can be attached |
 | A periodic memory sampler | The kernel keeps the lifetime peak footprint, and the events a user feels already checkpoint it |
-| The benchmarks as the measure of a performance fix | They count CPU work on a generated catalog; the waits, cold reads and memory the owner feels never reach them |
+| The benchmarks as the measure of a performance fix | They count CPU work on a generated catalog; the waits, cold reads and memory the user feels never reach them |
 
 ## Consequences
 

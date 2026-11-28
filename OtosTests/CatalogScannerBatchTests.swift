@@ -5,9 +5,10 @@ import Testing
 /// How a walk hands its files to the Store: its first `CatalogScanner.firstBatchCount` files
 /// at once, the rest on the cadence, so a new library's first rows are written in tens of
 /// milliseconds rather than after a cadence's worth of files
-/// (`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+/// (`docs/research/2026-11-17-a-new-library-at-the-reference-size.md`).
 @Suite(.testScope)
 struct CatalogScannerBatchTests {
+    // Validates: ARC-019
     /// With a cadence that never elapses, the first batch is cut by its count alone and the
     /// rest goes out at the walk's end: no time decides either.
     @Test func aWalksFirstBatchGoesOutAtItsCountAndTheRestOnTheCadence() async throws {
@@ -30,6 +31,7 @@ struct CatalogScannerBatchTests {
         #expect(await batches.sizes == [CatalogScanner.firstBatchCount, 44])
     }
 
+    // Validates: ARC-019
     /// A walk with fewer files than a first batch hands them over once, at its end.
     @Test func aWalkSmallerThanAFirstBatchHandsItsFilesOverOnce() async throws {
         let root = try makeTestDirectory().appending(path: "Pictures", directoryHint: .isDirectory)

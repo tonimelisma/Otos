@@ -1,6 +1,6 @@
 # Research: destination free space and import failure recovery (2026-09-09)
 
-The owner clicked `Import 38 Items` on an attached SD card and nothing appeared to
+The user clicked `Import 38 Items` on an attached SD card and nothing appeared to
 happen. A second click made the import bar disappear. This pass establishes what
 actually happened, then answers the design question the incident raised: **free space
 on the destination volume changes continuously and cannot be observed — so when, and
@@ -237,13 +237,13 @@ diagnosing and deliberately left outside it; none is a requirement.
    run mints a new batch and the first batch's row has no live presentation, so its
    bar disappears until the selection resolves elsewhere. `import-bar.md` describes
    two rows onto *the same* operation and does not say whether a superseded batch
-   row keeps its own finished operation's bar — an owner decision.
+   row keeps its own finished operation's bar — a product decision.
 10. **Auto-eject after a completed import failed with `fBsyErr: File is busy`**
     (2026-09-13, 17:57:37) — fixed: the auto path had skipped the reader drain and
     dropped the outcome. It now fires the same intent as the sidebar's eject
     control, retries a busy volume on a bounded schedule, and shows the alert if
     it still cannot.
-11. **Advisory line in Ready — decided and built** (owner, 2026-09-13): `Not
+11. **Advisory line in Ready — decided and built** (2026-09-13): `Not
     everything will fit yet · 37.7 GB available`, sampled on each Ready publish,
     gating nothing (ADR 0027).
 

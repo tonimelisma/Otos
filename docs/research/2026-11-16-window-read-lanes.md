@@ -1,12 +1,12 @@
 # Window read lanes (plan 0116 bet 5)
 
 Date: 2026-11-16. Method: `StallReproductionTests.windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`
-(`OTOS_SCALE_TEST=1 script/check.sh --only StallReproductionTests`) on a generated owner-size
-catalog (`OwnerShapedCatalog`, scale 1: 166,990 assets, 2.16 GB), the test target unoptimized.
+(`OTOS_SCALE_TEST=1 script/check.sh --only StallReproductionTests`) on a generated reference-size
+catalog (`ReferenceShapedCatalog`, scale 1: 166,990 assets, 2.16 GB), the test target unoptimized.
 A quiet replay times every read alone; then every background owner runs
 (`RunningBackgroundOwners`) while the window's reads of five scope changes, three rounds, are
 asked together (order, filter options and imports at once, then the visible tiles) and timed
-from their ask. The summary lines are `build/stall-reproduction/owner.txt`; the reads' own
+from their ask. The summary lines are `build/stall-reproduction/reference.txt`; the reads' own
 `op=catalog.store.query.order` lines give the sub-spans. No benchmark was run.
 
 ## The design
@@ -50,7 +50,7 @@ machine: no window read waits for a connection longer than 250 ms while every ow
 live store's stall threshold); each window read visits at most four rows per row it returns or
 its scope holds, its stack read at most each candidate once per index; and each walk at most
 once per drain. The answer times, live and quiet, with the load average, are reported in
-`owner.txt`; the click budget is enforced by the tour's scorecard on the owner's library.
+`reference.txt`; the click budget is enforced by the tour's scorecard on the reference library.
 
 ## Walks once per drain
 

@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelLoupeZoomTests {
+    // Validates: APP-013, APP-040
     @Test func zoomInChangesColumnsInGridAndMagnificationInLoupe() {
         let fake = FakePreviewLoader()
         let model = makeZoomModel(loader: fake)
@@ -58,6 +59,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.loupeZoomCommand?.generation != first)
     }
 
+    // Validates: APP-040
     @Test func escapeReturnsToFitThenExits() {
         let model = makeZoomModel(loader: FakePreviewLoader())
         let ids = makeIDs(count: 1)
@@ -75,6 +77,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.loupeZoomReport == nil)
     }
 
+    // Validates: APP-040
     @Test func zoomingPastTheDecodeRequestsFullResolutionOnce() async {
         let fake = FakePreviewLoader()
         let small = makeZoomImage(width: 400, height: 300)
@@ -103,6 +106,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.panePreviews[.loupe]?.id == ids[0])
     }
 
+    // Validates: APP-040
     /// The loupe shows the photo it has until the next one's decode lands, and the zoom view
     /// reports while it swaps documents: a report measured on the photo just left is not the
     /// focused photo's, so it neither becomes the zoom state nor asks for a full decode.
@@ -123,6 +127,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(await fake.requestedEdges().allSatisfy { $0 != PreviewImageLoader.fullResolution })
     }
 
+    // Validates: APP-040
     @Test func focusChangeResetsZoom() {
         let model = makeZoomModel(loader: FakePreviewLoader())
         let ids = makeIDs(count: 2)
@@ -140,6 +145,7 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(!model.canZoomIn && !model.canZoomOut)
     }
 
+    // Validates: APP-041
     /// The inspector holds one pane (APP-041): I shows Info for the current target in any
     /// mode and follows it, E switches the column to Edit, and the shown pane's key hides it.
     @Test func infoPaneFollowsTheTargetAndToggle() async throws {

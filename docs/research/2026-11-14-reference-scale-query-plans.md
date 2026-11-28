@@ -1,14 +1,14 @@
-# People, stacks, search, Duplicates and On This Day reads at owner scale (2026-11-14)
+# People, stacks, search, Duplicates and On This Day reads at reference-library scale (2026-11-14)
 
 ## Question
 
 The reads added for People (ADR 0047), stacks (ADR 0052), search (ADR 0048), Duplicates
 (ADR 0042, #739, #740) and On This Day (ADR 0049) were checked with `EXPLAIN QUERY PLAN` on a
-20,000-row catalog only. What do their plans and times look like on the owner's catalog?
+20,000-row catalog only. What do their plans and times look like on the reference catalog?
 
 ## Method
 
-- **Catalog:** an APFS clone of the owner's backup
+- **Catalog:** an APFS clone of the reference catalog's backup
   (`build/catalog-backups/catalog-v51-before-second-fixes.sqlite`: 166,555 rows, 147,024 of
   them one Immich account's, 91,558 faces, 82,085 with a person, 14,614 for the most
   photographed person, 165,217 search embeddings, 11,025 text readings), opened by
@@ -65,7 +65,7 @@ a large table and no temporary B-tree over one.
 ## Conclusions
 
 - The person read was a defect on a path the window waits on: opening a person never
-  finished on the owner's catalog. v54's index makes it one seek per row; the plan is pinned
+  finished on the reference catalog. v54's index makes it one seek per row; the plan is pinned
   by `CatalogStoreQueryPlanTests.whetherARowHoldsAPersonIsOneSeekByPersonAndPhoto`.
 - The Duplicates copies read and the Duplicates scope grouped every row of their roots in a
   temporary B-tree; both now walk the digest index alone, pinned by

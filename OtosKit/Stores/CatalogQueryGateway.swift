@@ -181,7 +181,7 @@ nonisolated enum CatalogQueryGateway {
         // the day buckets and a keyed re-read's placement need it under that order alone, and
         // no other order index holds it. Read under the name or size order, it was the table
         // row of every row returned: 20,317 pages for All Media's 20,325 videos by name on the
-        // owner's catalog, 1.1 s cold, against 6,271 without it
+        // reference catalog, 1.1 s cold, against 6,271 without it
         // (`docs/research/2026-11-17-every-order-the-window-asks-for.md`). Under the likeness
         // order, which walks a date index, it is not read either: nothing groups by it.
         let captureColumn = descriptor.effectiveSort.field == .bestDate ? "media_asset.best_capture_local" : "NULL"
@@ -323,8 +323,8 @@ nonisolated enum CatalogQueryGateway {
     /// key and what tests a row's visibility: the date order index holds no format, so walking
     /// it would read every table row. Starting from the named cells instead read every located
     /// row of the catalog through its table row — 168,765 pages, 8.4 s cold for All Media on
-    /// the owner's catalog against 6,748 pages walking an index
-    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`) — and 21 s for an import
+    /// the reference catalog against 6,748 pages walking an index
+    /// (`docs/research/2026-11-16-window-reads-reference-catalog.md`) — and 21 s for an import
     /// batch of 210 rows (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The join
     /// order is fixed: the planner cannot tell a wide scope from a keyed one.
     static func filterOptionRowsQuery(scope: CatalogScopePredicate, pairing: RawPairing, db: Database) throws -> SQLQuery? {
@@ -349,7 +349,7 @@ nonisolated enum CatalogQueryGateway {
 
     /// The names Maps gave `cells` in `language`, each by one seek of its key: a scope's
     /// options read the names of the cells its rows give, so an import of 254 rows reads at most
-    /// its own cells' names, not the 1,435 named cells of the owner's catalog. A cell with no
+    /// its own cells' names, not the 1,435 named cells of the reference catalog. A cell with no
     /// name in `language` has none.
     static func placeCellNames(of cells: some Sequence<PlaceCell>, language: PlaceNameLanguage, db: Database) throws -> [PlaceCell: PlaceNames] {
         let statement = try db.cachedStatement(sql: placeCellNameSQL)
@@ -797,7 +797,7 @@ nonisolated enum CatalogVisibilitySQL {
     }
 }
 
-/// A face test of a photo, not of one of its copies (ADR 0054; owner, 2026-11-15: a face
+/// A face test of a photo, not of one of its copies (ADR 0054: a face
 /// named on one copy names the photo). Faces are read from each copy's own preview and stay
 /// on it, so a test of a row asks its own faces, and then — only for a row with a present
 /// copy (`has_copies`, which the window's indexes carry) — its copies' faces, through the
@@ -865,7 +865,7 @@ nonisolated enum PhotoFaceSQL {
 ///
 /// The person's rows are one range of the table's key, so the read visits only them and
 /// sorts what it finds: a few photos, or the 17,000 of the most photographed person — 803
-/// pages cold, 10–98 ms, on a generated catalog of the owner's shape, where walking the
+/// pages cold, 10–98 ms, on a generated catalog of the reference shape, where walking the
 /// catalog's order index to test each of its rows read 7,881 pages in 907 ms
 /// (`docs/research/2026-11-17-a-persons-photos-in-order.md`). The photos through a copy are
 /// the present copies of the person's photos that have copies (`idx_person_photo_copies`),
@@ -1114,7 +1114,7 @@ nonisolated enum LocationIndexSQL {
 /// reader of the digest uses, the copy triggers included (ADR 0054). It reads the stored
 /// columns, never a generated one, so `idx_media_asset_content_sha1`, which holds them with
 /// what a copy is tested by, answers a scan of every digest without a table read: SQLite
-/// never serves a virtual column from an index, and that scan took 14–30 s on the owner's
+/// never serves a virtual column from an index, and that scan took 14–30 s on the reference
 /// catalog (`docs/research/2026-11-14-one-photo-many-copies.md`).
 nonisolated enum ContentDigestSQL {
     static let indexName = "idx_media_asset_content_sha1"
@@ -1181,7 +1181,7 @@ nonisolated enum PhotoStackSQL {
 
     /// The most rows a sought order builds only its own rows' stacks for. Past it, the rows'
     /// folders hold about every candidate of the roots and their build costs more than every
-    /// stack's: on a generated catalog of the owner's shape, warm, 174 ms against 177 for a
+    /// stack's: on a generated catalog of the reference shape, warm, 174 ms against 177 for a
     /// person's 1,856 photos, 193 against 172 for 3,424, 284 against 186 for 17,284 (715 against
     /// 204 cold), and 27 against 173 for 30
     /// (`docs/research/2026-11-17-a-persons-photos-in-order.md`).
@@ -1236,7 +1236,7 @@ nonisolated enum PhotoStackSQL {
     /// a RAW, the stills of the bursts the rows and those candidates carry, and the candidates
     /// of those stills' folders that hold a RAW; a stack the rule builds there that holds none
     /// of the rows may be partial, so it is left out. Every candidate of every root was 25,700
-    /// rows for a batch of two, read in 2–7 s on the owner's loaded machine
+    /// rows for a batch of two, read in 2–7 s on the loaded test Mac
     /// (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
     static func build(
         rootPaths: [Int64: LibraryRootPath],
@@ -1434,9 +1434,9 @@ nonisolated enum PhotoStackSQL {
     /// holds two or more present stills: a pair is a RAW and a processed still of one folder,
     /// so a folder with fewer can hold none. One seek of `idx_media_asset_stack_candidate`
     /// (root, kind, folder) that stops at the second still. An Immich account stages each
-    /// asset in its own folder, so its RAWs are each alone there: on the owner's catalog 10,906
+    /// asset in its own folder, so its RAWs are each alone there: on the reference catalog 10,906
     /// of 10,917 RAW folders, whose stills were 10,906 of 25,944 candidates read for nothing
-    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+    /// (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
     private static func holdsTwoStills(_ folder: String) -> String {
         """
         (SELECT count(*) FROM (
@@ -1581,10 +1581,10 @@ nonisolated enum PhotoStackSQL {
 }
 
 /// The rows the user chose, Liked or Disliked (v71): a few dozen of a library's hundred
-/// thousand — 21 Liked and 3 Disliked on the owner's catalog — so a wide scope filtered to
+/// thousand — 21 Liked and 3 Disliked on the reference catalog — so a wide scope filtered to
 /// chosen rows seeks `indexName`, which holds exactly them with every column the order and
 /// the window's tests read, and sorts the few it finds. Walking the order instead read every
-/// row of the table: 25,897 pages for 1,647 Liked rows of an owner-shaped catalog. A filter
+/// row of the table: 25,897 pages for 1,647 Liked rows of a reference-shaped catalog. A filter
 /// that takes Not Rated rows, most of the library, walks the order.
 nonisolated enum ChosenRowsSQL {
     static let indexName = "idx_media_asset_chosen"
@@ -1781,7 +1781,7 @@ nonisolated struct SeekSize {
     let candidatesSQL: String
     let arguments: [any DatabaseValueConvertible]
     /// How many rows a walk visits for the pages one row a seek finds costs, measured on a
-    /// generated catalog of the owner's size and shape.
+    /// generated catalog of the reference size and shape.
     let walkRowsPerSoughtRow: Int
 
     static let personRatio = 40
@@ -1824,7 +1824,7 @@ private nonisolated struct ScopeClause {
     /// How a narrow scope's reads find its rows: through an index that holds them and little
     /// else. A narrow scope is a few hundred or thousand rows of a catalog of hundreds of
     /// thousands, so every read of it starts here; a read that walks an order index or every
-    /// named place cell first reads the whole catalog to find them (16–36 s on the owner's
+    /// named place cell first reads the whole catalog to find them (16–36 s on the reference
     /// catalog, `docs/research/2026-11-15-keyed-scope-query-plans.md` and
     /// `docs/research/2026-11-15-proportional-small-scopes.md`). A wide scope — whole
     /// libraries, or a part of them no index narrows — has no seek, and its reads keep their
@@ -2045,7 +2045,7 @@ private nonisolated func scopeClause(
     // reachable copy shows, and only it. The two are separate terms: SQLite tests a term with
     // a subquery after the others, and a filter's term that reads the table (a choice) would
     // then read it for every hidden copy too, which tripled the pages a Liked filter read on a
-    // generated owner-shaped catalog.
+    // generated reference-shaped catalog.
     // A scope that holds every library and account root has every best copy in reach, and
     // asks nothing more.
     if scope.showsOneCopy {
@@ -2075,9 +2075,9 @@ private nonisolated func scopeClause(
     // visibility rules so a copy waiting for the Trash makes no one else a duplicate. The
     // group subquery walks only the rows that have a current digest, in digest order, so it
     // groups without a temporary B-tree over every row of the scope
-    // (`docs/research/2026-11-14-owner-scale-query-plans.md`), and the scope's rows are then
+    // (`docs/research/2026-11-14-reference-scale-query-plans.md`), and the scope's rows are then
     // sought by the digests it found: walking every row of the catalog to test it against
-    // the groups read 150,000–190,000 pages for 126 copies on the owner's catalog
+    // the groups read 150,000–190,000 pages for 126 copies on the reference catalog
     // (`docs/research/2026-11-15-proportional-small-scopes.md`).
     switch scope.content {
     case .any:
@@ -2128,7 +2128,7 @@ private nonisolated func scopeClause(
         // copies of those photos (ADR 0054): a face on any copy is the photo's. A person of a
         // few dozen to a few thousand photos seeks them there and finds each by its key:
         // testing every row of the catalog for one of their faces read 3,500–157,000 pages per
-        // read on the owner's catalog (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
+        // read on the reference catalog (`docs/research/2026-11-15-small-scope-reads-and-tile-waits.md`).
         // A person in a large share of the catalog is tested on each row the order walks, one
         // seek of that index a row (`SeekSize`).
         let condition = "face.person_id = ? AND face.is_not_face = 0"
@@ -2196,7 +2196,7 @@ private nonisolated func scopeClause(
         // The cells the box covers hold every row inside it (`PlaceCellSQL.cells`), so an
         // area no key narrows is sought through the cell index and each row tested by its
         // own coordinate: walking the date index tested every row of the catalog, 56,000
-        // pages for 283 rows of Helsinki on the owner's catalog.
+        // pages for 283 rows of Helsinki on the reference catalog.
         let cells = PlaceCellSQL.cells(covering: area)
         predicate += """
 
@@ -2291,7 +2291,7 @@ private nonisolated func filterPredicate(
         // from it, the expression the generated cell columns are: SQLite never serves a virtual
         // column from an index, so joining by `place_cell_latitude` read the row's
         // `asset_metadata` table row, 52,000–81,000 pages for All Media on a generated catalog
-        // of the owner's shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
+        // of the reference shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
         let latitudeCell = PlaceCellSQL.cell("place_metadata.primary_latitude", cells: PlaceCellSQL.latitudeCells)
         let longitudeCell = PlaceCellSQL.cell("place_metadata.primary_longitude", cells: PlaceCellSQL.longitudeCells)
         clauses.append("""

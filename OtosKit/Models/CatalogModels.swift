@@ -788,8 +788,7 @@ nonisolated struct DeviceIdentity: Hashable, Comparable, Sendable, CustomStringC
 /// Durable saved library identity. This intentionally contains no scan status
 /// and no SQLite rowid: the path is the product identity, while storage keys stay
 /// private to persistence.
-/// How long a card or camera may go unseen before Otos forgets it (owner decision
-/// 2026-10-25, ADR 0013). A product rule, not a stand-in for a fact: no
+/// How long a card or camera may go unseen before Otos forgets it (ADR 0013). A product rule, not a stand-in for a fact: no
 /// report can say that an absent device will never return.
 nonisolated enum RemovableSourceRetention {
     static let unseenPeriod: TimeInterval = 90 * 24 * 60 * 60
@@ -2920,7 +2919,7 @@ nonisolated struct ImportBatchSummary: Equatable, Sendable {
 }
 
 /// Which import batches the window shows, and so which are counted: counting a batch stacks
-/// its folders' files, a few hundred milliseconds for the owner's 45 batches and 11,401
+/// its folders' files, a few hundred milliseconds for the reference library's 45 batches and 11,401
 /// imported rows on every pass a membership or stack fact moved, against tens for the five
 /// the sidebar shows (`docs/research/2026-11-15-import-batch-photo-counts.md`).
 nonisolated enum ImportBatchListing {

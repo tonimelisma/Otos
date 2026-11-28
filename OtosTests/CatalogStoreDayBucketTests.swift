@@ -6,6 +6,7 @@ import Testing
 /// `.bestDate` sort, and pairs them index-for-index with the returned IDs.
 @Suite(.testScope)
 struct CatalogStoreDayBucketTests {
+    // Validates: APP-030
     @Test func bestDateSortReturnsStartOfDayBucketsPairedWithIDs() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }

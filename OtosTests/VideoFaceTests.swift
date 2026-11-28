@@ -13,6 +13,7 @@ import Testing
 struct VideoFaceTests {
     // MARK: - One face per person
 
+    // Validates: ENR-031
     /// Frames of one person are one face, kept by its sharpest reading; another person in
     /// the video stays a face of their own.
     @Test func eachPersonInAVideoIsOneFaceKeptByItsSharpestReading() {
@@ -26,12 +27,14 @@ struct VideoFaceTests {
         #expect(kept.map(\.face) == [1, 0])
     }
 
+    // Validates: ENR-031
     /// Two faces of one frame are two people, however alike: twins side by side stay two.
     @Test func twoFacesOfOneFrameAreNeverOnePerson() {
         let kept = VideoFaceReader.onePerPerson([[Self.face(person: 1, quality: 0.5), Self.face(person: 1, quality: 0.4)]])
         #expect(kept.count == 2)
     }
 
+    // Validates: ENR-031
     /// A face the model cannot tell anyone by is never joined with another, as assignment
     /// never compares it with one.
     @Test func anUnrecognisableFaceIsNeverJoined() {
@@ -45,6 +48,7 @@ struct VideoFaceTests {
         #expect(kept.count == 3)
     }
 
+    // Validates: ENR-031
     /// The video's frames are each read once; the kept faces' frame is staged as one image of
     /// the face frames, which the face names by its place.
     @Test func aVideosFramesAreReadAndTheKeptFramesStaged() async throws {
@@ -77,6 +81,7 @@ struct VideoFaceTests {
         #expect(CGImageSourceGetCount(source) == 1)
     }
 
+    // Validates: ENR-031
     /// A video with no face stages nothing.
     @Test func aVideoWithNoFaceStagesNoFrames() async throws {
         let directory = try makeTestDirectory()
@@ -91,6 +96,7 @@ struct VideoFaceTests {
         #expect(read == .noneFound)
     }
 
+    // Validates: ENR-031
     /// ADR 0047: one full-resolution frame is held at a time. Each frame is
     /// analysed before the next is decoded, and none is decoded twice; a frame in which faces
     /// were found is kept only at the preview's size, which is what is staged.
@@ -135,6 +141,7 @@ struct VideoFaceTests {
 
     // MARK: - An Immich account's videos
 
+    // Validates: ENR-031
     /// An account's video is read in byte ranges from its server, never downloaded whole:
     /// its six frames are each read through the ranges the server answers.
     @Test func anAccountVideosFramesAreReadInRanges() async throws {
@@ -157,6 +164,7 @@ struct VideoFaceTests {
         #expect(remote.cost.bytes > 0)
     }
 
+    // Validates: ENR-031
     /// A server that stops answering mid-read leaves the video owed: the read is unanswered,
     /// never a video with no faces. One that answers gives the faces, and reads nothing it
     /// was not asked for.
@@ -189,6 +197,7 @@ struct VideoFaceTests {
         #expect(result.metadata == nil)
     }
 
+    // Validates: ENR-031
     /// An Immich account's video owes its faces under the account claim, beside its metadata;
     /// a camera's videos are never read for faces.
     @Test func anAccountVideoOwesItsFacesUnderTheAccountClaim() {
@@ -291,6 +300,7 @@ struct VideoFaceTests {
         }
     }
 
+    // Validates: ENR-031
     /// its faces come from its preview, and no claim but a library's reads them.
     @Test func aLibraryVideoOwesItsFacesAndAStillNever() {
         let video = Self.asset(name: "clip.mov", kind: .video, facesStamped: false)
@@ -306,6 +316,7 @@ struct VideoFaceTests {
 
     // MARK: - The catalog
 
+    // Validates: ENR-031
     /// A video's reading stores each face with its frame, promotes the frames, and shows the
     /// face as a video's: its tile is cut from its frame. Before, the video counts as one not
     /// yet checked; removing the library deletes the frames.
@@ -338,6 +349,7 @@ struct VideoFaceTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-018, ENR-031
     /// A new reading that finds no face takes the video's faces and its frames, and says its
     /// images changed: the face tiles were cut from those frames.
     @Test func aReadingWithNoFaceDeletesTheFrames() async throws {
@@ -369,6 +381,7 @@ struct VideoFaceTests {
 
     // MARK: - Words
 
+    // Validates: APP-072
     /// A count says what it holds: photos until one is a video, videos when all are.
     @Test func aCountNamesWhatItHolds() {
         #expect(MediaCount(photos: 1).text == "1 photo")
@@ -472,6 +485,7 @@ struct VideoFaceTests {
 }
 
 extension VideoFaceTests {
+    // Validates: ENR-031
     /// A library video whose faces cannot be read keeps every other product: its metadata,
     /// digest and thumbnail are made and returned, and only the faces stay owed, as their own
     /// outcome, which names whether this video or the model failed. Never `.transient`.
@@ -504,6 +518,7 @@ extension VideoFaceTests {
         }
     }
 
+    // Validates: ENR-023
     /// A video's re-read carries what the user said by likeness, not by box: its boxes belong
     /// to the frames they were read in, so the box a named face had can hold someone else in
     /// the frame a re-read keeps.
@@ -530,6 +545,7 @@ extension VideoFaceTests {
 }
 
 extension VideoFaceTests {
+    // Validates: ENR-031
     /// ADR 0047: while the face model cannot be loaded, a library video that owes only its
     /// faces is never claimed. Counted by the claim writes the catalog sees: a held wake writes
     /// no claim and no release for it; an admitted wake claims it once, for its faces alone.
@@ -599,6 +615,7 @@ extension VideoFaceTests {
 // MARK: - A video AVFoundation cannot decode
 
 extension VideoFaceTests {
+    // Validates: ENR-031
     /// A library video whose bytes AVFoundation says it cannot parse is read, as holding no
     /// face, by the decoder that said so: the read is complete, its faces are stamped, and it
     /// neither owes faces nor counts as unchecked, so it is not read again on every wake. The
@@ -635,6 +652,7 @@ extension VideoFaceTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ENR-031
     /// A video the reader decodes is decoded, so a verdict an earlier read left is cleared.
     @Test func aVideoTheReaderDecodesIsDecoded() async throws {
         let directory = try makeTestDirectory()
@@ -657,6 +675,7 @@ extension VideoFaceTests {
         #expect(result.decodeVerdict == .decoded)
     }
 
+    // Validates: ENR-031
     /// Only AVFoundation's word that it cannot decode the bytes is a verdict, by domain and
     /// code, and for a truncated AVI's `unknown` by its underlying status. Another unknown error, a failed decode (which the same video has answered once and
     /// then read cleanly), a network error and a failed analysis are failed reads.
@@ -694,7 +713,7 @@ extension VideoFaceTests {
 extension VideoFaceTests {
     /// The fixture with its video track's codec renamed to VP9, which this Mac has no decoder
     /// for: AVFoundation answers every frame of it `noSourceTrack` over -12430, as it does the
-    /// owner's VP9 movies.
+    /// reference library's VP9 movies.
     static func noDecoderVideo() throws -> Data {
         var data = try Data(contentsOf: fixture)
         let description = try #require(data.firstRange(of: Data("stsd".utf8)))
@@ -703,6 +722,7 @@ extension VideoFaceTests {
         return data
     }
 
+    // Validates: ENR-031
     /// A video whose track AVFoundation says it cannot decode is read, before any frame is
     /// asked for, as one no decoder reads: a library's is stamped with no faces by the frame
     /// reader's decoder, and an account's too, read in ranges — never a read left owed and
@@ -740,6 +760,7 @@ extension VideoFaceTests {
         }
     }
 
+    // Validates: ENR-031
     /// A sampled frame AVFoundation fails to decode is read at the sync frame near it, and
     /// says so; one whose fallback does not exist, or whose error is not a failed decode, is
     /// still a failed read.
@@ -778,6 +799,7 @@ extension VideoFaceTests {
         #expect(heard.withLock { $0 } == 1)
     }
 
+    // Validates: ENR-031
     /// The sync frame for a frame that is not one is the next sync frame, else the last
     /// before it; a sync frame has none, since nothing but the decoder can fail it.
     @Test func aFramesSyncFrameIsTheNextElseTheLast() async throws {

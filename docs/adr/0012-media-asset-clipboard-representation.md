@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted; rewritten 2026-11-26 by the owner's decision to download a cloud-only original
-before it is copied ("yes, download before copying"). Which file is copied for a photo is ADR
+Accepted; rewritten 2026-11-26 by the decision to download a cloud-only original
+before it is copied. Which file is copied for a photo is ADR
 0037's (the original, or a full-size file prepared for an edited photo or a RAW); this ADR owns
 what the pasteboard carries for it, when it is written, and that the file is on this Mac.
 Open / Open With (APP-035) and Share (APP-036) hand the same files to another process under
@@ -13,7 +13,7 @@ the same rule.
 
 The media grid has a ⌘C / Edit ▸ Copy command. We must decide what a copied image or video
 places on `NSPasteboard.general`, so it can be pasted or attached in other apps, and what
-happens when its original is a dataless cloud placeholder, which most of the owner's library
+happens when its original is a dataless cloud placeholder, which most of the reference library
 is.
 
 Verified facts (`docs/research/2026-11-26-copy-paste-and-cloud-originals.md`,
@@ -72,7 +72,7 @@ writes the same item but cannot wait for a download.
 
 Instant, and reads no bytes. A cloud-only original was downloaded by whichever app read it,
 with that app's progress and errors or none, and a missing original was handed over as a path
-with nothing there. Rejected by the owner after pastes that failed or stalled.
+with nothing there. Rejected after pastes that failed or stalled.
 
 ### Image pixel data (TIFF/PNG), Preview-style; or file URL plus image data, Photos-style
 
@@ -110,5 +110,5 @@ process on demand, so a quit or an update's relaunch left only the first.
 ## Reversal Plan
 
 Handing originals over unread again would drop the download step from the hand-off lane and
-restore its failure modes; it needs the owner's decision. Adding a pixel representation is
+restore its failure modes; it needs a product decision. Adding a pixel representation is
 additive.

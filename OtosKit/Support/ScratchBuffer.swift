@@ -14,7 +14,7 @@
 ///   size known when the work starts (`FaceAssignmentPolicy`'s blocks and products,
 ///   `BlockedSimilarity`'s transposed columns).
 /// - **What does not:** what is kept between passes (held state is resident by design, and a
-///   growing buffer is better as an array that is reused), an owner-scale result whose length
+///   growing buffer is better as an array that is reused), a library-scale result whose length
 ///   is learned while it is read (`MappedArrayBuilder`), and anything small.
 /// - **Use:** fresh pages read as zero. The buffer is a plain region of `count` elements at
 ///   `base`; it is not thread-safe and is used by one task at a time, never shared across

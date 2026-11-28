@@ -29,6 +29,7 @@ struct PreviewImageLoaderSizeTests {
         }
     }
 
+    // Validates: APP-040
     @Test func aLargerRequestIsNeverHandedASmallerDecodeThatWasAlreadyInFlight() async throws {
         let directory = try makeTestDirectory()
         try writeJPEG(width: 2000, height: 1500, to: directory.appending(path: "big.jpg"))
@@ -70,6 +71,7 @@ struct PreviewImageLoaderSizeTests {
         #expect(max(largeImage.width, largeImage.height) > 256)
     }
 
+    // Validates: APP-040
     /// A still with no stored preview yet is shown at the stored preview's size, whatever the
     /// screen asks: its original is decoded scaled to that edge, not whole, and only a
     /// full-resolution request decodes it whole.

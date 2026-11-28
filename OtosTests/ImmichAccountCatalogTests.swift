@@ -51,6 +51,7 @@ struct ImmichAccountCatalogTests {
         ).ids
     }
 
+    // Validates: APP-062
     @Test func anAccountIsALibraryWhoseListedRowsAreInAllMediaAndPlaces() async throws {
         let store = try makeTestStore(
             location: .inMemory, scanCadence: .milliseconds(10), stagingContainers: StagingContainers(base: makeTestDirectory())
@@ -94,6 +95,7 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    // Validates: APP-060, APP-062, APP-083
     /// Duplicates spans accounts like libraries: an account's copy of a library photo with
     /// the same digest is one group.
     @Test func anAccountsCopyOfALibraryPhotoIsADuplicateAcrossLibraries() async throws {
@@ -137,6 +139,7 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-021
     /// ADR 0042, ADR 0046 §7: a signature names the pipeline that drew its thumbnail. A
     /// changed file's new Immich images land at the same path and still make the old
     /// signature stale, and Otos's rendering moves the still to Otos's pipeline.
@@ -196,6 +199,7 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    // Validates: APP-061, APP-083
     /// ADR 0042: an external library's asset names a file on a disk the server reads, so it
     /// is never a version of a photo to keep in place of another; an uploaded asset, which
     /// holds its own bytes, is compared.
@@ -272,6 +276,7 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    // Validates: APP-062
     /// ADR 0046 §6: a launch that reaches no server shows the account's rows from the
     /// catalog — nothing lists them again first.
     @Test func aRelaunchShowsTheAccountsRowsBeforeAnyServerAnswers() async throws {
@@ -293,6 +298,7 @@ struct ImmichAccountCatalogTests {
         await relaunched.shutdown()
     }
 
+    // Validates: APP-062
     /// One server typed two ways is one account; another user on it is another.
     @Test func theSameAccountAddedAgainIsTheSameRoot() async throws {
         let store = try makeTestStore(
@@ -318,6 +324,7 @@ struct ImmichAccountCatalogTests {
         await store.shutdown()
     }
 
+    // Validates: APP-062
     /// Removing an account deletes its rows and its staging folder; nothing on the server
     /// is touched, because Otos never writes to it.
     @Test func removingAnAccountDeletesItsRowsAndStaging() async throws {
@@ -353,6 +360,7 @@ struct ImmichAccountCatalogTests {
 }
 
 extension ImmichAccountCatalogTests {
+    // Validates: APP-062
     /// ADR 0046 §2: an account's root is at the path this build's staging containers name for
     /// its identity, whatever path the catalog stored. A root stored elsewhere — by another
     /// build, or before the containers were named by bundle identifier — moves at launch into

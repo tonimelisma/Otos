@@ -20,6 +20,7 @@ struct CatalogWindowViewModelMapTests {
         MediaAssetID(libraryRootPath: pictures.path, relativePath: MediaRelativePath(rawValue: name))
     }
 
+    // Validates: APP-057
     @MainActor
     @Test func enteringPlacesLeavesTheLoupeAndAsksForAFittingCamera() throws {
         let model = makeViewModel()
@@ -55,6 +56,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.viewMode == .grid)
     }
 
+    // Validates: APP-057, APP-058
     @MainActor
     @Test func aViewportReportProducesStacksAndZoomStepsTheCamera() async throws {
         let model = makeViewModel()
@@ -90,6 +92,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(abs(after.bounds.centerX - (shown.originX + shown.width / 2)) < 1)
     }
 
+    // Validates: APP-058
     /// A click on a stack no zoom can split opens exactly its items, as a double-click on any
     /// stack does; Back to Map returns to the map as it was left.
     @MainActor
@@ -129,6 +132,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(request.bounds == MapClusterPolicy.bounds(of: cityViewport()))
     }
 
+    // Validates: APP-058
     /// A click on a stack that can split zooms into it; a double-click opens exactly its
     /// items, whatever the camera did after the first click: the second click belongs to the
     /// gesture its first click began, not to what the flight moved under the pointer.
@@ -178,6 +182,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(back.bounds == MapClusterPolicy.bounds(of: shown))
     }
 
+    // Validates: APP-058
     /// The reported case: a stack off the map's centre, double-clicked. Its first click flies
     /// the camera to it, so whatever the second click would land on — bare map, which MapKit
     /// would zoom again, or a neighbouring stack — has moved under the pointer. The second click
@@ -227,6 +232,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.queryGeneration == generation)
     }
 
+    // Validates: APP-058
     /// A stack no zoom can split opens on its first click; the second click of the double-click
     /// is that gesture's and opens nothing again.
     @MainActor
@@ -247,6 +253,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.queryGeneration == generation)
     }
 
+    // Validates: APP-057
     /// MapKit clamps a camera past its zoom-out. The viewport that follows a fit's own
     /// request says whether every item is shown; a miss gets one unpadded re-ask, and a
     /// miss after that is left alone.
@@ -288,6 +295,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.mapCameraRequest?.revision == refit.revision)
     }
 
+    // Validates: APP-058
     /// Loupe on the map (⌘2, the picker, the View menu): the area the map shows, starting
     /// on the area's first item; the map has no selection to carry in.
     @MainActor
@@ -340,6 +348,7 @@ struct CatalogWindowViewModelMapTests {
         #expect(model.focusedAssetID == id("near.jpg"))
     }
 
+    // Validates: APP-058
     /// Grid on the map with nothing selected: the visible area as the grid, nothing
     /// selected; Back returns to the map, which resets the mode to the map's own.
     @MainActor

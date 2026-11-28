@@ -17,6 +17,7 @@ struct ProcessResourcesTests {
         #expect(sample.pageIns != nil)
     }
 
+    // Validates: ARC-070
     /// The usage line carries page-ins as a plain count beside CPU and disk, and a counter the
     /// kernel did not report reads `unknown`, never zero.
     @Test func theUsageLineCarriesPageInsAndSaysUnknownForAMissingCounter() {

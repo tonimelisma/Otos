@@ -47,7 +47,7 @@ is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appk
 Descriptor-changed reorders and large membership applies keep the reloadData-class
 path. AppKit holds the grid's order as one section — an item's index path is its
 position, a day header's is keyed by its day — and the day sections are the layout's,
-because AppKit does work for every section it holds on each update: at the owner's 5,000
+because AppKit does work for every section it holds on each update: at the reference library's 5,000
 days a one-photo batch cost about 93 M main-thread instructions against about 30 M with one
 section, so a small removal or insertion (Move to Trash, a stack expanding, an import's
 arrival) animates as a batch at any grid size
@@ -63,14 +63,14 @@ reloadData teardown, not how often applies run.
 3. `NSCollectionViewCompositionalLayout`: reusable cells plus native fractional
    groups, but it solves every section on each invalidation, about 0.5 M instructions
    a section: 2.7 G instructions and about 320 ms of main thread for every reload and
-   every batch at the owner's 4,816 days, and enrichment publishes a reorder every few
+   every batch at the reference library's 4,816 days, and enrichment publishes a reorder every few
    seconds. Used until 2026-11-15; replaced by Otos's own `MediaGridLayout`, which
    keeps its pixel geometry exactly
    (`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). The
    filmstrip, one section solved once, keeps it.
 5. `NSCollectionViewDiffableDataSource` over the compositional layout: identity
    diffing for free, but its snapshot costs days × items to build (13–15 s at the
-   owner's 158,000 items over 5,000 days) and macOS has no section snapshot or
+   reference library's 158,000 items over 5,000 days) and macOS has no section snapshot or
    multi-section append to avoid that. Used until 2026-11; replaced by Otos's own
    `MediaGridStructure` and a classic data source.
 4. Custom AppKit tiler: maximum control, but needlessly rebuilds scrolling,
@@ -90,7 +90,7 @@ which must show within 100 ms):
 
 For an act whose publication was made from an order the grid has not shown (a read that
 moved photos, published just before the act and skipped by the window's newest-wins
-delivery), which at the owner's 160,000 items cost a comparison of the two whole orders,
+delivery), which at the reference library's 160,000 items cost a comparison of the two whole orders,
 40–47 ms of the act's 100 ms:
 
 9. Compare the two orders, as before: the act's result waits for a pass over every item.
@@ -161,7 +161,7 @@ applies, so there is no section-level invalidation to go stale.
 The controller is a classic `NSCollectionViewDataSource` over that value, not an
 `NSCollectionViewDiffableDataSource`. AppKit's diffable snapshot copies its whole item set
 on every mutating call and offers no call that fills more than one section, so a
-day-grouped grid cost days × items to describe: 13–15 s for the owner's 158,000 items
+day-grouped grid cost days × items to describe: 13–15 s for the reference library's 158,000 items
 over about 5,000 days, during which the grid was blank
 (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). Query changes
 and large membership changes call `reloadData`, which is what the diffable non-animated
@@ -268,9 +268,9 @@ holds same-descriptor structural-apply *adoption* while the user scrolls
 it (`MediaGridScrollInput`): inside AppKit's live-scroll bracket (a gesture with its momentum,
 or the scroller) or while a scroll-wheel event is handled (a wheel mouse sends no bracket). A
 bounds change Otos makes itself (an apply keeping its anchor, a focus scroll, a clamp after a
-layout) holds nothing: at the owner's library size each Move to Trash's own anchor-keeping
+layout) holds nothing: at the reference library's size each Move to Trash's own anchor-keeping
 apply otherwise held the next act's result for the whole threshold
-(`docs/research/2026-11-17-acts-at-the-owners-library-size.md`). Enrichment
+(`docs/research/2026-11-17-acts-at-the-reference-library-size.md`). Enrichment
 reorders park newest-wins and apply once on quiet; descriptor-changed grids
 bypass the hold; zoom swaps are unaffected. AppKit's base layout supplies the
 attributes a batch animates between (a survivor from its old frame to its new one, an
@@ -303,8 +303,8 @@ arrival from an async decode (never a store hit) fades in; a store-hit repaint
 avoid reading as flicker. A per-column stagger flourish was attempted and
 retired: a delayed, backwards-filled `CATransition` held first-paint tiles at
 their prior (`nil`) contents during the delay, showing a transparent gap
-instead of the placeholder — a no-blank-invariant violation the owner's own
-plan had pre-authorized dropping rather than fixing with async machinery.
+instead of the placeholder — a no-blank-invariant violation the plan had
+allowed dropping rather than fixing with async machinery.
 
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
@@ -353,13 +353,13 @@ sections and once to compare the days a reorder left alone, and looks up and dif
 what changed: 0.54 G instructions (Debug) to move 200 photos between days in a grid of
 158,000 items over 5,000 days, where looking up every identity took 4.5 G
 (`docs/research/2026-11-15-grid-reorder-follows-the-change.md`), and the diffable snapshot it replaced
-took 54 G (13–15 s on the owner's library), because AppKit's snapshot copies its whole
+took 54 G (13–15 s on the reference library), because AppKit's snapshot copies its whole
 item set on every mutating call and has no call that appends to more than one section
 (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`). The apply call
 stays on the main actor; with the arithmetic layout its layout share is a pass over the
 section counts, which the layout takes from the structure in one value rather than one
 count and one header flag asked per section, and what remains of a batch is AppKit's own update bookkeeping, about
-20 ms at the owner's 158,765 items plus about 0.4 M instructions a move
+20 ms at the reference library's 158,765 items plus about 0.4 M instructions a move
 (`docs/research/2026-11-15-grid-layout-without-compositional-solve.md`). Reset scroll and selection only when the sidebar scope changes; a filter or
 sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
 nearest survivor (APP-042); same-descriptor
@@ -380,8 +380,8 @@ dropped, its entry and image together, and read and decoded again if it comes ba
 the look-ahead decodes it before it arrives in an ordinary scroll. The drop runs when an entry
 is added and a quarter of the limit has gathered past it, one sort of the held entries, so its
 cost is the entries the store holds, never the scope. The 256 MB image budget stays as a cap.
-With the owner's 256-pixel thumbnails (about 196–256 KB counted each) the budget holds
-1,000–1,300 tiles and the limit about 1,100 at the default six columns, so on his library the
+With the reference library's 256-pixel thumbnails (about 196–256 KB counted each) the budget holds
+1,000–1,300 tiles and the limit about 1,100 at the default six columns, so on the reference library the
 store keeps about what it kept before; on a library whose thumbnails are smaller, the limit
 binds.
 
@@ -408,7 +408,7 @@ The verified table failure justifies leaving SwiftUI for this one rendering
 surface. Collection view supplies the required bounded reuse and identity
 lifecycle without a custom renderer. The grid's geometry is a uniform square grid with
 one fixed-height header a section, so the smallest correct layout is that arithmetic
-itself: a general solver has nothing to solve, and at the owner's thousands of days its
+itself: a general solver has nothing to solve, and at the reference library's thousands of days its
 per-section solve was the main thread's largest cost. Rebuilding the same layout type
 with a new column count is what makes zoom a small, data-driven change rather than a
 new rendering mechanism.

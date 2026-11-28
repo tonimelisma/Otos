@@ -93,6 +93,7 @@ struct SamePhotoTests {
         return SamePhotoPolicy.groups(members, copies: copies)
     }
 
+    // Validates: APP-061
     /// The camera's own file is kept, even against a stripped copy with more pixels; among
     /// originals, the one with the most pixels.
     @Test func theCameraOriginalWithTheMostPixelsIsKept() throws {
@@ -115,6 +116,7 @@ struct SamePhotoTests {
         #expect(originals.defaultKeep.map { Set($0.map(\.relativePath.rawValue)) } == ["IMG_1.HEIC"])
     }
 
+    // Validates: APP-061
     @Test func burstFramesNeverGroupEvenWithIdenticalPixels() {
         let frames = [
             Self.still("DSC_1.ARW", raw: true, subsecond: "123"),
@@ -123,6 +125,7 @@ struct SamePhotoTests {
         #expect(Self.groups(frames, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_2.ARW": Self.gray(90)]).isEmpty)
     }
 
+    // Validates: APP-061
     /// Six frames of one second whose records carry no sub-seconds — the file has none, or
     /// the record predates the reader reporting them — prove nothing, so they never group.
     @Test func sameSecondFramesWithoutSubsecondsNeverGroup() {
@@ -138,6 +141,7 @@ struct SamePhotoTests {
         #expect(Self.groups(oneSideKnown, signatures: ["IMG_1.HEIC": Self.gray(90), "IMG_2.HEIC": Self.gray(90)]).isEmpty)
     }
 
+    // Validates: APP-061
     @Test func aResizedStrippedCopyGroupsWithItsSource() {
         let candidates = [
             Self.still("IMG_1.HEIC", subsecond: "387"),
@@ -150,6 +154,7 @@ struct SamePhotoTests {
         #expect(found == [["IMG_1.HEIC", "WhatsApp/IMG-1.jpg"]])
     }
 
+    // Validates: APP-061
     @Test func aStrippedCopyEquallyCloseToTwoFramesJoinsNeither() {
         let candidates = [
             Self.still("DSC_1.JPG", subsecond: "123"),
@@ -164,6 +169,7 @@ struct SamePhotoTests {
         #expect(found.isEmpty)
     }
 
+    // Validates: APP-061
     @Test func aRawAndAProcessedFileNeverGroup() {
         let candidates = [
             Self.still("DSC_1.ARW", raw: true, subsecond: "123"),
@@ -172,6 +178,7 @@ struct SamePhotoTests {
         #expect(Self.groups(candidates, signatures: ["DSC_1.ARW": Self.gray(90), "DSC_1.JPG": Self.gray(90)]).isEmpty)
     }
 
+    // Validates: APP-061
     /// ADR 0046 §7: an account's thumbnail is Immich's image until Otos renders the
     /// original, and the two pipelines' images of one photo are not compared.
     @Test func aSourceDrawnAndAnOtosRenderedThumbnailNeverPair() {
@@ -187,6 +194,7 @@ struct SamePhotoTests {
         #expect(SamePhotoPolicy.candidatePairs(sameSource.map(\.candidate), excluding: [], reach: .acrossLibraries).count == 1)
     }
 
+    // Validates: APP-061, APP-083
     /// ADR 0042: while Duplicates compares within each library, a version in another
     /// library is never proposed, so no group of versions spans two.
     @Test func versionsInTwoLibrariesPairOnlyWhenDuplicatesComparesAcrossThem() {
@@ -201,6 +209,7 @@ struct SamePhotoTests {
         #expect(SamePhotoPolicy.candidatePairs(inOne.map(\.candidate), excluding: [], reach: .withinEachLibrary).count == 1)
     }
 
+    // Validates: APP-061
     /// The proposed pairs are exactly the pairs of eligible stills in one bucket — library while
     /// compared within each, kind, pipeline and display aspect — that pass the column checks,
     /// each once: the pass's buckets and instants are a layout of positions, so this holds
@@ -258,6 +267,7 @@ struct SamePhotoTests {
         #expect(SamePhotoPolicy.candidatePairs(candidates.map(\.candidate), excluding: [], reach: .acrossLibraries).isEmpty)
     }
 
+    // Validates: ENR-021
     @Test func aSignatureOfOneImageMatchesItself() throws {
         let context = try #require(CGContext(
             data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0,
@@ -276,6 +286,7 @@ struct SamePhotoTests {
         #expect(signature.differenceHash.nonzeroBitCount > 48)
     }
 
+    // Validates: APP-061
     @Test func theMeanDifferenceIsTheExactAverageOfPixelDifferences() throws {
         let black = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(0)))
         let white = try #require(RenderSignature(differenceHash: 0, gray: Self.gray(255)))
@@ -286,6 +297,7 @@ struct SamePhotoTests {
         #expect(bumped.meanDifference(to: base) == 4.0 / 1024)
     }
 
+    // Validates: ENR-021
     @Test func aSignatureIsWrittenOnlyForTheThumbnailItWasReadFrom() async throws {
         let temp = try makeTestDirectory()
         let library = temp.appending(path: "Pictures", directoryHint: .isDirectory)

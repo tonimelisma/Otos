@@ -11,6 +11,7 @@ import Testing
 struct WindowStateApplyTests {
     // MARK: - Publication shares what did not change
 
+    // Validates: ARC-064
     /// A pass that rebuilt the grid's content equal to the last one publishes the last one's,
     /// so the window sees it unchanged without comparing; a different order is new content.
     @Test func anEqualRebuiltContentIsPublishedAsTheLastOne() {
@@ -28,6 +29,7 @@ struct WindowStateApplyTests {
         #expect(reordered.mediaGrid.orderedAssetIDs == ids.reversed())
     }
 
+    // Validates: ARC-064
     /// The same order over other days, or with other stacks, is other content; with other
     /// stacks only, it is the same order, which the grid's gate and Story tell by identity.
     @Test func otherDaysOrStacksAreOtherContent() {
@@ -70,6 +72,7 @@ struct WindowStateApplyTests {
         #expect(gate.receive(rebuilt.mediaGrid) == [.apply(rebuilt.mediaGrid, change: .unchanged)])
     }
 
+    // Validates: ARC-064
     /// The content answers positions and membership as the plain order does, keeping an
     /// identity's first position.
     @Test func theContentIndexAnswersAsTheOrderDoes() {
@@ -88,6 +91,7 @@ struct WindowStateApplyTests {
 
     // MARK: - Applying keeps the user's place
 
+    // Validates: ARC-064
     /// A republication that moved nothing the user sees keeps the selection and the loupe's
     /// focus; one that dropped the focused item moves focus to its nearest survivor and
     /// prunes the selection (APP-042).
@@ -128,6 +132,7 @@ struct WindowStateApplyTests {
         #expect(model.gridSelection.selection.isEmpty)
     }
 
+    // Validates: ARC-064
     /// A selected file its stack now hides moves to the file shown for it.
     @Test func aSelectionOnAFileAStackNowHidesMovesToTheShownFile() {
         let model = makeViewModel()
@@ -146,6 +151,7 @@ struct WindowStateApplyTests {
 
     // MARK: - Titles
 
+    // Validates: APP-079, APP-090
     /// Every scope the sidebar can show is titled by its name, from one owner: never the
     /// app's name, never blank once the catalog has loaded; and before it loads, that same
     /// name wherever the scope alone gives it, else the app's name.
@@ -213,6 +219,7 @@ struct WindowStateApplyTests {
 
     // MARK: - A scope the user has left does not act
 
+    // Validates: APP-080
     /// Clicking another row while the duplicates list shows leaves the list on screen until
     /// the new scope publishes; from the click on, neither its Move Copies to Trash nor the
     /// targets of ⌘⌫ act, and once the new scope shows, its own targets do.
@@ -266,6 +273,7 @@ struct WindowStateApplyTests {
         #expect(!model.canMoveDuplicatesToTrash, "the list's act is the list's alone")
     }
 
+    // Validates: APP-080
     /// A loupe left for People keeps its photo on screen until People publishes, and nothing
     /// in it is a target meanwhile.
     @Test func aLoupeLeftForPeopleHasNoTargets() {
@@ -281,6 +289,7 @@ struct WindowStateApplyTests {
         #expect(model.targetIDs(.item(ids[0])).isEmpty)
     }
 
+    // Validates: APP-080
     /// The grid of the scope left stays on screen, but nothing on it opens, drags out or
     /// edits until the selected scope publishes (APP-080).
     @Test func aGridLeftForAnotherRowOpensDragsAndEditsNothing() {
@@ -303,6 +312,7 @@ struct WindowStateApplyTests {
 
     // MARK: - The selected scope from the click on (DES-118)
 
+    // Validates: APP-084
     /// A click changes the pane in the same step: the selected scope's surface and title,
     /// waiting, before its state arrives; the indicator only once a frame has been presented
     /// without it; the state, when it arrives, fills the pane in.
@@ -329,6 +339,7 @@ struct WindowStateApplyTests {
         #expect(model.showsPlacesMap)
     }
 
+    // Validates: APP-084
     /// A scope whose state arrives within the frame of the click never shows the indicator:
     /// a frame presented after the state is a report about nothing.
     @Test func aStateArrivingWithinTheClicksFrameShowsNoIndicator() {
@@ -343,6 +354,7 @@ struct WindowStateApplyTests {
         #expect(model.waitingFramePresentedScope == nil)
     }
 
+    // Validates: APP-084
     /// Every scope intent is a new wait: an indicator shown for the scope left does not carry
     /// to the next one's first frame.
     @Test func aNewClickWaitsForItsOwnFrame() {
@@ -358,6 +370,7 @@ struct WindowStateApplyTests {
 
     // MARK: - Hiding a Move to Trash's items (DES-119)
 
+    // Validates: APP-085
     /// The grid without the hidden items keeps its day buckets index-paired and drops the
     /// hidden tiles' stacks; a grid holding none of them is the same content.
     @Test func hidingRemovesItemsFromTheOrderTheirDaysAndTheirStacks() {
@@ -375,6 +388,7 @@ struct WindowStateApplyTests {
         #expect(state.hidingItems([]).mediaGrid.sharesContent(with: state.mediaGrid))
     }
 
+    // Validates: APP-085
     /// On This Day's runs follow the order they index: shorter by what they lost, gone when
     /// emptied, keyed by their new first item when the key left.
     @Test func hidingShortensOnThisDaysRuns() throws {

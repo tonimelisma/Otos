@@ -1,10 +1,16 @@
+# Weekly update proposals, one grouped pull request per ecosystem. Security updates open right
+# away regardless. Actions are pinned by commit SHA with a `# vX.Y.Z` comment, which Dependabot
+# keeps up to date. The Swift packages are resolved by the Xcode project (Package.resolved),
+# which Dependabot cannot read; they are bumped by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: America/Los_Angeles
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      actions:
+        patterns: ["*"]

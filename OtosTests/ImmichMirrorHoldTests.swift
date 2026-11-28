@@ -139,6 +139,7 @@ struct ImmichMirrorHoldTests {
         }
     }
 
+    // Validates: ARC-066
     /// The first pass pairs; a pass after it that listed nothing, with no library changed,
     /// reads no mirror and asks the server nothing, however often it is rung.
     @Test func aPassThatBroughtNothingWalksNoMirror() async throws {
@@ -160,6 +161,7 @@ struct ImmichMirrorHoldTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-066
     /// The server lists the file under the name it has since been given on disk. The first
     /// pass finds no library file of that name, so it learns no mirror; once the rename reaches
     /// the catalog, the next pass, which lists nothing, walks again, learns the mirror and pairs.
@@ -181,6 +183,7 @@ struct ImmichMirrorHoldTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-066, APP-081
     /// A paired file renamed on disk is no longer at the path that named its asset: the next
     /// pass, which lists nothing, unpairs it and the two show apart. When the server lists the
     /// file at its new path — the old asset gone, a new one listed — that pass pairs them again,

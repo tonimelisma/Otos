@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct ImmediateStatusTests {
+    // Validates: APP-088
     @Test func aFilterAndASortShowInTheirControlsBeforeTheirReadWhileTheGridKeepsItsItems() {
         let model = makeStatusModel()
         let ids = (0 ..< 3).map {
@@ -27,6 +28,7 @@ struct ImmediateStatusTests {
         #expect(model.state.mediaGrid.orderedAssetIDs == ids)
     }
 
+    // Validates: APP-088
     /// The bar's Import is disabled in the click's step, as a held click draws it, and is the
     /// coordinator's to draw again once a presentation after the click arrives.
     @Test func anImportClickIsHeldFromTheClickOn() async throws {

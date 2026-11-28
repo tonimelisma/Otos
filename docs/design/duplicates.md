@@ -1,15 +1,17 @@
 # Duplicates
 
+GOVERNS: `OtosKit/Views/DuplicatesView.swift`, `OtosKit/Views/DuplicatesPresentation.swift`
+
 The surface for clearing extra copies of photos and videos the libraries already hold
 (ADR 0042). Reached from the **Duplicates** row, alone under **Utilities**, the last
 section of the sidebar — the header Photos gives its own Duplicates row; it is upkeep, not
-a way to browse, so it does not sit with People and Places (owner decision, 2026-11-12). The row exists while any
+a way to browse, so it does not sit with People and Places. The row exists while any
 group is active and stays while selected; it is last so that its arrival pushes no row
 under the pointer.
 
-The owner's direction (2026-11-04; `docs/research/2026-11-04-duplicates-layout.md`): a
+The direction (`docs/research/2026-11-04-duplicates-layout.md`): a
 really clean way to choose which photo to keep, and a rule that decides a whole folder of
-duplicates at once. A second direction (2026-11-14;
+duplicates at once. A second direction (
 `docs/research/2026-11-14-duplicates-by-attention.md`): the list is ordered by the
 attention a group needs, not by date, and it shows what differs — photos where the
 pictures differ, names where only the names do. So the list is three sections; a click on

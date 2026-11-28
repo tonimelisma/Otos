@@ -4,7 +4,7 @@
 
 CI's `Build And Test (Xcode 27)` job builds, then runs no test at all: `tests=0` on every
 heartbeat until `op=check.hang`, on `xcode-27-arm64` (image 20261104.0337.1, Xcode 27.2). The
-same `script/check.sh` passes on the owner's Mac. What holds the suite?
+same `script/check.sh` passes on the test Mac. What holds the suite?
 
 ## Evidence
 
@@ -47,7 +47,7 @@ thread.
   default-priority global queue only while fewer threads than cores are active at that
   priority, and it counted the held pool threads (inferred; the semaphore's signal is the
   block's first statement after one flag write).
-- On the owner's Mac (10 or more cores) four held threads leave threads free, so the same
+- On the test Mac (10 or more cores) four held threads leave threads free, so the same
   tests pass.
 - Production does not do this. Each of these calls runs only on its owner's serial queue,
   which gets a thread of its own: `FaceAnalyzer`'s and `SearchImageEmbedder`'s queues, and a

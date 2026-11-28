@@ -3,8 +3,8 @@ import SwiftUI
 // The Person sheet (`docs/design/people.md`): Add Name…, New Name…, Rename…, Set Birthday…
 // and Someone Else… open one sheet — who is being named and how many photos Save changes,
 // over a row of their faces; the name, suggesting the people who already have one; and the
-// birthday as a year, or a full date with `Exact date`. A year alone counts from 1 January
-// (owner decision, 2026-11-10). Save is disabled, with the reason as its tooltip, while the
+// birthday as a year, or a full date with `Exact date`. A year alone counts from 1 January.
+// Save is disabled, with the reason as its tooltip, while the
 // name is empty or the birthday comes after a photo the user gave the person. A name another
 // person has is saved as a merge, asked first, or for faces gives them to that person.
 // Passive: the context, the reason and the save are the view model's.

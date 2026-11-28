@@ -7,6 +7,7 @@ import Testing
 /// the order it was applied, so a later pick is never followed by an earlier map.
 @Suite(.testScope)
 struct MediaOperationDestinationStreamTests {
+    // Validates: ARC-047
     @Test func destinationPicksArePublishedInTheOrderTheyWereApplied() async throws {
         let temp = try makeTestDirectory()
         let source = LibraryRootPath(rawValue: temp.appending(path: "Card").path(percentEncoded: false))

@@ -16,6 +16,7 @@ struct MediaOperationCoordinatorProgressTests {
         )
     }
 
+    // Validates: ARC-047
     @Test func noProgressIsPresentedAfterTheRunSettles() async throws {
         let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

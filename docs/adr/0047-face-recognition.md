@@ -2,13 +2,13 @@
 
 ## Status
 
-Accepted, 2026-11-10; assignment rewritten 2026-11-12, when the owner redesigned People
+Accepted, 2026-11-10; assignment rewritten 2026-11-12, when People was redesigned
 around auto-tagged faces; the person-admission rule and lapsed seeds added 2026-11-12, after
 objects Vision took for faces became a person of their own; the image read rewritten
 2026-11-12, when faces moved from the original at full resolution to the stored preview;
 unrecognisable faces kept out of assignment 2026-11-13, after faces of different people the
 model cannot tell apart became a person of their own; a library's videos read for faces
-2026-11-13, when the owner asked for faces in videos. The
+2026-11-13, when faces in videos were added. The
 model, precision and face-admission rules are decided on measured evidence
 (`docs/research/2026-11-07-face-recognition-models.md`,
 `docs/research/2026-11-12-face-person-admission.md`); the image read on
@@ -25,8 +25,8 @@ publishes the gallery, and every act of the user's is one `PeopleAct` that
 
 ## Context
 
-The owner wants the people in their photos found and named. The hard case is their own
-children across years: a child's face changes a great deal from one year to the next, and
+The user wants the people in their photos found and named. The hard case is children
+across years: a child's face changes a great deal from one year to the next, and
 siblings at the same age can look more alike to a model than one child does to themselves a
 few years later.
 
@@ -34,18 +34,18 @@ few years later.
 no public API that returns a face embedding. Photos' own people recognition is not available
 to other apps. Recognition therefore needs a face-embedding model of Otos's own.
 
-**Owner decisions:**
+**Product decisions:**
 - Otos is non-commercial, so non-commercial model licences are acceptable (2026-11-07).
 - A model of about 250 MB is acceptable if it gets great results (2026-11-07).
-- Face size does not matter much: a tiny face in a photo is one the owner does not care about,
-  and his children's faces are prominent in theirs (2026-11-12).
+- Face size does not matter much: a tiny face in a photo is one the user does not care about,
+  and the faces that matter are prominent in their photos (2026-11-12).
 
-**Most originals are not on this Mac:** 2,993 of 3,000 random originals in the owner's library
+**Most originals are not on this Mac:** 2,993 of 3,000 random originals in the reference library
 are dataless cloud placeholders, and decoding an original at full resolution takes about 1.5 s.
 Every still already has a stored preview (ADR 0035, ADR 0046 §7).
 
-**Measured** on 5,810 of the owner's photos from 2012–2026, against 2,196 faces of 33 people
-that the owner labelled, including 744 faces of the three children
+**Measured** on 5,810 of the reference library's photos from 2012–2026, against a private labelled set of 2,196 faces
+of 33 people, including 744 faces of three children
 (`docs/research/2026-11-07-face-recognition-models.md`):
 
 | Candidate | Children's faces matched to the wrong child | Hard child faces found (of 42) | int8 size |
@@ -72,8 +72,8 @@ grouping had put with the right child.
   Otos renders it, the source's own preview (Immich's). No original is downloaded or decoded
   for faces. `PreviewFaceReader` is the one reader.
 - **Measured** (`docs/research/2026-11-12-faces-from-the-preview.md`), from previews against
-  originals, on the owner's 1,819 hand-placed faces and on the bake-off's labels:
-  - no labelled face goes to the wrong person in the owner's library, and no sibling is
+  originals, on the reference library's 1,819 hand-placed faces and on the bake-off's labels:
+  - no labelled face goes to the wrong person in the reference library, and no sibling is
     confused that was not before;
   - embeddings move little: median cosine 0.993 between a face's two readings;
   - the faces the preview loses are those at the quality floor, not the small ones.
@@ -85,14 +85,14 @@ grouping had put with the right child.
 
 ### Videos
 
-- **Which:** a library's videos and an Immich account's (owner decisions, 2026-11-13). A
+- **Which:** a library's videos and an Immich account's (2026-11-13). A
   card's and a camera's are read once imported, as their stills are. A Live Photo's movie
   is left out of People: its still holds its faces (ADR 0041).
 - **The read:** a video has no stored preview, so its faces are an enrichment product, made in
   the same read of its local bytes as its other products under the library claim
   (`EnrichmentClaim.library`). Enrichment downloads the video once for all of them, in the
   background and above the free-space floor (ADR 0027); a library's 1,939 videos are
-  627 GB (owner decision, 2026-11-13). `VideoFaceReader` decodes the frames at 0, 10, 25,
+  627 GB. `VideoFaceReader` decodes the frames at 0, 10, 25,
   50, 75 and 90% upright at full resolution with no time tolerance, so a re-read finds the
   same frames. A sampled frame AVFoundation fails to decode (`decodeFailed`) is read at the
   sync frame after it, else the one before (never a frame whose bytes a server did not send,
@@ -127,7 +127,7 @@ grouping had put with the right child.
   account claim (`EnrichmentClaim.account`: metadata and a video's faces). The account's
   18,201 videos are 3.0 TB on a Mac with 21 GB free, so a staged download of each, kept
   until quit (ADR 0046 §7), cannot be the read. A range the server does not answer makes
-  the read `unanswered`, paced and tried again, never a video with no faces. Measured on 24 of the owner's videos: these
+  the read `unanswered`, paced and tried again, never a video with no faces. Measured on 24 of the reference library's videos: these
   six frames find a face in each of the 12 that hold one, and of 60 faces read, 31 matched a
   named person past the margin, the same person in every frame of a video.
 - **One face per person:** faces taken sharpest first join the person they are most like at
@@ -139,9 +139,9 @@ grouping had put with the right child.
   deleted and renamed with it; each face names its image (`face.frame_index`), and its tile
   is cut from it. A face's box is a fraction of its frame.
 - **What a video's face cannot do:** it is never outlined, since its box is one frame's and the
-  video shows others, and it is no key photo (owner decisions, 2026-11-13).
+  video shows others, and it is no key photo (2026-11-13).
 - **Counts:** a count says what it holds (`MediaCount`): `photos`, `videos`, or `photos and
-  videos` once both are (owner decision, 2026-11-13).
+  videos` once both are.
 
 ### Detection and admission
 
@@ -149,14 +149,14 @@ grouping had put with the right child.
 - **Admission:** a face is embedded only when all of these hold:
   - **Quality:** Vision's capture quality is at least 0.28. On the preview Vision scores a face
     about 0.015 lower than on the original, so 0.28 admits as many faces as the bake-off's 0.3
-    did on originals (with the person rule, 5,493 against 5,471 on the owner's library).
+    did on originals (with the person rule, 5,493 against 5,471 on the reference library).
   - **Alignment:** the face box height in pixels times the alignment scale is between 50 and
     150. Below that, Vision's landmarks were spread over the scene, and the crop is not a face
     (61 of 3,293 measured detections).
   - **A person:** Vision's image classifier (`VNClassifyImageRequest`, revision 2), shown a
     square twice the face box, gives a person label (`people`, `adult`, `child`, `baby`,
     `teen` or `crowd`) a confidence of at least 0.2. Capture quality says how well a face was
-    photographed, not whether it is one. Measured on the owner's catalog: every face the user
+    photographed, not whether it is one. Measured on the reference catalog: every face the user
     named reads 0.28 or more, while lace, a bucket, a storefront and drawings that had passed
     every other rule read 0.01 to 0.13. Of the 2,196 labelled faces of the model bake-off, one
     reads under 0.2.
@@ -202,7 +202,7 @@ grouping had put with the right child.
 - **A face's embedding** is its own row in `face_embedding` (since v66): 512 little-endian
   Float32 values, keyed by the face with `ON UPDATE CASCADE` and `ON DELETE CASCADE`, so a
   move and a deletion carry it with its face. In the face row it was 2,048 of 2,100 bytes:
-  one row filled a page, and every read of who the faces are read 403 MB on the owner's
+  one row filled a page, and every read of who the faces are read 403 MB on the reference
   catalog to learn about 100 bytes a face. Its `id` (`AUTOINCREMENT`) is the reading's
   number: every reading inserts a new vector row and no number is given twice, so the
   vectors written since a reader last looked are the rows above the largest number it holds.
@@ -235,9 +235,9 @@ grouping had put with the right child.
   by as `media_asset` holds them (the capture time, name key and size; visibility, kind,
   format, Live Photo and copy columns; the choice). A person's grid reads their own range of
   it and sorts the photos it finds: 803 pages cold for the most photographed person
-  (17,284 photos) on a generated catalog of the owner's shape, where the walk of the whole
+  (17,284 photos) on a generated catalog of the reference shape, where the walk of the whole
   catalog's order index that tested each of its 167,000 rows for one of the person's faces read
-  7,881 pages in 907 ms, and a seek of each photo's table row read 15,305 pages on the owner's
+  7,881 pages in 907 ms, and a seek of each photo's table row read 15,305 pages on the reference
   catalog (`docs/research/2026-11-17-a-persons-photos-in-order.md`). It is a projection of
   `face` and `media_asset`, kept by the schema in the write that changes either: triggers on a
   face's person or not-a-face mark and on the copied asset columns, and foreign keys that carry
@@ -262,12 +262,11 @@ grouping had put with the right child.
   on the user's word (since 2026-11-13), so a re-read carries the cover and
   assignment never moves it. A likeness
   is rewritten only when it moves by more than 1e-5: Accelerate's matrix product rounds
-  differently from process to process (up to 4.8e-7 on the owner's faces), and a write
+  differently from process to process (up to 4.8e-7 on the reference library's faces), and a write
   starts the next assignment, so writing that wobble would never let People settle
   (`docs/research/2026-11-13-people-assignment-scale.md`).
 - **Media folders:** nothing is written to them. Names exist only in the catalog. Otos never
-  reads or writes face regions in files' XMP, and export writes no names (owner decision,
-  2026-11-10).
+  reads or writes face regions in files' XMP, and export writes no names (2026-11-10).
 
 ### Assignment
 
@@ -278,14 +277,14 @@ grouping had put with the right child.
 - **Reach:** a face is compared with each person's faces: all of them for a person who was an
   adult (18 or older) on the face's date, those within two years otherwise, and whenever the
   age is unknown. Measured: an adult's face pairs ten or more years apart still reach the
-  threshold 84% of the time, a child's six or more years apart 5% (owner question, 2026-11-10).
+  threshold 84% of the time, a child's six or more years apart 5% (2026-11-10).
   No index and no vector database: a family library holds tens of thousands of faces.
 - **Chaining:** from the anchors, faces are given out strongest first, round by round. A face
   whose best person reaches the threshold (0.434, 0.1% of different-person pairs accepted)
   and beats the runner-up by the margin (0.16) joins that person and is evidence for the next
   round, which follows a child from year to year.
 - **Close calls:** a face whose best person reaches the threshold but whose runner-up is within
-  the margin goes to the best person — siblings are guessed too (owner decision, 2026-11-12)
+  the margin goes to the best person — siblings are guessed too
   — but is evidence for nobody, so a guess between two siblings never carries one into the
   next year. Measured with one year seeded per person: 5 of 2,196 labelled faces given the
   wrong person, 1 of them a sibling; 224 of 225, 487 of 487 and 32 of 32 of the children's
@@ -301,7 +300,7 @@ grouping had put with the right child.
   holds that direction: the mean embedding of aligned crops shrunk to 8 px, which keeps no
   identity. A face whose cosine with it reaches 0.2 is never guessed, grouped or compared
   with. One the user gave a person still keeps that person out of the rest of its photo.
-  Measured on the owner's catalog: no face the user named reaches 0.13, and every face of
+  Measured on the reference catalog: no face the user named reaches 0.13, and every face of
   the group they found wrong reaches 0.22 (`docs/research/2026-11-13-unrecognisable-faces.md`).
 - **Lapsed seeds:** a person the user said nothing about (no name, birthday, favourite, hidden
   mark or key photo, and no face on their word) keeps none of their unrecognisable seeds, and
@@ -311,7 +310,7 @@ grouping had put with the right child.
   their seeds.
 - **Hard rules:**
   - Two faces in one photo are never the same person. A merge is the user's word that two
-    people are one (owner decision, 2026-11-19: "If I merge, I know they're the same"), so a
+    people are one, so a
     photo both are in never refuses it: in each such photo the face most like the merged
     person stays theirs and the others are held: each was vouched for as the merged person,
     whom the photo holds once, so it is no one Otos may name. "Most like" is
@@ -325,36 +324,35 @@ grouping had put with the right child.
     restores it. Rejected: refusing the merge (the user could not merge two people a misread
     photo joined, and could not see why); keeping the face with the stronger word (a seed
     Otos found can be the wrong face of the photo); leaving the merged-away guesses as
-    guesses, which hang on that person's anchors alone: on the owner's catalog (2026-11-20)
+    guesses, which hang on that person's anchors alone: on the reference catalog (2026-11-20)
     an unnamed person's only two seeds were both in photos Taylor was already in, made way,
     and the next pass grouped its 166–429 guesses into a new unnamed person, three merges
     running; and releasing the faces a shared photo leaves out for assignment, which groups
     them into a new person of their own.
   - A face from before a person's birthday is never theirs. A birthday may be only a year,
-    which counts from 1 January (owner decision, 2026-11-10). One rule holds Set Birthday and
+    which counts from 1 January. One rule holds Set Birthday and
     a merge: the user's faces from before it refuse the act, and Otos's guesses and seeds
     from before it lose the person. A photo's date can move after its face was given a
     person (a new reading, a corrected date): the user's face keeps its person, and on Otos's
     word the birthday wins: assignment never guesses the person there and a seed there lapses
-    (`FaceAssignmentPolicy.lapsedSeeds`; owner decision, 2026-11-21: "if I manually tagged a
-    face, that wins. if it's auto tagged, birthday wins").
+    (`FaceAssignmentPolicy.lapsedSeeds`: a face the user tagged keeps its person, and over an
+    automatic tag the birthday wins).
   - A face the user said is not someone (`This Is Not Sam`, or `Not the Same Person` in an unnamed person's own photos) is held: Otos never gives it a person
     again, and never offers that person for it. A merge carries the rejection to the merged
     person, and no face is left rejected for its own person: a face the user gave one of the
     two, whom they had said it is not the other, is the merged person's, since the merge says
     the two are one and is the later word. A person is never
     merged into themself (`PeopleRuleViolation.mergeIntoSelf`). A hidden person merges as
-    anyone does, and the merged person is hidden if either was (owner decision, 2026-11-21).
+    anyone does, and the merged person is hidden if either was.
   - A face never names no one while its row says it is someone's: deleting a person opens
     their faces in the deleting statement (`person_deleted_opens_faces`, v82), and the People
     read takes any other such row as malformed.
 - **Corrections propagate:** a correction is a new anchor, and every guess is rebuilt from the
-  anchors, so moving one face moves the guesses reached through it (owner decision,
-  2026-11-12). From a cold start, ten moves left nothing wrong on the owner's
+  anchors, so moving one face moves the guesses reached through it (2026-11-12). From a cold start, ten moves left nothing wrong on the reference library's
   labels.
 - **The kernel and its memory:** a face keeps, per person, only a best of 0.264 or more (a
   lower one decides nothing: a decision reads a best at the threshold and a runner-up within the
-  margin of it); on the owner's faces that is about six people of 752. Each round raises those
+  margin of it); on the reference library's faces that is about six people of 752. Each round raises those
   bests a block of 512 faces and a chunk of 2,048 evidence faces at a time, the faces in capture
   order so the faces an evidence face reaches are at most two runs of the block, with one
   vectorised maximum per evidence face and run. What the kernel needs only while it runs —
@@ -369,7 +367,7 @@ grouping had put with the right child.
   likeness among the columns (`PeopleFaces`), never a dictionary keyed by face. Chaining reads
   its rows and its evidence by position in the faces, never copies of them, and a copy of every
   face is made only when a seed lapsed. People holds the
-  vectors at half precision (105 MB for 103k faces): on the owner's 102,978 vectors it changed
+  vectors at half precision (105 MB for 103k faces): on the reference library's 102,978 vectors it changed
   no best person, threshold or margin decision in 3,029 faces sampled
   (`docs/research/2026-11-16-people-memory-and-kernel.md`). They are held in a file of their
   own, never on the heap (`FaceVectorStore`, `FaceVectorFile`): created in the temporary directory
@@ -383,10 +381,10 @@ grouping had put with the right child.
   Undo or Put Back, and the vectors are read by number only above the highest held, so one
   dropped then would never be read again and every pass would find it missing and never
   settle. Dropped vectors stay in it until a quarter of its slots are dropped, when the kept ones are written into a
-  new file. Measured on a generated catalog of the owner's shape, the first pass that assigns
+  new file. Measured on a generated catalog of the reference shape, the first pass that assigns
   added 175 MB to the footprint with the vectors on the heap and 79 MB with them in the file
   (`docs/research/2026-11-16-people-passes-in-a-live-session.md`). Rejected: the dense table
-  of every face's best per person (310 MB on the owner's catalog, rebuilt every run of
+  of every face's best per person (310 MB on the reference catalog, rebuilt every run of
   chaining); single precision resident (211 MB, against People's share of a 700 MB app); the
   vectors on the heap at half precision (105 MB of footprint, held for the session); and a file
   kept across launches, which would save the launch's one read of every vector (under a second
@@ -459,7 +457,7 @@ grouping had put with the right child.
   records the hash. A guess is assignment's output, never its input, so the pass after a write
   that moved only guesses finds the hash equal; a write that seeded a person, released a seed or
   forgot a person moved an input, and the pass after it assigns once more and writes nothing.
-  Rejected: re-reading every vector each pass (211 MB a pass on the owner's catalog, the
+  Rejected: re-reading every vector each pass (211 MB a pass on the reference catalog, the
   `peopleSnapshot` reader time), publishing only after assignment (48.8 s to the first People
   paint, measured), a timestamp or change counter as the trigger (a fact kind is too coarse:
   `captureDate` and `copies` fire on most enrichment flushes and moved no face), and holding
@@ -485,7 +483,7 @@ grouping had put with the right child.
   on the user's word or a seed, the hard rules' facts, from a partial index of them
   (`idx_face_anchor`); and the unchecked tally. It never walks every face, and it runs as soon
   as the window's first grid is published, so People's first paint never waits for the
-  snapshot or for its turn among the heavy loads. Measured on the owner's catalog before it:
+  snapshot or for its turn among the heavy loads. Measured on the reference catalog before it:
   the gallery was published only after the whole snapshot, 6.5 s after the click, of which
   the face-to-photo join was 7.5–7.9 s of reader time cold. `PeopleAssignment` computes the
   facts from scratch from its snapshot after every pass (`PeopleSnapshot.computedGalleryFacts`)
@@ -537,7 +535,7 @@ grouping had put with the right child.
 
 ### A photo's copies
 
-A face on any identical copy of a photo is the photo's (ADR 0054; owner, 2026-11-15). Faces
+A face on any identical copy of a photo is the photo's (ADR 0054). Faces
 are still read from each copy's own preview and stay on that copy, and the user names a face on
 the copy in front of them. A person's photos, People and the People filter find a photo by a
 face on any of its present copies (`PhotoFaceSQL`), and a person's photo count counts the photo
@@ -586,7 +584,7 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
 - **Code:** CVLFace and AdaFace are MIT.
 - **Weights:** the model card defers to the licence of the training dataset, WebFace260M, whose
   terms page could not be read on 2026-11-09 (the site's TLS certificate does not match its
-  host). Otos accepts a non-commercial research licence (owner decision, 2026-11-07).
+  host). Otos accepts a non-commercial research licence.
 - **Shipping:** the converted weights ship in the private repository only.
 - **Attribution:** the MIT text and the AdaFace citation (Kim, Jain and Liu, CVPR 2022) ship in
   `OtosKit/Resources/Licenses`. The conversion is stated there.
@@ -609,23 +607,23 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
   unedited photo, but read only when the original is local, so a library whose originals are
   in the cloud would download them for faces, or read the faces of only some.
 - **The preview at the original's 0.3 floor:** it loses 212 of 5,471 faces against 123 at 0.28,
-  52 of them faces the owner placed against 27, because Vision scores the preview lower.
+  52 of them faces the user placed against 27, because Vision scores the preview lower.
 - **An average face per person:** a child's average across years matches neither the baby nor the
   school-age child. A person's faces, each with its date, keep each year's face.
 - **A vector database or an approximate index:** exact comparison over a family's faces is cheap,
   and an index adds an owner and a staleness problem for no measured need.
 - **A review to confirm every suggestion (2026-11-10 to 11-12):** it made the user confirm
   521 suggestions by hand to reach the children, and kept unnamed groups as a second kind of
-  entry beside people. The owner rejected it: guesses are made, and corrected where wrong.
+  entry beside people. Rejected: guesses are made, and corrected where wrong.
 - **Chaining through every guess:** close calls carried as evidence put 7 to 10 siblings
   wrong (margins 0 to 0.12) against 1 at 0.16.
 - **Keeping guesses once made (Immich's way):** a correction would then fix only the faces it
   names; rebuilding from the anchors makes it move the guesses chained through it.
 - **Writing names into the user's files or sidecars:** forbidden by ADR 0008. Names are overlay.
-- **Reading face regions from files' XMP (MWG):** never (owner decision, 2026-11-10).
+- **Reading face regions from files' XMP (MWG):** never.
 - **AdaFace's feature norm as the admission rule:** AdaFace trains the length of its feature
   vector to track how recognisable a face is, and the shipped package can expose it without
-  changing a weight. On the owner's catalog it does not separate objects from faces: a cartoon
+  changing a weight. On the reference catalog it does not separate objects from faces: a cartoon
   reads 21.9 and a mascot 17.8, while a clear frontal face reads 9.99.
 - **The first frame, or QuickLook's thumbnail, of a video:** QuickLook made a thumbnail for 15
   of 24 measured videos and its frame held a face in 3; any one fixed frame found faces in at
@@ -652,9 +650,10 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
 
 ## Consequences
 
-- **Accuracy is checked on the owner's labels:** a change to the model, the analysis or the
-  assignment rules runs `script/face-accuracy.sh` on the labelled set and reports the cold
-  start, the seeded run and the corrections against the last run.
+- **Accuracy was measured once on a private labelled set:** the cold start, the seeded run
+  and the corrections are in `docs/research/2026-11-07-face-recognition-models.md` and
+  `docs/research/2026-11-12-face-auto-assignment.md`; a change to the model, the analysis or
+  the assignment rules is measured against such a set again before it ships.
 - **App size:** the app grows by 66 MB.
 - **No downloads for faces:** a library is read for faces from what Otos already stores, about
   66 ms a still. A new analysis revision re-reads the whole library from its previews, not from
@@ -664,12 +663,12 @@ with the faces, the column costs 24 M and the 257 photos with copies 47 M (2026-
 - **A re-read never drops the user's word:** a reading of the same source carries each act to
   the new face that overlaps it, and keeps, as it was read, a face the user named, removed the
   name of, rejected someone for or marked not a face that it does not find. So the 27 of the
-  owner's 1,819 placed faces that the preview does not find keep their names, and a crop or a
+  reference library's 1,819 placed faces that the preview does not find keep their names, and a crop or a
   dark edit that hides a face does not take what the user said about it. Such a face keeps the
   embedding it was read with; a new model must re-embed it from the preview at its stored
   landmarks, or leave it out of assignment. Only a changed file is read afresh.
 - **A preview's size is part of the analysis:** a change to the stored preview's size or its
-  renderer is checked with `script/face-accuracy.sh` like any analysis change.
+  renderer is measured on a labelled set like any analysis change.
 - **Hidden faces are turned away too:** a face behind a mask or a net, or a face printed on a
   document, can read under the person rule and stay unread (3 of 5,477 measured).
 - **Videos download for a new revision:** a video's faces are read from its original, so a new

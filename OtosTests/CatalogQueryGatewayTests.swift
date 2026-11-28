@@ -4,6 +4,7 @@ import GRDB
 import Testing
 
 struct CatalogQueryGatewayTests {
+    // Validates: ARC-003, ARC-022
     @Test func orderedAssetIDQueryReturnsNilForScopeSelectingNothing() throws {
         #expect(try CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, scope: .nothing) == nil)
     }
@@ -86,6 +87,7 @@ struct CatalogQueryGatewayTests {
         #expect(paths == ["disliked.jpg", "liked.jpg"])
     }
 
+    // Validates: APP-030
     /// DES-069's day bucket comes from this column — the ordering query already reads
     /// it for `ORDER BY`; this checks it is also carried through to the fetched rows,
     /// nil included, rather than silently dropped.

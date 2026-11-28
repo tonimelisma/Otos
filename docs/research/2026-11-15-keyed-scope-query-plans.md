@@ -2,7 +2,7 @@
 
 ## Question
 
-On 2026-11-15 the owner imported 210 files (105 RAW+HEIF pairs and videos) from a card into
+On 2026-11-15 the user imported 210 files (105 RAW+HEIF pairs and videos) from a card into
 the Camera Roll library on a loaded machine. The sidebar's selection moved to the new batch
 at 06:29:46, but the grid kept showing the card for 20 s (`ui.sidebarSelectionToPaint
 ms=19941`), and every later publication of the batch took 6–35 s. Why?
@@ -13,7 +13,7 @@ The installed app's log (`script/logs.sh show`), `op=catalog.store.query.order p
 
 | Scope | Rows | Stack candidates | Stack read | Whole read |
 | --- | --- | --- | --- | --- |
-| `library:/Volumes/4152150790` (the card) | 210 | 198 | 1–7 ms | 5–21 ms |
+| `library:/Volumes/CARD` (the card) | 210 | 198 | 1–7 ms | 5–21 ms |
 | `importBatch:1794752981027` | 2 → 210 | 25,734–25,930 | 2.2–7.0 s | 6.4–35.3 s |
 
 `waitMs` was 0 for the slow reads: the time was the read's own. The filter options of the
@@ -49,7 +49,7 @@ batch stamp.
   benchmark case, `projection.windowState.importBatch`, measures the batch's publication.
 - The batch's stack read still builds stacks over every library in the scope (25,930
   candidates, 2–7 s on the loaded machine, 0.12–1 s unloaded per
-  `2026-11-14-owner-scale-query-plans.md`), as every combined scope's does. A batch's rows
+  `2026-11-14-reference-scale-query-plans.md`), as every combined scope's does. A batch's rows
   can stack with rows outside the batch in the same folder, so narrowing it is a separate
   question, not part of this fix.
 - The selection moved before the sidebar drew the batch's row: the run names its batch as

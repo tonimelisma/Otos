@@ -4,7 +4,7 @@ Date: 2026-10-31. Feeds ADR 0041.
 
 ## What links the two files
 
-Read on the owner's Google Takeout folder `Google Photos/Trash/` with `exiftool -a -G1`
+Read on a Google Takeout folder `Google Photos/Trash/` with `exiftool -a -G1`
 (files deliberately materialized for the read):
 
 | File | `ContentIdentifier` | Device |

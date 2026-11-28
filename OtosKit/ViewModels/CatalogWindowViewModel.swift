@@ -1863,8 +1863,8 @@ extension CatalogWindowViewModel {
     /// The descriptor for showing `selection`, by the user's choice or automatically. A
     /// filter belongs to the sidebar row it was set in: another row starts unfiltered, while
     /// the row's own leaves (an area or stack under the map, a person, a duplicate group)
-    /// keep it, so a stack's count is what it opens on (owner decision, 2026-11-12;
-    /// Lightroom Classic's unlocked Library filter). Sort and search stay.
+    /// keep it, so a stack's count is what it opens on (as
+    /// Lightroom Classic's unlocked Library filter does). Sort and search stay.
     func descriptorShowing(_ selection: SidebarSelection) -> CatalogQueryDescriptor {
         let sameRow = selection.sidebarRow == queryDescriptor.scope.sidebarRow
         return CatalogQueryDescriptor(

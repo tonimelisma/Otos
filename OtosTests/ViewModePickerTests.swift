@@ -9,6 +9,7 @@ extension AppKitWindowTests {
     /// segmented control AppKit actually draws, not from the SwiftUI value.
     @MainActor
     struct ViewModePickerTests {
+        // Validates: APP-058
         @Test func theMapSelectsNoSegmentAndAModeSelectsItsOwn() throws {
             #expect(try selectedSegment(showing: nil) == -1)
             #expect(try selectedSegment(showing: .grid) == 0)
@@ -16,6 +17,7 @@ extension AppKitWindowTests {
             #expect(try selectedSegment(showing: .compare) == 2)
         }
 
+        // Validates: APP-058
         @Test func choosingASegmentOnTheMapDeliversThatMode() throws {
             var chosen: [BrowserViewMode] = []
             let host = NSHostingView(rootView: ViewModePicker(viewMode: nil) { chosen.append($0) })

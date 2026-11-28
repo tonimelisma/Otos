@@ -2,7 +2,7 @@
 
 ## Question
 
-While background enrichment (faces, Immich metadata) writes to the owner's catalog, the
+While background enrichment (faces, Immich metadata) writes to the reference catalog, the
 installed app rebuilt the whole window state back to back, each pass 5–7 s at over 300%
 CPU. Launch took 8.7 s to the first grid on a quiet machine and 14.5 s on a loaded one.
 Which Store changes woke a full rebuild, what does each of the window's reads depend on,
@@ -15,7 +15,7 @@ the first grid?
   assets, 147,024 shown in All Media): every `catalog.projection.window`,
   `catalog.store.query.order`, `catalog.store.query.filterOptions`, `projection.stacks`
   and `catalog.enrichment.batch` line.
-- A copy of the owner's catalog (`build/catalog-backups/catalog-v51-before-second-fixes.sqlite`,
+- A copy of the reference catalog (`build/catalog-backups/catalog-v51-before-second-fixes.sqlite`,
   2.3 GB, 166,555 rows) in the worktree's `build/`, never committed and deleted after:
   `EXPLAIN QUERY PLAN` and `.timer on` in `sqlite3` 3.54 for each read and each launch
   write, before and after the indexes below.
@@ -116,7 +116,7 @@ show it is not taken for rows the index's columns reject.
 logged), and two writes that walked the whole table for the few rows they change:
 `UPDATE … SET enrichment_claimed = NULL WHERE enrichment_claimed IS NOT NULL` (8.9 s cold on
 the copy, `SCAN media_asset`) and `UPDATE … WHERE edit_revision <> rendered_revision` (15.2 s
-cold). Both matched no row on the owner's catalog. The undecodable and awaiting-presence
+cold). Both matched no row on the reference catalog. The undecodable and awaiting-presence
 writes already went through partial indexes. In the installed app's quiet launch these
 steps were the 4.2 s between `op=mediaOperation.recover phase=start` and
 `op=catalog.enrichment.claims phase=startupClear`; the first publication then read the
@@ -133,7 +133,7 @@ The first window state, published with `emptyState=noMedia` beside 157,971 items
 empty state shown: `CatalogWindowPolicy.mediaEmptyState` answers `.noMedia` whenever the
 scope holds items, and `MediaGridView` draws an empty state only for an empty grid.
 
-## Measured on the owner-scale copy, parent commit against this change
+## Measured on the full-scale copy, parent commit against this change
 
 The temporary test, one run on each tree under the same kind of load (other agents'
 builds and tests). 147,024 items shown (the copy's OneDrive roots are not reachable from a

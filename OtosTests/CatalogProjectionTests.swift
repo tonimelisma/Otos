@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogProjectionTests {
+    // Validates: ARC-006, MED-002, APP-002, APP-016
     /// Library-kind roots preserve their incoming (`sort_index`) order rather
     /// than being re-sorted by name — the user's own Settings → Libraries order.
     /// Asset ordering within the grid is unaffected.
@@ -54,6 +55,7 @@ struct CatalogProjectionTests {
         #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
+    // Validates: ARC-021
     @Test func windowStateHidesUnavailableLibraryAssets() async {
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
@@ -80,6 +82,7 @@ struct CatalogProjectionTests {
         #expect(selectedUnavailable.mediaEmptyState == .libraryUnavailable)
     }
 
+    // Validates: ARC-021
     @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
@@ -104,6 +107,7 @@ struct CatalogProjectionTests {
         #expect(selected.mediaEmptyState == .libraryChecking)
     }
 
+    // Validates: ARC-021
     @Test func availableAssetsRemainVisibleWhileAnotherLibraryIsUnknown() async {
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
@@ -140,6 +144,7 @@ struct CatalogProjectionTests {
         #expect(state.mediaEmptyState == .libraryUnavailable)
     }
 
+    // Validates: ARC-019
     @Test func publicationLoopCoalescesStoreAndSidebarChanges() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -170,6 +175,7 @@ struct CatalogProjectionTests {
         #expect(states.contains { $0.libraries.map(\.path) == [rootPath] })
     }
 
+    // Validates: ARC-019
     /// A superseded build is cancelled and never waited for (ADR 0032): a cancelled read ends
     /// only when its statement or its wait for a connection does. The intent's scope is built
     /// and published while the build it superseded is still parked, and what that build
@@ -209,6 +215,7 @@ struct CatalogProjectionTests {
         #expect(!recorded.contains { $0.title == "Call 1" })
     }
 
+    // Validates: ARC-019
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
         let store = makeTestStore(location: .inMemory)
         // Projection builds only for a loaded catalog (APP-044).
@@ -249,6 +256,7 @@ struct CatalogProjectionTests {
         #expect(await probe.maximumInFlight() == 1)
     }
 
+    // Validates: ARC-019
     /// A scope switch never waits for the build of the scope the user left (ADR 0032): the
     /// intent, delivered while that build is parked, cancels it; what it built is never
     /// published, and the new scope's build runs next.
@@ -293,6 +301,7 @@ struct CatalogProjectionTests {
         try await waitUntil { await projection.isQuiescent }
     }
 
+    // Validates: ARC-019
     /// A store change is not an intent: the build in flight is for what is shown, so it
     /// finishes and publishes, and the change is taken up by the next pass.
     @Test func aStoreChangeNeverSupersedesTheBuildInFlight() async throws {
@@ -343,6 +352,7 @@ struct CatalogProjectionTests {
         #expect(await projection.supersededCount == 0)
     }
 
+    // Validates: ARC-019
     @Test func aFailedBuildPublishesNothingAndTheNextIntentRetries() async throws {
         let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
@@ -379,6 +389,7 @@ struct CatalogProjectionTests {
         #expect(states.allSatisfy { $0.title.hasPrefix("Call ") && $0.title != "Call 1" })
     }
 
+    // Validates: ARC-019
     @Test func aStoreChangeDuringABuildIsPublishedAfterIt() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -414,6 +425,7 @@ struct CatalogProjectionTests {
         #expect(states.contains { $0.libraries.count == 1 })
     }
 
+    // Validates: ARC-019
     @Test func teardownDuringABuildPublishesNothing() async throws {
         let store = makeTestStore(location: .inMemory)
         try await store.start(scansSavedLibraries: false)
@@ -438,6 +450,7 @@ struct CatalogProjectionTests {
         #expect(await recorder.count() == 0)
     }
 
+    // Validates: ARC-018, ARC-019
     @Test func detailOnlyStoreChangePublishesGridRefreshGeneration() async throws {
         let fixture = try await makeDetailRefreshFixture()
         defer {
@@ -502,6 +515,7 @@ struct CatalogProjectionTests {
         #expect(await projection.publicationCount == published)
     }
 
+    // Validates: APP-085
     /// A hide takes the items off the published window from the order held, with no catalog
     /// read (DES-119); a read made before the mark cannot bring them back; the read of the
     /// landed mark shares the hidden grid content, so nothing is applied twice; a withdrawn
@@ -558,6 +572,7 @@ struct CatalogProjectionTests {
         }
     }
 
+    // Validates: APP-085
     /// Each Move to Trash publishes an order made from the order last published by an edit,
     /// so the grid builds and commits it in the turn that delivers it (ADR 0006): the first
     /// after a read whose publication shared the order before it, and each of several in a
@@ -595,6 +610,7 @@ struct CatalogProjectionTests {
         }
     }
 
+    // Validates: APP-085
     /// Put Back shows its result before the Store has the items back (DES-119): three hides,
     /// each marked and read, then their Put Backs in undo order. Each publishes the order its
     /// hide was taken from, its item back beside its neighbour — an edit of the order shown —
@@ -689,6 +705,7 @@ struct CatalogProjectionTests {
         }
     }
 
+    // Validates: APP-085
     /// A Put Back whose items the Store could not take back: shown at once, and gone again once
     /// the read of the undo's work covers its hold.
     @Test func aPutBackTheStoreDidNotTakeLeavesAgain() async throws {
@@ -712,6 +729,7 @@ struct CatalogProjectionTests {
         }
     }
 
+    // Validates: APP-085
     /// An act reports its write landed before the Store's change for it reaches the projection
     /// (`hideLanded`, `hideWithdrawn` after a Put Back): the pass that retires the act's hold
     /// reads the catalog with the write in it, so a Move to Trash's item stays off and a Put
@@ -794,6 +812,7 @@ struct CatalogProjectionTests {
 }
 
 extension CatalogProjectionTests {
+    // Validates: ARC-007
     @Test func removableSourcesAreSeparateAndExcludedFromAllMedia() async {
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
@@ -827,6 +846,7 @@ extension CatalogProjectionTests {
         #expect(selectedCard.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["removable.jpg"])
     }
 
+    // Validates: ARC-010
     @Test func mtpCameraSelectionShowsEnumeratingStateAndConnectionBanner() async {
         let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity)
         let camera = LibraryRoot(
@@ -851,6 +871,7 @@ extension CatalogProjectionTests {
         #expect(state.deviceConnectionBanner?.message.contains("Mass Storage") == true)
     }
 
+    // Validates: APP-017
     /// ADR 0013: while an attached card is scanned and nothing on it has been seen yet,
     /// the grid says it is reading the card — not that there is no media.
     @Test func aCardBeingScannedWithNothingSeenYetShowsReadingCard() async {
@@ -895,6 +916,7 @@ private func makeAsset(root: LibraryRoot, relativePath: String) -> MediaAsset {
 /// Through the publication loop: a read that moved a photo is published as an edit of the
 /// order before it, and a Move to Trash on top of it as an edit of both.
 extension CatalogProjectionTests {
+    // Validates: ARC-023
     @Test func aReadThatMovesAPhotoAndAnActOnItAreEditsOfTheOrderBefore() async throws {
         try await withCatalogedLibrary(fileCount: 4, fileNamePrefix: "moved") { fixture in
             let projection = CatalogProjection(volumeCapacity: ampleVolumeCapacity, cadence: .milliseconds(10))

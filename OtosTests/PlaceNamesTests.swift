@@ -14,6 +14,7 @@ struct PlaceNamesTests {
     static let espoo = PlaceCoordinate(latitude: 60.21, longitude: 24.66)
     static let sydney = PlaceCoordinate(latitude: -33.87, longitude: 151.21)
 
+    // Validates: ENR-030
     /// A cell is the floor of the coordinate over 0.02°, south and west of zero too, and its
     /// center lies inside it.
     @Test func aCellHoldsItsCoordinateAndNamesFromItsCenter() {
@@ -29,6 +30,7 @@ struct PlaceNamesTests {
         #expect(PlaceCell(PlaceCoordinate(latitude: -90, longitude: -180)) == PlaceCell(latitude: -4500, longitude: -9000))
     }
 
+    // Validates: ENR-030
     /// The language is the Mac's language and script, never its region.
     @Test func theNamingLanguageIgnoresTheRegion() {
         #expect(PlaceNameLanguage(Locale(identifier: "en_US")) == PlaceNameLanguage(Locale(identifier: "en_FI")))
@@ -37,6 +39,7 @@ struct PlaceNamesTests {
         #expect(PlaceNameLanguage(Locale(identifier: "fi_FI")) != PlaceNameLanguage(Locale(identifier: "en_FI")))
     }
 
+    // Validates: ENR-030
     /// The reader names every cell holding a located item once, from its center, in the Mac's
     /// language; a photo's own coordinate never reaches Maps. A failed naming — a throttle,
     /// or an error Maps does not explain — stores nothing: it is waited out, the wake asks the
@@ -87,8 +90,9 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-030
     /// A write that names its rows wakes a read of those rows' cells alone, by key, never a
-    /// walk of every located record: an enrichment flush on the owner's catalog walked them all
+    /// walk of every located record: an enrichment flush on the reference catalog walked them all
     /// (152 runs, 6.6 s, in one tour). A photo given a new place has only that cell named.
     @Test func aChangeThatNamesItsRowsNamesOnlyTheirCells() async throws {
         let directory = try makeTestDirectory()
@@ -129,6 +133,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-030
     /// An error is not a fact (ADR 0032 rule 4): a naming that fails stores no names, so the
     /// cell stays unnamed, to be asked again, rather than stored as a place with none.
     @Test func aFailedNamingStoresNothing() async throws {
@@ -147,6 +152,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-030
     /// While Maps keeps failing, the reader is quiet until its backoff, never a pass that
     /// runs for as long as Maps is out (ADR 0032 rule 8): a failed naming ends the pass, which
     /// names its wake, and the wake starts the next one. The sleeps stand in for the backoff:
@@ -181,6 +187,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-030
     /// The catalog keeps one language's names: a drain in a new language forgets the old
     /// one's before naming again, so the filter never offers one place under two names. A
     /// change of region alone keeps them and asks Maps nothing.
@@ -213,6 +220,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-030
     /// v45: names stored before v43 under a full locale (`en_US`) are keyed by the language the
     /// reader computes for it, so an upgraded catalog asks an English Mac's Maps for nothing.
     @Test func namesStoredUnderAFullLocaleSurviveTheUpgrade() async throws {
@@ -249,6 +257,7 @@ struct PlaceNamesTests {
         await store.shutdown()
     }
 
+    // Validates: APP-013
     /// Every place the filter holds has a row: a held town under its country even while the
     /// country is offered for other towns, every held town of a country nothing names, and
     /// a held country nothing names (#649: a filter never holds a value the user cannot see).
@@ -271,6 +280,7 @@ struct PlaceNamesTests {
         #expect(options.countries(holding: .all) == options.countries)
     }
 
+    // Validates: APP-013
     /// The filter offers the countries and towns named, most items first, and narrows by them:
     /// a country takes all its towns, a town only its own photos.
     @Test func theFilterNarrowsByCountryAndTown() async throws {
@@ -304,6 +314,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-013
     /// Checking a country takes all of it; unchecking one town of it keeps the rest. One filter
     /// holds one language's names: checking a place offered in another lets the old ones go.
     @Test func aCountryIsAllItsTownsUntilOneIsUnchecked() {
@@ -324,6 +335,7 @@ struct PlaceNamesTests {
         #expect(filter.places == nil && !filter.isActive)
     }
 
+    // Validates: APP-013
     /// The reported case (#726/#731 follow-up): a place held while the catalog names places in
     /// English stays in the filter while English names are held, and leaves it once the Mac's
     /// language changes and the reader forgets them — both while nothing is named yet in the new
@@ -377,6 +389,7 @@ struct PlaceNamesTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-013
     /// The options are the shown row's (APP-013, APP-025): a library offers only the places and
     /// file types it holds, never another source's, and a leaf under Places — an area of the map
     /// — offers what Places does, the located items of every fixed library.

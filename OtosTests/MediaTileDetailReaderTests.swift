@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct MediaTileDetailReaderTests {
+    // Validates: ARC-059
     @Test func aFailedReadThrowsAndTheNextReadReturnsTheRow() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -27,6 +28,7 @@ struct MediaTileDetailReaderTests {
         }
     }
 
+    // Validates: ARC-059
     @Test func anAssetWithoutARowReadsAsNil() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let reader = MediaTileDetailReader(store: library.store)

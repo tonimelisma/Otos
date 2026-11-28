@@ -100,6 +100,7 @@ final class FakePreviewLoader: PreviewLoading {
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelViewModeTests {
+    // Validates: APP-023
     /// Leaving the full-size view tells the loader no pane can return to a photo; moving
     /// within it does not.
     @Test func leavingTheFullSizeViewReleasesTheHeldPhotos() {
@@ -170,6 +171,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.panePreviews[.loupe]?.id != ids[0])
     }
 
+    // Validates: APP-020
     @Test func loupeStripClickMovesFocusSelectionAndPreview() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeImage(seed: 3)
@@ -191,6 +193,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(requested.contains(ids[2]))
     }
 
+    // Validates: APP-027
     /// A failed Move to Trash re-selects the item after the hide already moved focus to
     /// its neighbor. The loupe must decode the restored item, and the neighbor's decode
     /// landing late must not leave the pane on a spinner that nothing will clear.
@@ -221,6 +224,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(!model.downloadingSlots.contains(.loupe))
     }
 
+    // Validates: ARC-052, APP-020
     /// A reorganization rename moves the focused asset to a new identity; the loupe
     /// must decode it under that identity rather than hold the old one's slot.
     @Test func identityRemapReRequestsTheLoupePreviewUnderTheNewIdentity() async {
@@ -253,6 +257,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(!model.downloadingSlots.contains(.loupe))
     }
 
+    // Validates: APP-012, APP-051
     /// Copy acts on the same targets as every other Photo command: the Grid selection
     /// in display order, the Loupe focus, and only the active Compare pane.
     @Test func copyWritesTheCurrentTargetsInEveryMode() async throws {
@@ -347,6 +352,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
     }
 
+    // Validates: APP-011
     @Test func returnOpensLoupeOnTheArrowNavigatedItem() {
         // Click a tile, then arrow away: native AppKit keyboard nav rewrites
         // selectionIndexPaths and reconciles upward as a single-item live selection.
@@ -365,6 +371,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.gridSelection.selection == [ids[2]])
     }
 
+    // Validates: APP-019
     @Test func compareDoesNotRetargetLoupeFocus() {
         let fake = FakePreviewLoader()
         let model = makeViewModeModel(loader: fake)
@@ -417,6 +424,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.lastReplacedComparePane == .left)
     }
 
+    // Validates: APP-028
     @Test func swappingCompareKeepsActivePanePosition() {
         let model = makeViewModeModel(loader: FakePreviewLoader())
         let ids = makeViewModeIDs(count: 3)

@@ -15,6 +15,7 @@ struct FaceAssignmentPolicyTests {
     static let epoch: Double = 1_600_000_000
     static let people = [PersonFact(id: sam, birthdaySeconds: nil, isBare: false), PersonFact(id: ian, birthdaySeconds: nil, isBare: false)]
 
+    // Validates: ENR-025
     @Test func aFaceGoesToThePersonItMatches() {
         let anchor = Self.face("ref.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let open = Self.face("new.jpg", toward: [0: 1, 9: 0.2], at: Self.year / 2)
@@ -25,6 +26,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.newPeople.isEmpty)
     }
 
+    // Validates: ENR-025
     /// A child is followed from year to year through the faces Otos gave them: each face is
     /// within two years of the one before, none of the last within two years of the first.
     @Test func aChildIsFollowedYearByYear() {
@@ -38,6 +40,7 @@ struct FaceAssignmentPolicyTests {
         #expect(later.allSatisfy { result.guesses[$0.id] == .existing(Self.sam) })
     }
 
+    // Validates: ENR-025
     /// With nothing between, a child's face three years from every face of theirs is not
     /// reached; an adult's is.
     @Test func anAdultIsComparedAcrossAllYearsAndAChildIsNot() {
@@ -56,6 +59,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[childLater.id] == nil)
     }
 
+    // Validates: ENR-025
     /// A face as like Ian as Sam goes to the more likely one, but carries neither to the
     /// next face: a face reached only through it stays without a person.
     @Test func aCloseCallIsGuessedButCarriesNobody() {
@@ -72,6 +76,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[beyond.id] == nil)
     }
 
+    // Validates: ENR-025
     @Test func aPersonIsGuessedInAPhotoOnce() {
         let anchor = Self.face("ref.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let likelier = Self.face("group.jpg", index: 0, toward: [0: 1, 9: 0.1], at: Self.day)
@@ -83,6 +88,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[other.id] == nil)
     }
 
+    // Validates: ENR-025
     @Test func theUsersWordHoldsEveryGuess() {
         let people = [
             PersonFact(id: Self.sam, birthdaySeconds: Self.epoch + Self.year, isBare: false),
@@ -101,6 +107,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[held.id] == nil)
     }
 
+    // Validates: ENR-025
     /// Faces matching nobody that look alike on two or more days are a new person; faces of
     /// one day, or of one photo, are not. A face like the new person, below the group link,
     /// is then given to them.
@@ -126,6 +133,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses == [reached.id: .new(0)])
     }
 
+    // Validates: ENR-025
     /// Assignment rebuilds every guess from the anchors, so run on its own output — the new
     /// people's seeds now anchors, the guesses stored — it gives the same guesses and finds
     /// nobody new.
@@ -171,6 +179,7 @@ struct FaceAssignmentPolicyTests {
         #expect(second.likeness == first.likeness)
     }
 
+    // Validates: ENR-025
     /// A person Otos found keeps its seeds only while they span two or more days. When seeds
     /// of the other days are gone, the ones left lapse: they lose their person and, like no
     /// one and from one day, stay without one.
@@ -190,9 +199,10 @@ struct FaceAssignmentPolicyTests {
         #expect(result.newPeople.isEmpty)
     }
 
+    // Validates: ENR-025
     /// A photo whose date moved before its person's birthday: on Otos's word the birthday wins,
     /// so the seed there lapses and no guess goes to them; on the user's word the face keeps
-    /// its person (owner decision, 2026-11-21).
+    /// its person.
     @Test func theBirthdayWinsOverOtossFacesAndTheUsersFaceKeepsItsPerson() {
         let born = Self.epoch + Self.day * 10
         let sam = PersonFact(id: Self.sam, birthdaySeconds: born, isBare: false)
@@ -208,6 +218,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[usersBefore.id] == nil)
     }
 
+    // Validates: ENR-025
     /// Seeds lapse only for a person the user said nothing about and gave no face, and only
     /// when they span fewer than two days.
     @Test func seedsStandWhileTheUserSaidSomethingOrTheyStillSpanTwoDays() {
@@ -233,6 +244,7 @@ struct FaceAssignmentPolicyTests {
         uniqueKeysWithValues: FaceRecognisability.direction.values.enumerated().map { ($0.offset, $0.element) }
     )
 
+    // Validates: ENR-025
     /// A face the model cannot tell anyone by is never guessed and never grouped, however
     /// alike it is to a person or to other such faces.
     @Test func anUnrecognisableFaceIsNeverGuessedOrGrouped() {
@@ -250,6 +262,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.likeness.isEmpty)
     }
 
+    // Validates: ENR-025
     /// An unrecognisable face the user gave a person still keeps them out of the rest of its
     /// photo: a face there as like them as can be is not theirs.
     @Test func anUnrecognisableAnchorHoldsItsPhoto() {
@@ -264,6 +277,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.guesses[elsewhere.id] == .existing(Self.sam))
     }
 
+    // Validates: ENR-025
     /// A bare person's unrecognisable seeds lapse; its seeds stand while the recognisable
     /// ones still span two days, and all lapse when they do not.
     @Test func unrecognisableSeedsOfABarePersonLapse() {
@@ -277,6 +291,7 @@ struct FaceAssignmentPolicyTests {
         #expect(FaceAssignmentPolicy.assign(faces: [monday, blurred], people: people).lapsedSeeds == [monday.id, blurred.id])
     }
 
+    // Validates: ENR-025
     @Test func likenessIsTheBestSimilarityToTheOtherFacesOfThePerson() {
         let anchor = Self.face("a.jpg", toward: [0: 1], at: 0, assignment: .user(Self.sam))
         let guess = Self.face("b.jpg", toward: [0: 1, 1: 1], at: Self.day)
@@ -289,6 +304,7 @@ struct FaceAssignmentPolicyTests {
         #expect(result.likeness[alone.id] == nil)
     }
 
+    // Validates: ENR-025
     /// The ranker offers everyone the hard rules allow, most likely first, never the face's
     /// own person, a person already in its photo, one it was said not to be, or one born
     /// after it.
@@ -315,6 +331,7 @@ struct FaceAssignmentPolicyTests {
         #expect(ranked[inPhoto.id]?.map(\.person) == [Self.sam, tyler])
     }
 
+    // Validates: ENR-025
     /// The vectorised chaining gives the same guesses as the rules applied one comparison at
     /// a time, on random faces with every complication: undated faces, birthdays, adults,
     /// rejections, shared photos, held faces and non-faces.

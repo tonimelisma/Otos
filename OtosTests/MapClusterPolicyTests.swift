@@ -49,6 +49,7 @@ struct MapClusterPolicyTests {
 
     private let helsinki = CLLocationCoordinate2D(latitude: 60.17, longitude: 24.94)
 
+    // Validates: APP-057
     @Test func itemsAtOneCoordinateFormOneExactStackFrontedByTheFirstInOrder() {
         let items = [
             located("newest.jpg", 60.17, 24.94),
@@ -66,6 +67,7 @@ struct MapClusterPolicyTests {
         #expect(clusters.first?.coordinate == PlaceCoordinate(latitude: 60.17, longitude: 24.94))
     }
 
+    // Validates: APP-057
     @Test func nearbyItemsMergeWhenZoomedOutAndSplitWhenZoomedIn() {
         // Two spots about 1.1 km apart in Helsinki.
         let items = [
@@ -89,6 +91,7 @@ struct MapClusterPolicyTests {
         }
     }
 
+    // Validates: APP-057
     @Test func stacksOutsideTheViewportAreNotEmitted() {
         let items = [
             located("helsinki.jpg", 60.17, 24.94),
@@ -107,6 +110,7 @@ struct MapClusterPolicyTests {
         #expect(global.count == 2)
     }
 
+    // Validates: APP-057
     @Test func centeredBoundsHoldEveryCoordinateWithAMarginAndNeverCollapse() throws {
         let helsinkiPoint = PlaceCoordinate(latitude: 60.17, longitude: 24.94)
         let losAngeles = PlaceCoordinate(latitude: 34.05, longitude: -118.24)
@@ -126,7 +130,8 @@ struct MapClusterPolicyTests {
         #expect(MapClusterPolicy.centeredBounds([]) == nil)
     }
 
-    /// The owner's library (2026-11-12): nearly everything in California, a few in Sydney
+    // Validates: APP-057
+    /// The reference library (2026-11-12): nearly everything in California, a few in Sydney
     /// and Helsinki. The box around the extent was centered on Africa, which MapKit
     /// clamped to a view holding none of the 13,913 items. The camera centers on the
     /// average location, so the clamp keeps California in view.
@@ -144,6 +149,7 @@ struct MapClusterPolicyTests {
         #expect(MapClusterPolicy.contains(california[0], in: bounds))
     }
 
+    // Validates: APP-057
     /// Items either side of the antimeridian average to it, not to the far side of the
     /// earth, and the camera is the small box across it.
     @Test func itemsEitherSideOfTheAntimeridianCenterOnIt() throws {
@@ -159,6 +165,7 @@ struct MapClusterPolicyTests {
         #expect(MapClusterPolicy.contains(west, in: bounds))
     }
 
+    // Validates: APP-057
     /// A library shot on two continents spans more than 180° of longitude. A camera in
     /// degrees wrapped that and left a stack past the edge (2026-10-31); map-point
     /// bounds cannot wrap.
@@ -171,6 +178,7 @@ struct MapClusterPolicyTests {
         #expect(bounds.width <= MapClusterPolicy.worldMapPoints)
     }
 
+    // Validates: APP-057
     /// A view of the Pacific reaches past the world's right edge; an item just west of
     /// the antimeridian sits at the start of the world and is drawn there all the same.
     @Test func aViewportAcrossTheAntimeridianDrawsStacksOnBothSides() {
@@ -199,6 +207,7 @@ struct MapClusterPolicyTests {
         ))
     }
 
+    // Validates: APP-057
     /// Two cells next to each other can hold items whose centers are closer than a
     /// stack is wide (measured 2026-10-31: 33 pt apart). They become one stack.
     @Test func stacksWhoseFacesWouldOverlapMerge() {
@@ -225,6 +234,7 @@ struct MapClusterPolicyTests {
         #expect(clusters.first?.isExactPlace == false)
     }
 
+    // Validates: APP-058
     @Test func zoomIntoAStackAlwaysNarrowsTheViewport() {
         let country = viewport(MKCoordinateRegion(center: helsinki, latitudinalMeters: 400_000, longitudinalMeters: 400_000))
         let cluster = MapPlaceCluster(
@@ -245,6 +255,7 @@ struct MapClusterPolicyTests {
         #expect(abs(MapClusterPolicy.region(of: zoomed).centerLatitude - 60.175) < 0.001)
     }
 
+    // Validates: APP-057
     @Test func zoomStepsScaleAboutTheCenter() {
         let city = viewport(MKCoordinateRegion(center: helsinki, latitudinalMeters: 20000, longitudinalMeters: 20000))
 
@@ -261,6 +272,7 @@ struct MapClusterPolicyTests {
         MKMapPoint(CLLocationCoordinate2D(latitude: latitude, longitude: 0)).y
     }
 
+    // Validates: APP-057
     /// A camera that settles past 75° comes back to the band's edge at the same size and
     /// longitude; one inside is left alone; a view taller than the band sits at its middle.
     @Test func aCameraPastThePanBandIsKeptInsideIt() {
@@ -294,6 +306,7 @@ struct MapClusterPolicyTests {
         #expect(tall.map { abs($0.centerY - (top + bottom) / 2) < 1 } == true)
     }
 
+    // Validates: APP-057
     /// No located item is out of reach: the band widens past 75° to the farthest item
     /// with a margin, each way on its own, and never past the map's own edge.
     @Test func panBandReachesTheFarthestItem() {
@@ -310,6 +323,7 @@ struct MapClusterPolicyTests {
         #expect(south.north == 75)
     }
 
+    // Validates: APP-058
     @Test func accessibilityLabelLeadsWithTheCountThenThePlace() {
         let stack = MapPlaceCluster(
             id: id("a.jpg"),
@@ -329,6 +343,7 @@ struct MapClusterPolicyTests {
 
     // MARK: - The area a viewport shows
 
+    // Validates: APP-058
     /// Web Mercator keeps longitude in x and latitude in y, so the box is the viewport's
     /// own edges: the city in it, the next city out.
     @Test func aViewportsAreaIsTheBoxItShows() {
@@ -347,6 +362,7 @@ struct MapClusterPolicyTests {
         #expect(!area.crossesAntimeridian)
     }
 
+    // Validates: APP-058
     /// MapKit reports a view of the Pacific with x past one world width: the box crosses
     /// the antimeridian and holds both sides of it.
     @Test func aViewportAcrossTheAntimeridianHoldsBothSides() {
@@ -368,6 +384,7 @@ struct MapClusterPolicyTests {
         #expect(!area.contains(PlaceCoordinate(latitude: -17.7, longitude: 170)))
     }
 
+    // Validates: APP-058
     /// A viewport a world wide or wider shows every longitude.
     @Test func aWorldWideViewportHoldsEveryLongitude() {
         let world = MapClusterPolicy.worldMapPoints

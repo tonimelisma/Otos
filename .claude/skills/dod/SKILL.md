@@ -7,8 +7,9 @@ description: Write Otos's one final Definition Of Done report for an increment â
 
 There is one report per increment, written after the merge and cleanup, never before.
 
-**Where it goes:** posted in full on the PR, with the GitHub comment footer. The chat gets
-a short summary and the PR link.
+**Where it goes:** posted in full as one PR comment, in the order of CLAUDE.md's "Final
+increment report", with the Definition of Done checklist. The chat gets a short summary and
+the PR link.
 
 **Format:** green and red status emoji, with plain-language text.
 
@@ -17,7 +18,7 @@ a short summary and the PR link.
 - what was done, and what was not;
 - design decisions;
 - requirement, ADR and doc changes;
-- the owner guidance this increment captured, restated so he can correct it;
+- the requester's guidance this increment captured, restated so the requester can correct it;
 - verification:
   - the Xcode version;
   - the CI run on the final commit;
@@ -29,13 +30,13 @@ a short summary and the PR link.
 - code smells observed, addressed or accepted;
 - the media-originals and diagnostics review;
 - outstanding review comments claimed, and how each was fixed;
-- risks and follow-ups, with non-blocking owner notes;
+- risks and follow-ups, each filed as an issue, and non-blocking notes for the requester;
 - the merge and cleanup steps completed;
 - for an app change, the release `v<x.y.z>` that publishes it.
 
 ## The look
 
-Tests prove the code; only a look proves what the owner sees. On 2026-11-19 every check
+Tests prove the code; only a look proves what a user sees. On 2026-11-19 every check
 was green while half of All Media's tiles were blank.
 
 - **Before taking a capture, name what it should show.** Anything else is a finding:
@@ -48,8 +49,7 @@ was green while half of All Media's tiles were blank.
   diagnosed from logs and catalog, then fixed.
 - **From a cloud session:** read CI's captures of each view (the library's grid, Places, On This
   Day, Duplicates, the Edit pane), light and dark, on generated media, from the PR's final
-  run (`ci` skill). The look at the owner's own
-  library is a non-blocking owner note.
-- **From a session on the Mac:** look at the installed app as the `mac-session` skill
-  says, and name the release it shows.
+  run (`ci` skill).
+- **From a session on a Mac:** also build and look at the dev app on a generated library, and,
+  read-only, at the installed app, as the `mac-session` skill says; name the release it shows.
 - **The report says** which surfaces were looked at and what each showed.

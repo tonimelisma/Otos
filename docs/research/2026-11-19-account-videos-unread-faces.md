@@ -1,10 +1,10 @@
 # Account videos whose faces were never read (2026-11-19)
 
-Why 14 of the owner's Immich videos logged `op=videoFaces.remote phase=unread unread=video`
+Why 14 of the reference library's Immich videos logged `op=videoFaces.remote phase=unread unread=video`
 every 15–20 minutes, each read fetching 1–22 MB from the server and never succeeding, and
 what each failure was. Evidence: the installed app's unified log (`log show --info --last 12h`,
 `eventMessage CONTAINS "videoFaces.remote"`), read-only GETs of the 14 originals from the
-owner's server with the session token Otos stored (into a scratch folder, deleted after), and
+test Immich server with the session token Otos stored (into a scratch folder, deleted after), and
 probes opening them with `AVURLAsset` from local files.
 
 ## What the log showed

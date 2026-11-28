@@ -1,14 +1,14 @@
 # The search index's vectors in a mapped file
 
 Date: 2026-11-16. Context: plan 0116 bet 2. With search the only background owner, a tour on
-the owner's library peaked at 973 MB, against 336 MB with no owner at all. The search index
+the reference library peaked at 973 MB, against 336 MB with no owner at all. The search index
 finished loading at 16.5 s; its matrix alone was 482 MB. The whole app's target is 700 MB.
 The due-diligence note (P4) had measured a throwaway mapped Float16 file. This note records
 the measurements behind the design ADR 0048 now describes ("The index: one owner, one mapped
 file").
 
 Method:
-- The owner's catalog was opened read-only (`mode=ro`). Embedding blobs were read into memory
+- The reference catalog was opened read-only (`mode=ro`). Embedding blobs were read into memory
   by a scratch program; nothing was written or copied.
 - Timings were taken in scratch programs, at `-Onone` as the installed app is built.
 - No benchmark was run.
@@ -35,7 +35,7 @@ From the installed app's own lines (f192041a, the full tour):
 | Text matching, one word list over 10,023 readings | 45 (run twice) |
 | Float32 matrix product | about 25 |
 
-## 2. Float16 against Float32 on the owner's embeddings
+## 2. Float16 against Float32 on the reference embeddings
 
 165,653 embeddings, scored against Float32 with the shipped cut (best − 0.04, floor 0.08).
 Text queries also go through the label gate: the labels they name and the exact stored
@@ -76,12 +76,12 @@ old matrix used, in place of `sgemv`. Evicted pages are read back at the disk's 
   So the catalog is the one commit point: it stores the file's name and its committed slot
   count (v70). A file short of the count is rebuilt.
 - **Disk:** the 650 MB the vectors take in the catalog would leave the disk only with a
-  `VACUUM`, which bet 8 holds for the owner. The file adds about 254 MB of vectors and about
+  `VACUUM`, which bet 8 holds for the user. The file adds about 254 MB of vectors and about
   25 MB of keys.
 
-## 5. On a generated owner-size catalog
+## 5. On a generated reference-size catalog
 
-`SearchIndexLoadMemoryTests` at owner size, Debug test host, 164,699 embeddings:
+`SearchIndexLoadMemoryTests` at reference size, Debug test host, 164,699 embeddings:
 
 | | Value |
 | --- | --- |
@@ -124,6 +124,6 @@ The design that follows (ADR 0048):
 
 ## 7. Not measured here
 
-- The footprint and load time on the owner's library: the next tour.
+- The footprint and load time on the reference library: the next tour.
 - Query time with the pages evicted.
 - Power loss.

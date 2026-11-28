@@ -158,7 +158,7 @@ everything expensive happens on an actor off the main thread.
   (`CatalogSchema`, schema v76).
 - **Memory outside the heap**: `MappedMemory` is the one place Otos maps anonymous memory,
   and a failed mapping traps (ADR 0056). `ScratchBuffer`, `MappedArrayBuilder` (an
-  owner-scale read whose length it learns as it reads) and `MediaAssetIdentityTable` hold
+  library-scale read whose length it learns as it reads) and `MediaAssetIdentityTable` hold
   what they build there, so what they free leaves the footprint. People's face vectors
   (`FaceVectorFile`, unlinked) and search's Float16 vectors (`SearchVectorFile`) are mapped
   files, outside the footprint too.
@@ -341,7 +341,7 @@ everything expensive happens on an actor off the main thread.
 - **Diagnostics** (ADR 0060): `MetricKitRecorder` keeps each MetricKit diagnostic report as
   JSON in Application Support; Help ▸ Export Diagnostics… (`DiagnosticsExportController`, one
   ordered stream) has `DiagnosticsExport` write the log lines, crash reports, kept reports
-  and storage sizes into a new folder the owner chooses, published by `ExclusivePublication`.
+  and storage sizes into a new folder the user chooses, published by `ExclusivePublication`.
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;
   `LibraryReorganizationRunner` owns execution and recovery sequencing; the view model
@@ -444,7 +444,7 @@ everything expensive happens on an actor off the main thread.
 | open in another app / Open With | `CatalogWindowViewModelOpenWith` (intents, off-main menu build) + `OpenWithMenuModel` (pure) + `WorkspaceOpening` (the one LaunchServices seam); URLs only, no bytes (ADR 0012) |
 | recoverable deletion | `CatalogWindowViewModelTrash` + `MediaTrashCoordinator` + Store namespace lease/reconciliation; never use a view or permanent-delete API |
 
-Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
+Never violate the non-negotiables in `CLAUDE.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main
 thread stays free of database/scan/sort/decode work. If answering one question makes
 you touch two layers, the boundary is probably wrong — move the responsibility.

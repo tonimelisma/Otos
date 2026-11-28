@@ -10,7 +10,7 @@ behavior changed. Companion research the same day:
 Labels: **[V]** checked against the cited source, header or repo file; **[M]** measured
 on the development Mac; **[R]** community report; **[I]** inference.
 
-## Owner decisions captured
+## Decisions captured
 
 1. **One current edit per photo**, as in Apple Photos. No virtual copies, no saved
    versions.
@@ -177,7 +177,7 @@ sidebar is open, the editor renders live from the original with one `CIContext` 
 view and `cacheIntermediates` on (Apple's guidance, measured 20–180 ms per change after
 the first render), at display scale during a drag.
 
-Owner decisions this leaves:
+Product decisions this leaves:
 
 - **Display render size**: a fixed long edge (3096 or 5120 px measured above) or the
   main display's backing size.

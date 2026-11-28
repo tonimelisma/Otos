@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreThumbnailLifecycleTests {
+    // Validates: ENR-004
     @Test func acceptedStagedThumbnailPromotesAndStampsCatalog() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let generated = try fixture.stageThumbnail(finalName: "thumb.jpg", stagedName: ".thumb.jpg.accepted.tmp")
@@ -32,6 +33,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(!current.needsEnrichment(.products))
     }
 
+    // Validates: ENR-016
     /// ADR 0035: a result carrying a thumbnail and a preview promotes both, stamps both
     /// paths, and removing the library deletes both files.
     @Test func acceptedPreviewPromotesWithTheThumbnailAndIsPurgedWithIt() async throws {
@@ -64,6 +66,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.finalURL(for: preview).path(percentEncoded: false)))
     }
 
+    // Validates: ENR-004
     @Test func staleStagedThumbnailIsDiscardedWithoutReplacingFinalThumbnail() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let finalName = ThumbnailStore.relativeName(for: fixture.id)

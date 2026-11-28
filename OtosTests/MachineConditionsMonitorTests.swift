@@ -12,6 +12,7 @@ import Testing
 /// non-main thread, as the platform does; a monitor or report that claims the main actor again
 /// either no longer compiles here or traps the test.
 struct MachineConditionsMonitorTests {
+    // Validates: ENR-033
     @Test func aMemoryPressureReportDeliveredOffTheMainThreadReachesTheRoom() async {
         let room = BackgroundRoom(conditions: .roomy)
         let monitor = MachineConditionsMonitor(room: room, storeUse: nil)
@@ -28,6 +29,7 @@ struct MachineConditionsMonitorTests {
         withExtendedLifetime(monitor) {}
     }
 
+    // Validates: ENR-033
     @Test func aPowerStateReportDeliveredOffTheMainThreadReachesTheRoom() async {
         var start = MachineConditions.roomy
         start.lowPower = !ProcessInfo.processInfo.isLowPowerModeEnabled

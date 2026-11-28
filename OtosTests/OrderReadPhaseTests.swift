@@ -3,20 +3,20 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// What each phase of All Media's order read costs on a catalog of the owner's shape: the
+/// What each phase of All Media's order read costs on a catalog of the reference shape: the
 /// SQL and its rows, the stack candidates and their rule, the rows made the window's IDs, the
 /// collapse and the grid's position index. A measurement, not a benchmark: it runs at the
-/// owner's size only on demand (`OTOS_SCALE_TEST=1`), and writes
+/// reference library's size only on demand (`OTOS_SCALE_TEST=1`), and writes
 /// `build/order-read-phases/phases.txt`. Run unoptimized by `script/check.sh`, and with OtosKit
 /// at `-O` by an `xcodebuild test` that sets the optimization per target (the research note
 /// gives the command: the test target does not compile at `-O`).
-/// (`docs/research/2026-11-16-window-reads-owner-catalog.md`). It asserts only that every
+/// (`docs/research/2026-11-16-window-reads-reference-catalog.md`). It asserts only that every
 /// phase ran.
 @Suite(.testScope, .serialized)
 struct OrderReadPhaseTests {
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
     func eachPhaseOfAllMediasOrderReadIsMeasured() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 1)
         let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         var lines: [String] = []

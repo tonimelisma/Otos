@@ -8,6 +8,7 @@ extension AppKitWindowTests {
     /// Escape into the loupe's Escape, and gives the keyboard back when it leaves.
     @MainActor
     struct CropKeyViewTests {
+        // Validates: APP-048
         @Test func theCropKeyViewTakesTheKeyboardAndGivesItBack() {
             let window = orderedInTestWindow(width: 200, height: 100, contentView: NSView())
             defer { window.close() }
@@ -24,6 +25,7 @@ extension AppKitWindowTests {
             #expect((window.firstResponder as? NSTextView)?.delegate === field)
         }
 
+        // Validates: APP-048
         @Test func arrowsNudgeAndTheirReleaseSaves() {
             let window = orderedInTestWindow(width: 200, height: 100, contentView: NSView())
             defer { window.close() }

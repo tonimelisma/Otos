@@ -7,12 +7,14 @@ import Translation
 /// The languages the user searches in (ADR 0048): a stored choice, else the system's, and
 /// recognising a query's language favours them.
 struct SearchLanguagesTests {
+    // Validates: APP-073
     @Test func theStoredChoiceWinsElseTheSystemsLanguages() {
         #expect(SearchLanguages.resolved(stored: ["fi", "en"], systemPreferred: ["en-US"]) == ["fi", "en"])
         #expect(SearchLanguages.resolved(stored: nil, systemPreferred: ["en-US", "en-GB", "fi-FI"]) == ["en", "fi"])
         #expect(SearchLanguages.resolved(stored: [], systemPreferred: ["zh-Hant-TW", "zh-Hans"]) == ["zh-Hant", "zh-Hans"])
     }
 
+    // Validates: APP-073
     /// "kot" is Polish for cat and reads as Finnish alone; a Polish user's search reads it as
     /// Polish. A Finnish sentence reads as Finnish either way.
     @Test func recognitionFavoursTheUsersLanguages() {
@@ -26,6 +28,7 @@ struct SearchLanguagesTests {
 }
 
 extension SearchLanguagesTests {
+    // Validates: APP-073
     /// ARC-061: user-initiated work is what exempts a process from App Nap; the activity must
     /// not also keep the Mac awake.
     @Test func choosingALanguageAddsOrRemovesItButNeverTheLast() {
@@ -35,6 +38,7 @@ extension SearchLanguagesTests {
         #expect(SearchLanguages.choosing("en", isOn: false, in: ["en"]) == nil)
     }
 
+    // Validates: APP-073
     @Test func theTitleNamesTheChosenLanguagesInOrder() {
         let choices = [SearchLanguageChoice(code: "en", name: "English"), SearchLanguageChoice(code: "fi", name: "Finnish")]
         let english = Locale(identifier: "en_US")
@@ -42,11 +46,13 @@ extension SearchLanguagesTests {
         #expect(SearchLanguages.title(of: ["en"], among: choices, locale: english) == "English")
     }
 
+    // Validates: ARC-061
     @Test func backgroundReadingIsExemptFromAppNapButNotFromSleep() {
         #expect(BackgroundReading.options.contains(.userInitiatedAllowingIdleSystemSleep))
         #expect(!BackgroundReading.options.contains(.idleSystemSleepDisabled))
     }
 
+    // Validates: APP-068
     /// A query is translated as a photo's caption, and the caption's word is taken off.
     @Test func aQueryIsTranslatedAsAPhotosCaption() {
         #expect(SearchQueryEncoder.caption("호수", in: Locale.Language(identifier: "ko")) == "사진: 호수")
@@ -60,6 +66,7 @@ extension SearchLanguagesTests {
         #expect(SearchQueryEncoder.uncaptioned("dog on the beach") == "dog on the beach")
     }
 
+    // Validates: APP-068
     /// Every language Translation offers has its word for a photo.
     @Test func everyTranslatableLanguageHasAPhotoWord() async {
         for code in await Self.translatableCodes() {

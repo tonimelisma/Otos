@@ -39,8 +39,8 @@ parsed local-authority wall-clock components verbatim (`localFloating` /
 from local-authority candidates only; backfill from stored metadata JSON; only
 the mtime fallback renders a zone. **UTC-anchored timestamps
 (`precision == .absolute`) are excluded from naming entirely** — a UTC wall
-clock without a local offset is not the time where the item was captured (owner
-directive 2026-07-10). MediaMetadata needs a stated/test-pinned contract, a
+clock without a local offset is not the time where the item was captured.
+MediaMetadata needs a stated/test-pinned contract, a
 capture-local accessor that returns `nil` for absolute candidates, and
 local-preferring role selection (a GPMF UTC epoch can currently shadow an Apple
 local `creationdate` under the same `quickTimeCreationDate` role because
@@ -131,8 +131,8 @@ following the bundle — Lightroom-consistent stem grouping.
 
 ### 1e. Imported-file mtime policy
 
-Imported files' mtimes are the original capture date, never the import moment
-(owner directive 2026-07-10): stamp the staged file (publication is a rename of
+Imported files' mtimes are the original capture date, never the import moment:
+stamp the staged file (publication is a rename of
 the same inode) with the embedded local-authority capture time interpreted in
 the current zone when available, else preserve the planned source mtime — the
 defined-zone version of `gomediaimport`'s `setFileTimes`. The stamped value is

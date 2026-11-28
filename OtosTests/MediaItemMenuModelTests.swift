@@ -5,6 +5,7 @@ import Testing
 /// The context menu's ordered contents (APP-037) as a pure value: same titles as the
 /// menu bar, same order on every surface, enablement per act.
 struct MediaItemMenuModelTests {
+    // Validates: APP-037
     @Test func entriesMirrorTheMenuBarInOrder() {
         let preview = OpenWithApplication(
             url: URL(fileURLWithPath: "/System/Applications/Preview.app"),
@@ -37,6 +38,7 @@ struct MediaItemMenuModelTests {
         ])
     }
 
+    // Validates: APP-072
     /// The targets' faces sit after Reveal in Finder, one entry per person; a lone entry sits
     /// at the top level (DES-113).
     @Test func facesComeAfterRevealOnePerPerson() throws {

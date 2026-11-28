@@ -24,12 +24,12 @@ import ImageIO
 ///
 /// Each request is a load that takes its turn in `LoadAdmission` (`BackgroundLoad.description`,
 /// ADR 0055): a cold request makes the system load its 3B model and image encoder, which took
-/// the owner's machine to memory-pressure warning beside a People pass
+/// the test Mac to memory-pressure warning beside a People pass
 /// (`docs/research/2026-11-17-launch-pressure-dips.md`), so a request never runs beside
 /// another background heavy load; the load the window's view needs starts beside it. Requests
-/// run while Otos is the active app and at memory-pressure warning: the owner accepts the
-/// memory the model takes ("Descriptions should run when the app is foregrounded. OS will
-/// swap running apps", 2026-11-18). Its turn waits for the background room (ADR 0057) only at
+/// run while Otos is the active app and at memory-pressure warning: the memory the model
+/// takes is accepted, since descriptions run while the app is in front and the OS swaps
+/// running apps out. Its turn waits for the background room (ADR 0057) only at
 /// critical memory pressure, a serious or critical thermal state, or Low Power Mode; the walk
 /// waits there, its status naming the hold (`heldBy`), and goes on in the step that opens the
 /// room. A request in flight is never stopped by a change of level.
@@ -44,7 +44,7 @@ import ImageIO
 /// are read by key ahead of the walk's next page, and the walk goes on from its cursor: text
 /// reading and the search index name each still they write, and a walk restarted for each of
 /// their writes visited the described stills at the top again on every page, 1.1 to 3.4 s a
-/// page on the owner's library (`docs/research/2026-11-16-idle-disk-read-attribution.md`). A
+/// page on the reference library (`docs/research/2026-11-16-idle-disk-read-attribution.md`). A
 /// change that names no rows, and a wake, owe a walk, which visits the owed stills newest
 /// first, a page at a time (`CandidateWalk`), each once; a walk owed while one runs restarts it
 /// from the newest still at its next page. A request that owes neither reads nothing: every

@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct MaterializationCoordinatorTests {
+    // Validates: APP-023
     /// ADR 0046 §4: an in-place original's locality is its `SF_DATALESS` status; a staged
     /// root's file absent from its staging folder is one its source has yet to send.
     @Test func localityReadsAStagedRootsAbsentFileAsFetchable() {
@@ -17,6 +18,7 @@ struct MaterializationCoordinatorTests {
         #expect(OriginalLocality.of(kind: .deviceMTP, status: .dataless) == .fetchable)
     }
 
+    // Validates: APP-067
     /// An Immich account sends an original only for the user's work (ADR 0046 §4), so its
     /// locality says so, and only user work may fetch it: background and device work never
     /// ask its source, so it never refuses them.
@@ -31,6 +33,7 @@ struct MaterializationCoordinatorTests {
         #expect(OriginalLocality.fetchable.isFetchable(at: .background))
     }
 
+    // Validates: APP-067
     /// Background work that asks to make an account's original local is answered without a
     /// request: nothing is dispatched, so nothing is refused or logged as failed.
     @Test func ensureLocalAsksNothingOfAnAccountForBackgroundWork() async {
@@ -46,6 +49,7 @@ struct MaterializationCoordinatorTests {
         #expect(requester.requests.withLock { $0 } == 1)
     }
 
+    // Validates: ENR-014
     /// The coordinator answers a folder's file from its own detector: a dataless file is
     /// fetchable, never local, and only a materialized one is local.
     @Test func aDatalessFolderFileIsFetchableNotLocal() async {
@@ -80,6 +84,7 @@ struct MaterializationCoordinatorTests {
         #expect(calls.withLock { $0 } == 0)
     }
 
+    // Validates: ENR-008
     /// ENR-008 / ADR 0027: background and device downloads start only while the volume
     /// keeps the free-space floor after them; the photo on screen and a user command do
     /// not wait for it, and a volume that reports no capacity admits.
@@ -112,6 +117,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-008
     /// ADR 0027: a download that found its file already local wrote nothing, so the room
     /// it was committed is given back while other downloads are still in flight; only the
     /// bytes a download landed stay counted.
@@ -148,6 +154,7 @@ struct MaterializationCoordinatorTests {
         _ = await holding.value
     }
 
+    // Validates: ENR-008
     /// ENR-008: a command (Move to Trash's download) runs under the bounded background
     /// persistence, through the executor the app gives the coordinator for a folder's file:
     /// a provider that refuses twice in a row ends it as `providerUnavailable`, where an
@@ -170,6 +177,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-034, APP-023
     @Test func sameIDRequestsShareOnePhysicalTransfer() async throws {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
@@ -194,6 +202,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-041
     /// A surface that shows where an original is (Info's `Original`) hears when a transfer
     /// made one local, and the stream ends with the coordinator.
     @Test func aTransferThatMadeAnOriginalLocalRingsLandings() async throws {
@@ -331,6 +340,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-008
     @Test func backgroundIsLimitedToTheRootCap() async throws {
         let cap = MaterializationAdmissionPolicy.production.backgroundPerRootCap
         let executor = ControlledMaterializationExecutor()
@@ -360,6 +370,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-008
     /// A Move to Trash download must not queue behind the library's enrichment backlog:
     /// `command` is exempt from the background per-root cap that a background transfer
     /// already holds, and is selected ahead of queued background work.
@@ -533,6 +544,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-033
     /// ADR 0057: while the background room holds downloads, a background download waits,
     /// the owner's status names the hold, and the photo on screen does not wait; the waiting
     /// download starts once, in the step that opens the room.
@@ -577,6 +589,7 @@ struct MaterializationCoordinatorTests {
         )
     }
 
+    // Validates: ENR-008
     /// Withdrawal is what makes an interactive transfer safe to run without a deadline.
     ///
     /// Interactive persistence polls until the bytes arrive, so the last waiter leaving is

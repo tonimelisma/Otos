@@ -1,41 +1,41 @@
 # A person's photos in order (v78)
 
 Date: 2026-11-17. The tour's "first person" step (the most photographed person, 16,115 items
-after stacks) took 1,555 ms on the owner's library against a 1,000 ms target, under memory
+after stacks) took 1,555 ms on the reference library against a 1,000 ms target, under memory
 pressure; eleven other tours took 343–609 ms. The order read logged `orderSqlMs=1361`, and its
 reach decision (`op=catalog.query.reach … reach=walk`) was logged 1.2 s after the read began:
 the two counts that decide whether a person seeks or walks, and the walk itself, read pages in
 proportion to the catalog, not to the person. This note measures every narrow scope at its
-largest on the owner's library, the person's reads before and after v78, and what v78 costs.
+largest on the reference library, the person's reads before and after v78, and what v78 costs.
 No benchmark was run.
 
 ## Method
 
-- **The owner's catalog** (v77, 167,253 assets, 103,149 faces, 745 people), opened only while
+- **The reference catalog** (v77, 167,253 assets, 103,149 faces, 745 people), opened only while
   no Otos ran, with `sqlite3`'s library read-only (`file:…?mode=ro`, `mmap_size=0`, a cache
   larger than any read), so `SQLITE_DBSTATUS_CACHE_MISS` counts the distinct pages a read takes
   from the file. "Cold" is the file's pages dropped from the buffer cache first
   (`msync(MS_INVALIDATE)` on a read-only mapping; `mincore` then reported none resident). The
   reads are the gateway's SQL with its arguments written in, made on an empty catalog (a sized
-  seek walks there) or one with rows (it seeks), with the owner's largest batch, day, area and
+  seek walks there) or one with rows (it seeks), with the reference catalog's largest batch, day, area and
   stack put in. Nothing was written, copied or migrated.
-- **The generated catalog** (`OwnerShapedCatalog`, scale 1), now shaped like the owner's people:
-  his eight people of 1,203–17,285 faces and 57, 303 and 377 of about 300, 28 and 5; one face in
+- **The generated catalog** (`ReferenceShapedCatalog`, scale 1), now shaped like the reference catalog's people:
+  its eight people of 1,203–17,285 faces and 57, 303 and 377 of about 300, 28 and 5; one face in
   ten no one's; 64,756 stills and 10,343 videos holding 87,476 and 15,673 faces, several on one
-  photo as often as on his (it gave every person about 130 faces, one a photo, before). Each
+  photo as often as on the reference (it gave every person about 130 faces, one a photo, before). Each
   read was made on a fresh cold connection as above. v78 cannot be emulated read-only on the
-  owner's catalog (it is a table), so every "after" is the generated catalog's.
+  reference catalog (it is a table), so every "after" is the generated catalog's.
 
-## 1. The narrow scopes at their largest on the owner's library
+## 1. The narrow scopes at their largest on the reference library
 
-Cold, the order read as the app chooses it (seek or walk), owner's v77 catalog:
+Cold, the order read as the app chooses it (seek or walk), the reference v77 catalog:
 
 | Scope (largest) | Rows | Pages | ms | Reads |
 | --- | --- | --- | --- | --- |
 | All Media (for scale) | 164,981 | 4,173 | 56 | the date index |
 | A person (17,285 faces) | 17,266 | 4,520 + 3,056 to decide | 159 + 20 | the whole date index, a face seek a row |
 | An import batch (1,374) | 1,374 | 226 | 5 | the batch index, sorted |
-| On This Day (31 December, his largest day) | 3,665 | 9,522 | 640 | the day index, each row's table row and search embedding |
+| On This Day (31 December, the largest day) | 3,665 | 9,522 | 640 | the day index, each row's table row and search embedding |
 | A map area (1°, 45,568 located) | 45,568 | 5,768 | 229 | walks: the date and location indexes |
 | Places | 75,922 | 5,768 | 202 | the date and location indexes |
 | A map stack (the same 45,568) | 45,568 | 25,129 | 532 | each member's table row, sorted |
@@ -66,7 +66,7 @@ each row with a face lookup. They are left as they are (section 5).
 
 ## 2. What the person's reads cost, and why
 
-On the owner's catalog, person 1, cold:
+On the reference catalog, person 1, cold:
 
 | Sort | Rows | Walk (the app's plan) | Seek, forced |
 | --- | --- | --- | --- |
@@ -125,14 +125,14 @@ Rejected:
 
 ## 4. The migration and the write cost
 
-On the generated owner-shaped catalog (`CatalogMigrationCostTests`, one run): 1,155 ms and
+On the generated reference-shaped catalog (`CatalogMigrationCostTests`, one run): 1,155 ms and
 28,967,752 bytes of write-ahead log; the file's size unchanged (2,340,237,312 bytes; the free
 pages it had held the new trees) and no compaction owed. `person_photo` holds 92,631 rows in
 17.3 MB, `idx_person_photo_photo` 5.4 MB, `idx_person_photo_copies` one page, and
 `idx_face_person_photo` grows from 5.8 to 6.0 MB with each face's index and likeness. The time is
 the join of every assigned face to its photo, written in key order, then the two indexes and the
-face index made again; the log is those trees written once. The owner's file is fragmented on
-disk, so his will be slower.
+face index made again; the log is those trees written once. The reference file is fragmented on
+disk, so its migration will be slower.
 
 What People's writes cost, on the same catalog: the most photographed person's 17,284 faces given
 to the second person and back, each page its own transaction, as a pass writes guesses:
@@ -147,7 +147,7 @@ other's: 0.36 ms and 27 KB of log a face against 0.12 ms and 10 KB. A page holds
 as fit in 256 changed rows, the triggers' rows counted (`AssignmentWrite.mostRows`: a guess or
 a seed three, a lapse two, a likeness one), so no transaction grows — the largest page's log is
 smaller than before — and `PeopleStoreTests/noPeopleWriteTransactionChangesMoreThanAPage`
-holds. A pass that reassigns every one of the owner's 103,149 faces would take about 37 s of
+holds. A pass that reassigns every one of the reference catalog's 103,149 faces would take about 37 s of
 writer time in 1,200 transactions, against about 13 s in 400; a pass writes only the faces whose
 guess moved. A likeness write changes no row of `person_photo`. A Like on a photo of the person
 logs 78 KB against 70 KB; a scanned file's insert and removal are unchanged.
@@ -168,7 +168,7 @@ of their roots.
 ## 5. What is left
 
 - Unidentified Faces and a person filter on a wide scope walk its order with a face lookup a row
-  (10,343 and 4,521 pages on the owner's catalog).
+  (10,343 and 4,521 pages on the reference catalog).
 - On This Day's largest day reads each row's table row and search embedding for its exclusion.
 - A large map stack reads each member's table row.
 - The count and the filter's options of a person still find the person's photos from their

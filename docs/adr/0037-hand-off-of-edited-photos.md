@@ -11,7 +11,7 @@ originals as they are. Since ADR 0036, a photo can carry an edit. Since ADR 0035
 shown developed with RAW9. Handing over the original would hand over a photo Otos does not
 show, or an ARW that browsers and most apps cannot display.
 
-Owner decisions (2026-10-25):
+Product decisions (2026-10-25):
 - Hand-off behaves like Finder: one full-size file per photo.
 - An unedited RAW hands over a rendered JPEG, not the ARW.
 - The acceptance case is a mixed selection of edited and unedited photos, copied and

@@ -7,6 +7,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct SearchPhaseWindowTests {
+    // Validates: APP-068
     /// While the query is read the subtitle says so, beside `Filtered` when a filter narrows
     /// the scope; once it is read or has failed, or the search has ended, it says nothing of
     /// search.
@@ -29,6 +30,7 @@ struct SearchPhaseWindowTests {
         #expect(model.windowSubtitle == "Filtered")
     }
 
+    // Validates: APP-068
     /// A query that cannot be read says so in the grid's empty state, never as the results.
     @Test func aFailedSearchSaysItCouldNotSearch() {
         let failed = CatalogMediaEmptyState.searchFailed("järvi")

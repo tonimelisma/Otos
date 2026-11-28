@@ -81,7 +81,7 @@ sequential, idle machine, provider already warmed by earlier reads, no import an
 running. The failures being investigated occurred during 38 GB of upload with eight concurrent
 enrichment transfers. Recorded only so nobody mistakes it for a baseline under load.
 
-The owner's position — that a saturated provider can discard queued requests, since
+The working position — that a saturated provider can discard queued requests, since
 `startDownloadingUbiquitousItem` returns no acknowledgement — remains the operating assumption,
 and is the safe one: hammering when unnecessary costs one XPC round trip, while failing to
 hammer when necessary costs the image the user is looking at.
@@ -128,7 +128,7 @@ experiment under real load in under real load has not been run.
 
 Of the 999 originals imported at 22:24 on 2026-08-31, **300 were `SF_DATALESS` within hours —
 11.5 GB evacuated**, verified by the kernel flag rather than `du`. The destination was
-`OneDrive-Personal/Pictures/Camera Roll`, and the disk had ~17 GB free, so Files On-Demand
+`OneDrive/Pictures/Camera Roll`, and the disk had ~17 GB free, so Files On-Demand
 reclaimed the space after upload. A sample of 3,000 OneDrive catalog rows found **2,803 dataless
 (93%)**, which makes materialization the normal path for that library rather than an edge case.
 
@@ -143,7 +143,7 @@ No other provider (iCloud Drive, Dropbox) and no healthy-disk machine has been m
 
 ## Closed unrun
 
-The two-arm experiment under real load was **closed unrun by owner decision on
+The two-arm experiment under real load was **closed unrun by decision on
 2026-09-01** — reproducing the conditions means writing tens of gigabytes into a
 cloud-synced folder on a nearly-full disk, which the measurement does not justify.
 The cadence therefore rests on finding 4 (hammering is safe) and on asymmetric cost

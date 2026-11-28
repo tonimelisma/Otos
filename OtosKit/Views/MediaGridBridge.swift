@@ -361,7 +361,7 @@ final class MediaGridViewController: NSViewController {
         // makes itself (a structural apply keeping its anchor, a focus scroll to the
         // selected tile, AppKit clamping after a layout) is no one scrolling, and a hold on
         // it parked each act's result for the whole quiet threshold
-        // (docs/research/2026-11-17-acts-at-the-owners-library-size.md).
+        // (docs/research/2026-11-17-acts-at-the-reference-library-size.md).
         if MediaGridScrollInput.isUserScroll(liveScrolling: liveScrolling, handlingEvent: NSApp?.currentEvent?.type) {
             mutationGate.beginScrollHold()
             scheduleScrollHoldQuietRelease()

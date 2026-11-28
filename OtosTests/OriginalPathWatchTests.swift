@@ -7,6 +7,7 @@ import Testing
 /// as a folder a sync client restores or a volume mounted again does.
 @Suite(.testScope)
 struct OriginalPathWatchTests {
+    // Validates: APP-046
     @Test func aWatchOnAMissingPathReportsTheOriginalPutBack() async throws {
         // The path as the catalog spells it, symlinks resolved (`/var` is `/private/var`).
         let directory = try CatalogPath.normalizedDirectoryPath(for: makeTestDirectory())

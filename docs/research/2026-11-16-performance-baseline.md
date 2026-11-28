@@ -1,4 +1,4 @@
-# The performance program on the owner's library (2026-11-16 to 2026-11-18)
+# The performance program on the reference library (2026-11-16 to 2026-11-18)
 
 Date: opened 2026-11-16, closed 2026-11-18 with the final measurement on installed revision
 2d1d7397 and the acts last measured on 6dc46aa3's tree in a sandbox.
@@ -8,8 +8,8 @@ and what remains.
 
 ## Method
 
-- Read-only tours of the owner's library (about 167k assets, 103k faces) on the installed app
-  (`script/scorecard.sh --tour`). Nothing was written to his catalog or folders, and no copy of
+- Read-only tours of the reference library (about 167k assets, 103k faces) on the installed app
+  (`script/scorecard.sh --tour`). Nothing was written to its catalog or folders, and no copy of
   either was made. The saved scorecards are local files; this note cites the revisions.
 - Two tour kinds (ADR 0015): a **launch** tour takes its first step at the first grid, under
   the launch's own load; a **settled** tour (`--settled`) waits for the launch's background
@@ -26,7 +26,7 @@ and what remains.
   each level, and the CPU and footprint of Otos's process tree (the app and its text-reading
   helpers).
 - Acts (Move to Trash, Put Back, Like, Dislike, Not Rated) only in a sandbox: a generated
-  library on its own volume (`--dev --optimized --seed <photos>`). The owner's library takes no
+  library on its own volume (`--dev --optimized --seed <photos>`). The reference library takes no
   act, since an act changes data.
 - Whole-machine surveys (`script/survey.sh`) and the static survey
   (`2026-11-16-broad-survey-static.md`) for the first baseline.
@@ -128,11 +128,11 @@ largest text-reading helper 126 MB. Memory pressure was normal at launch (57 % a
 reached warning at its worst. It was above normal for 590.1 s, and the scorecard attributed all
 590.1 s to description writing and 0.0 s to anything else, so its verdict is ACCEPTED (state
 `descriptions`). The session wrote 136 descriptions from 143 requests, with no hold; 755 were
-owed before it and 27 at its end. The tour takes no act on the owner's library, and acts were
+owed before it and 27 at its end. The tour takes no act on the reference library, and acts were
 not measured on 2d1d7397; the acts of 6dc46aa3's tree, the last measured, were each within
-100 ms in a sandbox library of his size ("Acts at the owner's library size").
+100 ms in a sandbox library of its size ("Acts at the reference library's size").
 
-The trade is the owner's choice (#949, "After 6dc46aa3"): while a description backlog drains,
+The trade is a deliberate choice (#949, "After 6dc46aa3"): while a description backlog drains,
 the machine sits at memory warning, and the background work that waits at warning (background
 downloads, text reading and background heavy loads, held by `BackgroundRoom`) waits with it.
 Every interactive target still passed.
@@ -154,7 +154,7 @@ measured.
 
 The target "`StallReproductionTests` passes with no known-issue marker": earlier statements in
 this program that the test passed in full checks covered only its two small tests, because
-the owner-size test (`windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`) is skipped
+the reference-size test (`windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`) is skipped
 without `OTOS_SCALE_TEST=1`. Run with the switch, it failed on 12031093 ("After 12031093").
 On a934ef17's tree all three tests passed, none skipped, with no known-issue marker.
 
@@ -166,7 +166,7 @@ nominal, Low Power Mode off) and stayed normal for all 615.1 s; its settled tour
 for all 75.3 s. The f2bee3f8 launch tour began at 74 % available, its settled tour at 73 %.
 Across the installed builds 1fe52a12, 509cc0a0, 87e272a1, 6b254b2c, f398d5dc, 60199d89,
 f2bee3f8, 3fa7ee1b, 12031093, a934ef17, 7edc1b16, 6dc46aa3 and 2d1d7397 every launch-kind and
-settled tour on the owner's library passed every target, with three exceptions: one settled tour
+settled tour on the reference library passed every target, with three exceptions: one settled tour
 on 1fe52a12 failed sort by name at 1,075 ms, fixed by #909's order indexes; one launch tour on
 f398d5dc, under memory-pressure warning, failed first person at 1,555 ms, fixed by #927's
 `person_photo` (v78), with #926 addressing the pressure; the launch tour on a934ef17 failed
@@ -198,13 +198,13 @@ More from the final builds:
 
 **Quiet-machine measurement** (installed 87e272a1): one tour with the machine recorded as
 quiet: load average 3.3 before and after, no build or test process running, 1,950 MB free at
-start. During the tour free memory fell to 81 MB and swap stood at 5.7 GB with the owner's
+start. During the tour free memory fell to 81 MB and swap stood at 5.7 GB with the user's
 ordinary apps open, so it is quiet of other agents' work, not of memory pressure. Zero
 failures; launch 1,033 ms; worst view 506 ms (one person); first search first results 248 ms;
 return 60 ms; sort by name 180 ms; peak footprint 382 MB. A tour with every other app quit has
 not been run.
 
-**Whether Otos keeps a quiet machine quiet** (launch-kind tours on the owner's library;
+**Whether Otos keeps a quiet machine quiet** (launch-kind tours on the reference library;
 `2026-11-17-background-load-attribution.md`, ADR 0057):
 
 - *Installed f398d5dc, before #926.* The tour started with the machine quiet: kernel pressure
@@ -254,7 +254,7 @@ not been run.
   written in it.
 
 Established: before #926, Otos's background work took a quiet machine to warning within
-30 s; after it, five consecutive tours on the owner's library (one on 60199d89, two on
+30 s; after it, five consecutive tours on the reference library (one on 60199d89, two on
 f2bee3f8, two on 3fa7ee1b) and the launch tour of 12031093 stayed at normal pressure for
 their whole length; both tours of a934ef17 and the tours of ace92158 and b1429daa did not; the
 launch tours of 7edc1b16 and 6dc46aa3 did. In the one tour of 2d1d7397, with descriptions
@@ -263,7 +263,7 @@ to description writing. Not
 established: that #926's limits, or #943's admission, are the reason. No hold was logged on 60199d89 and that
 session hashed less, so the run shows the machine stayed quiet but does not by itself prove
 the room kept it so. The hold itself has been shown only in deterministic tests, never live:
-pressure was not produced on the owner's machine.
+pressure was not produced on the test Mac.
 
 **Acts, sandbox only** (the tree of 87e272a1, a seeded library of 200 generated photos on
 its own volume, two settled tours with the window occluded): Dislike 1 / 1 ms, Like 1 / 1 ms,
@@ -272,11 +272,11 @@ Not Rated 0 / 0 ms, Move to Trash 8 / 19 ms, Put Back 9 / 12 ms; five Trashes in
 The presented-frame number is reported apart and read `occluded` in every run because the
 display was asleep, so no presented-frame figure exists yet.
 
-**Acts at the owner's library size.** The action target is measured on a generated sandbox
-library of the owner's size: 160,002 files on its own volume (`--seed 160000 --seed-media
+**Acts at the reference library's size.** The action target is measured on a generated sandbox
+library of the reference library's size: 160,002 files on its own volume (`--seed 160000 --seed-media
 small`), an optimised dev build, settled tours, enrichment working the whole library as
 backlog, the window occluded. Times are to the main-actor commit
-(`2026-11-17-acts-at-the-owners-library-size.md`, `2026-11-17-acts-on-an-unshown-reorder.md`,
+(`2026-11-17-acts-at-the-reference-library-size.md`, `2026-11-17-acts-on-an-unshown-reorder.md`,
 `2026-11-17-acts-ahead-of-background-builds.md`, `2026-11-17-tile-store-under-a-backlog.md`):
 
 | Build | Dislike / Like / Not Rated | Move to Trash, five in a row | Put Back, five in a row |
@@ -305,9 +305,9 @@ backlog, the window occluded. Times are to the main-actor commit
 - No presented-frame figure exists: the window was occluded or the display asleep in every
   run, so each time is to the main-actor commit, not to pixels.
 
-**A new library at the owner's size** (the same 160,002-file sandbox library under its
-backlog; harder than the owner's settled library;
-`2026-11-17-a-new-library-at-the-owners-size.md`, `2026-11-17-tile-store-under-a-backlog.md`):
+**A new library at the reference library's size** (the same 160,002-file sandbox library under its
+backlog; harder than the reference library's settled state;
+`2026-11-17-a-new-library-at-the-reference-size.md`, `2026-11-17-tile-store-under-a-backlog.md`):
 
 | Number | Before | After | Target |
 | --- | --- | --- | --- |
@@ -320,7 +320,7 @@ backlog; harder than the owner's settled library;
   library's text is unread, so the words answer matches nothing and the first results wait
   for the tower, whose evicted pages are read back (about 330 MB). Three designs were
   measured; the nearest achievable is about 0.4 s resident and about 1.1–1.5 s evicted
-  (#919). It has not occurred on the owner's library: 0.23–0.94 s across the last seven
+  (#919). It has not occurred on the reference library: 0.23–0.94 s across the last seven
   tours there by #919, 0.29 / 0.19 s in the two tours of f2bee3f8, 0.35 / 0.19 s in the
   two tours of 3fa7ee1b, 0.33 s in the launch tour of 12031093, 0.46 s in the launch tour of
   a934ef17, 0.29 s in the launch tour of 7edc1b16, 0.31 s in the launch tour of 6dc46aa3 and
@@ -350,7 +350,7 @@ with all owners off, each owner alone and all on (first grid 0.76–1.11 s; a li
 | `duplicates.samePhotoPairs` | 466.1 M | 696.5 M | 277.8 M |
 | `window.apply.republished.158k` | 0.30 M | 0.40 M | 0.41 M (left as is) |
 
-The third is #867's per-part observation and awaits the owner's acceptance. The bisect points
+The third is #867's per-part observation and awaits acceptance. The bisect points
 in #904 read 0.31 M → 0.42 M (15441d2b → c825eecb); the note's table reads 0.30 M → 0.40 M
 for baseline and flagged head. The fixes are not judged until the next daily run (scheduled
 for 2026-11-18). Finding: the
@@ -365,20 +365,20 @@ benchmark build is unoptimised (`-Onone`) while the installed app is optimised (
   reverted (#934) and re-landed (#936). The first install showed heavy CPU. An early reading
   of the log took it for a repeated read of one file, and was wrong: rows waiting out retry
   pacing were claimed and released on every enrichment pass. #936 holds a paced row's claim.
-  Tour disk read on the owner's library, 68.5 s launch tours: 5,911 MiB on the reverted build
+  Tour disk read on the reference library, 68.5 s launch tours: 5,911 MiB on the reverted build
   d556d35b, 1,649 MiB on ef41db33.
 - **#935.** A crash: the memory-pressure monitor's dispatch-source handler carried main-actor
   isolation and trapped on its first report (`_dispatch_assert_queue_fail`), in a tour that
   began at memory-pressure warning. The type is nonisolated now, and a lint requires
   `@Sendable` handlers.
 - **#937.** A mirrored file and its Immich asset are one photo by the server's path, with no
-  digest (schema v79): 982 pairs on the owner's catalog; All Media 159,100 → 158,119 items
+  digest (schema v79): 982 pairs on the reference catalog; All Media 159,100 → 158,119 items
   between a tour before v79 and the launch tour of 12031093. 15,950 mirrored files still
   showed twice; #942 pairs them ("After a934ef17").
 
 ## After 12031093
 
-- **#939 (a934ef17).** The owner-size stall reproduction test (`OTOS_SCALE_TEST=1`,
+- **#939 (a934ef17).** The reference-size stall reproduction test (`OTOS_SCALE_TEST=1`,
   `StallReproductionTests/windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns`) was failing on
   12031093 with no stall and no unanswered read: an import batch's filter options visited
   1,880 rows for 254 in scope, because every options read scanned all 1,435 named place cells
@@ -395,8 +395,8 @@ benchmark build is unoptimised (`-Onone`) while the installed app is optimised (
   available): every timing row passed, peak 604 MB, one warning dip of 15.2 s (four dips,
   43.6 s, on a934ef17).
 - **#942 (b1429daa).** A mirrored library has a set of server prefixes (schema v80), paths
-  match in either Unicode form, and a pair's copy key is its own. Established on the owner's
-  library with one read-only server request the owner authorized: the server lists the same
+  match in either Unicode form, and a pair's copy key is its own. Established on the reference
+  library with one authorized read-only server request: the server lists the same
   library under two prefixes (`/srv/a/…`, `/srv/b/…`); of 15,955 unpaired files, 15,942
   matched exactly under the second prefix, 3 after Unicode normalisation, and 10 were not on
   the server yet. First launch after install: migration v80 took 1,259 ms (launch to first
@@ -423,8 +423,8 @@ benchmark build is unoptimised (`-Onone`) while the installed app is optimised (
 
 - **#949 (2d1d7397).** Descriptions run while Otos is frontmost and at memory-pressure warning;
   they wait only at critical pressure, a serious or critical thermal state, or Low Power Mode
-  (ADR 0055 decision 8, ADR 0057 decision 8). The owner, 2026-11-18: "Descriptions should run
-  when the app is foreground ed. OS will swap running apps". The scorecard reports the pressure
+  (ADR 0055 decision 8, ADR 0057 decision 8): descriptions run while the app is in the
+  foreground, and the OS swaps other running apps. The scorecard reports the pressure
   that description writing raises as the descriptions', accepted. The final measurement above
   is this build: 136 descriptions written, 27 owed at the end, the machine above normal for
   590.1 s of 609.2 s, every interactive target passed.
@@ -443,9 +443,9 @@ isolated unless a note says so.
 | People | paint from stored assignment (v68) and a stored gallery (v73); assign only what moved; vectors in an unlinked mapped file; kernel reads faces by position; half-precision vectors | #816, #825, #828, #837, #851, #858, #860, #871, #872, #874, #875, #882, #884 | first People 48,818 → 49–58 ms; with People running the app peaks at 327–390 MB |
 | Search | paged load; mapped Float16 vector file (v70); keyed reconciles; the query shown as typed; encoder load the user waits on; words answer first; text index in the catalog (v74); words and tower race; an empty answer reads no whole-scope count (v77) | #811, #822, #830, #833, #848, #855, #876, #885, #887, #889, #908, #919, #921 | first search 9,281 ms → 185–939 ms to first results; an empty answer at 160k 1,052 → 738 ms |
 | Duplicates | a build costs what changed (v67); no Immich external assets | #809, #814, #904 | the candidate read touches no wide row; first Duplicates 193 → 42–63 ms |
-| The window's own reads | stack candidates by folder; filter options walk a wide scope's order; name and size orders from their indexes (v69); `-O` for the installed app; keyed date re-reads; patched filter tallies; held arrays kept; every order walks its index (v76); a person's order reads the person's own rows of `person_photo` (v78); an options read seeks only its own cells | #808, #817, #820, #827, #836, #862, #868, #909, #927, #939 | an import batch's options at the owner's size 1,880 → 636 rows (generated); sort by name 41,806 → 121–605 ms (1,075 ms on one settled tour of 1fe52a12 until #909's order indexes); return 545 → 69–130 ms; first person 4,094 → 407–499 ms, then 194–235 ms after #927 (1,555 ms once under memory-pressure warning before it); the largest person's order on the generated catalog 7,881 → 803 pages, 907 → 92–98 ms cold |
+| The window's own reads | stack candidates by folder; filter options walk a wide scope's order; name and size orders from their indexes (v69); `-O` for the installed app; keyed date re-reads; patched filter tallies; held arrays kept; every order walks its index (v76); a person's order reads the person's own rows of `person_photo` (v78); an options read seeks only its own cells | #808, #817, #820, #827, #836, #862, #868, #909, #927, #939 | an import batch's options at the reference library's size 1,880 → 636 rows (generated); sort by name 41,806 → 121–605 ms (1,075 ms on one settled tour of 1fe52a12 until #909's order indexes); return 545 → 69–130 ms; first person 4,094 → 407–499 ms, then 194–235 ms after #927 (1,555 ms once under memory-pressure warning before it); the largest person's order on the generated catalog 7,881 → 803 pages, 907 → 92–98 ms cold |
 | Narrow tables and compaction | face embedding in its own table (v66); narrow `media_asset` (v71); the open compacts a file a tenth free | #810, #838, #847 | catalog 2.81 → 2.13 GB; name order 147,594 → 28,584 pages (generated) |
-| Memory outside the heap | one reused read buffer; 4-byte asset IDs in a mapped identity table; owner-scale reads in mapped regions | #861, #878, #881, #883 | freed-and-held bytes 92 → 51 MB on a generated sequence |
+| Memory outside the heap | one reused read buffer; 4-byte asset IDs in a mapped identity table; reference-scale reads in mapped regions | #861, #878, #881, #883 | freed-and-held bytes 92 → 51 MB on a generated sequence |
 | Image memory | face tiles from their region; held decodes bounded; the full-size view from Image I/O's IOSurface; one image per tile; video faces one frame at a time; renders admitted by memory; pane and lane share one budget; JPEG decode route; the tile store keeps the visible tiles and sixteen screens off screen | #865, #866, #877, #879, #886, #899, #903, #905, #923 | first launch after install 1,179 → 296–405 MB; new library tour 864–930 → 435–458 MB; new 160k library 697–1,098 → 486–488 MB |
 | Acts | newest projected state applied part by part; Put Back shown before file work; a landed write read whole; only the user's scrolling holds the grid; every publication an edit of the last; an act's publication costs its edit and never waits behind a build | #859, #863, #867, #888, #914, #920, #922 | choice acts 0–1 ms; Move to Trash 8–19 ms on 200 photos; at 160k, Move to Trash and Put Back 272–434 → 8–75 ms, and 6–55 ms on the tree of 6dc46aa3, the last measured (sandbox, timed to the main-actor commit) |
 | Scan and disk | an unchanged scan takes no write; the FSEvents change journal (v75); derived files live as long as a row names them; stored folder counters (v72); test temp folders owned; a stream's history before its start is already reflected; a small first batch; a scan baseline of digests | #834, #835, #850, #891, #897, #915, #916, #917 | a launch walks a library only when its journal cannot vouch for it; a new library is walked once; its first paint at 160k 4,220 → 233–239 ms |
@@ -453,7 +453,7 @@ isolated unless a note says so.
 | Instruments | stall reproduction test; survey; scorecard, tour, kinds, sandbox volume, disk read by owner, page-ins per paint; settled tours judged from the library's walk; live log capture; the text tower's and a first batch's waits; the machine's pressure level and Otos's process-tree load | #798, #803, #804, #813, #852, #870, #873, #890, #893, #894, #900, #912, #918, #919, #925 | made each number readable |
 | Check cost | the allocator probe on demand only; test catalogs start from a migrated template | #884, #902 | full check over six minutes → about two |
 
-**Migrations added** (ADR 0002 cost rule; generated owner-shaped catalog unless stated):
+**Migrations added** (ADR 0002 cost rule; generated reference-shaped catalog unless stated):
 
 | Version | PR | Cost |
 | --- | --- | --- |
@@ -467,11 +467,11 @@ isolated unless a note says so.
 | v73 People gallery | #851 | 16 ms, 58 KB WAL |
 | v74 search text words | #889 | 2,809 ms, 6.7 MB WAL (`2026-11-16-search-text-index.md`) |
 | v75 library root change journal | #897 | 4 ms, 33 KB WAL |
-| v76 order filter columns | #909 | 3,593–3,805 ms, 229 MB WAL; 3.9 s on the owner's catalog |
+| v76 order filter columns | #909 | 3,593–3,805 ms, 229 MB WAL; 3.9 s on the reference catalog |
 | v77 rows with no thumbnail coming | #921 | 36 ms, 53,592 bytes WAL |
 | v78 a person's photos (`person_photo`) | #927 | 1,155 ms, 29 MB WAL (`2026-11-17-a-persons-photos-in-order.md`) |
-| v79 a mirrored file and its Immich asset paired by the server's path | #937 | 1,297 ms on the owner's catalog at the first launch of 12031093; WAL not measured |
-| v80 a mirrored library's set of server prefixes | #942 | 1,259 ms on the owner's catalog at the first launch of b1429daa; WAL not measured |
+| v79 a mirrored file and its Immich asset paired by the server's path | #937 | 1,297 ms on the reference catalog at the first launch of 12031093; WAL not measured |
+| v80 a mirrored library's set of server prefixes | #942 | 1,259 ms on the reference catalog at the first launch of b1429daa; WAL not measured |
 
 ## Measured and rejected
 
@@ -484,7 +484,7 @@ isolated unless a note says so.
 | A lower-QoS background pool | background work ten times slower in a loaded run, no window gain | ADR 0002 |
 | A read model of the window in memory; a persisted last answer; a two-step paint; windowed identity | a second owner of the SQL's rules; stale truth; untrue counts; the order read touches no row (0.07 s warm, 0.44 s cold) | ADR 0005 |
 | A reorder debounce | time standing in for a fact the Store holds | ADR 0005, ADR 0033 |
-| The nine planned owed-work indexes as one block | v65 added only what each read needs: 4,159 ms on the owner's file, not 13 s | #805 |
+| The nine planned owed-work indexes as one block | v65 added only what each read needs: 4,159 ms on the reference catalog file, not 13 s | #805 |
 | A delay before the owners start; two heavy loads at once; `.utility` owners | time for a fact; the measured overlap; late visible thumbnails | ADR 0055 |
 | Compiled models kept apart, or one model resident at a time, for the 1,179 MB peak | the peak was two 4K videos' frames, not the models | `2026-11-16-first-launch-footprint.md` |
 | Fewer decodes on the render lane | halves HEIC throughput to bound a cost only whole JPEG decodes have | `2026-11-17-first-launch-decodes.md` |
@@ -501,11 +501,11 @@ ordering path, and #836 built it with the SQL's own comparator (`CatalogOrderPat
 | --- | --- |
 | `script/scorecard.sh --tour` | one read-only tour of the installed app; add `--settled` for a settled-kind session; read from a live log capture that says whether it is complete (`complete=yes`) |
 | `script/scorecard.sh --tour --dev --optimized --seed <photos>` | a tour of a generated library on its own volume, acts included |
-| the same with `--seed 160000 --seed-media small` | the same at the owner's library size: 64 × 64 JPEGs in a folder tree, about 630 MB, written in about 95 s |
+| the same with `--seed 160000 --seed-media small` | the same at the reference library's size: 64 × 64 JPEGs in a folder tree, about 630 MB, written in about 95 s |
 | `script/scorecard.sh --ablate <owners>` / `--ablation-matrix` | the same tour with owners left unstarted, or the whole matrix |
 | `script/scorecard.sh --compare <saved.json>` | before and after, like kind with like |
 | `script/survey.sh` | one session's machine picture: trace, memory by region, heap, disk, CPU |
-| `StallReproductionTests` | the sidebar stall on a generated owner-shaped catalog; no known-issue marker. The owner-size test runs only with `OTOS_SCALE_TEST=1` and is skipped without it; its row-proportion bounds run in every check on a small catalog (#939) |
+| `StallReproductionTests` | the sidebar stall on a generated reference-shaped catalog; no known-issue marker. The reference-size test runs only with `OTOS_SCALE_TEST=1` and is skipped without it; its row-proportion bounds run in every check on a small catalog (#939) |
 | `CatalogMigrationCostTests` (`OTOS_SCALE_TEST=1`) | a migration's ms and WAL bytes |
 | `OrderReadSurveyTests` (`OTOS_SCALE_TEST=1`) | pages and time for every order the window asks for |
 | `script/perf.sh run` | the weekly run since 2026-11-18 (ADR 0043): this tour and the benchmark counts, one verdict |
@@ -516,20 +516,20 @@ A tour never runs while Otos is running and quits the app itself.
 
 Findings, not work.
 
-- **Acts.** Actions' results within 0.1 s are measured only in a sandbox library of the owner's
+- **Acts.** Actions' results within 0.1 s are measured only in a sandbox library of the reference library's
   size (at most 55 ms on the tree of 6dc46aa3, 75 ms on the tree of #923), because an act on
-  the owner's library would change his data. They were not measured on 2d1d7397. The owner
-  approved sandbox evidence for acts on 2026-11-18.
+  the reference library would change its data. They were not measured on 2d1d7397. Sandbox
+  evidence for acts was approved.
 - **A brand-new library's first search with the text model evicted.** About 1.1–1.5 s against
-  1 s; the nearest achievable is about 1.1 s. Approved by the owner on 2026-11-18.
+  1 s; the nearest achievable is about 1.1 s. Approved.
 - **Descriptions wait for room — superseded by #949.** Descriptions wrote nothing while less
-  than 67 % of memory was available, nor while Otos was the active app; on the owner's machine
+  than 67 % of memory was available, nor while Otos was the active app; on the test Mac
   recent sessions had 24–62 % available, so 755 descriptions were owed at the end of the
-  6dc46aa3 tour (592 on 7edc1b16). The owner's direction of 2026-11-18 ("Descriptions should
-  run when the app is foreground ed. OS will swap running apps") removed both holds: a
+  6dc46aa3 tour (592 on 7edc1b16). A later direction (descriptions run while the app is in the
+  foreground; the OS swaps other running apps) removed both holds: a
   description now waits only at critical memory pressure, heat or Low Power Mode (ADR 0055
   decision 8, ADR 0057 decision 8), and the scorecard reports the pressure it raises as the
-  descriptions', accepted. On the owner's library (2d1d7397) the session wrote 136 of 143
+  descriptions', accepted. On the reference library (2d1d7397) the session wrote 136 of 143
   requests with no hold, and 27 were owed at its end. The machine was above normal for 590.1 s
   of 609.2 s, all attributed to description writing. The trade: while a description backlog
   drains, the machine sits at warning, and the background work that waits at warning
@@ -568,8 +568,8 @@ Findings, not work.
 
 ## What remains
 
-- **Owner decisions.**
-  - Decided 2026-11-17, reversible by the owner: the cloud backlog is not downloaded for
+- **Product decisions.**
+  - Decided 2026-11-17, reversible: the cloud backlog is not downloaded for
     content hashes. A cloud-only original is never downloaded only to take its digest; the
     digest is taken when its bytes are local for another reason (ADR 0009 §12). On that day
     3,219 library files (153 GB) owed only their digest, every other product already made.
@@ -591,12 +591,12 @@ Findings, not work.
   - Accepting the flagged `window.apply.republished.158k` case (`script/bench.sh accept`).
   - Decided 2026-11-18 (#949): descriptions run while Otos is the active app and at memory
     warning, so a description backlog keeps the machine at warning while it drains.
-  - Two decisions of ADR 0057, approved by the owner on 2026-11-18: Low Power Mode and a serious or
+  - Two decisions of ADR 0057, approved: Low Power Mode and a serious or
     critical thermal state hold all heavy background work; while held, only the current view's
     heavy load runs.
-- **Needs the owner.** A tour with every other app quit has not been run. A presented-frame
+- **Needs the user.** A tour with every other app quit has not been run. A presented-frame
   number for acts: the Mac's screen was locked in every run.
-- **Measured only in a sandbox.** Acts cannot be measured on the owner's library without
+- **Measured only in a sandbox.** Acts cannot be measured on the reference library without
   changing data; they are measured at its size in a sandbox.
 - **Fixed by #929.** The app's memory-pressure notification arrived later than the kernel's
   level (in the f398d5dc tour the kernel showed warning from 30 s, the app's source reported it
@@ -606,7 +606,7 @@ Findings, not work.
   warning, so the source may report late or never (ADR 0057).
 - **One target unreachable in one condition.** A new library's first search while macOS has
   evicted the text tower's pages: about 1.1–1.5 s against 1,000 ms (about 0.4 s resident),
-  after three measured designs. Not seen on the owner's library. Since then the search
+  after three measured designs. Not seen on the reference library. Since then the search
   field's focus asks a prepared tower for one warm prediction
   (`op=search.tower phase=warmed cause=focus`), so a person who types after focusing the field
   has the pages read back while typing. The ~330 MB is the model's clean, mapped weights and
@@ -618,10 +618,10 @@ Findings, not work.
 - **Not established.**
   - Why Core ML compiled the text tower again in one session of an install, and why that
     compile took 3 s (`2026-11-16-first-search-while-the-encoder-loads.md`).
-  - What made the 1.1 s second prediction of 2026-11-17 on the owner's Mac
+  - What made the 1.1 s second prediction of 2026-11-17 on the test Mac
     (`2026-11-17-first-search-after-the-warm-up.md`). On a sandbox library on this Mac
     under pressure, a slow prediction read about 330 MB back (`op=search.tower
-    phase=predicted`, `2026-11-17-a-new-library-at-the-owners-size.md` §2). That session
+    phase=predicted`, `2026-11-17-a-new-library-at-the-reference-size.md` §2). That session
     has no such line.
   - That #926's limits, or #943's admission, are why the machine stayed quiet in the tours up
     to 12031093 and in the launch tours of 7edc1b16 and 6dc46aa3 (see the

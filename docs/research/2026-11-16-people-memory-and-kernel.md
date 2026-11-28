@@ -1,9 +1,9 @@
 # People's memory and assignment kernel (2026-11-16)
 
-Plan 0116 bet 1. What People holds and computes on the owner's library, and the two facts the
-kernel's redesign rests on. Read-only on the owner's catalog (102,978 faces, 751 people with a
+Plan 0116 bet 1. What People holds and computes on the reference library, and the two facts the
+kernel's redesign rests on. Read-only on the reference catalog (102,978 faces, 751 people with a
 face; schema v66), opened with `?mode=ro`; a throwaway program read the vectors and was not
-kept. Nothing was written to or copied from his catalog.
+kept. Nothing was written to or copied from the reference catalog.
 
 ## Where the time and memory went (installed 661be172, 4-minute tour)
 

@@ -1,6 +1,6 @@
 # Face auto-assignment (2026-11-12)
 
-**Question.** The owner redesigned People around auto-tagged faces (2026-11-12): every face
+**Question.** People was redesigned around auto-tagged faces (2026-11-12): every face
 goes to its most likely person, siblings included, with no review queue, and named and
 unnamed people are one kind (ADR 0047, `docs/design/people.md`). How many faces does
 assignment then give the wrong person, how much of each child does it reach, and how much
@@ -9,7 +9,7 @@ for the next year from a close call that is only guessed?
 
 ## Method
 
-The owner's labelled set from 2026-11-07 (`docs/research/2026-11-07-face-recognition-models.md`):
+The reference labelled set from 2026-11-07 (`docs/research/2026-11-07-face-recognition-models.md`):
 3,293 faces, 2,196 of them labelled across 33 people, including the three children, with
 the shipped AdaFace IR-101 embeddings. The set lives outside the repository.
 

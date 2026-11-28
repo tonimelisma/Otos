@@ -38,6 +38,7 @@ struct CatalogWindowViewModelGridZoomTests {
         #expect(second.gridColumnCount == 9)
     }
 
+    // Validates: APP-013
     @Test func zoomInStopsAtMinimumAndZoomOutStopsAtMaximum() {
         let temp = PreferencesDomain.suite(UUID().uuidString)
         let model = makeViewModel(domain: temp)

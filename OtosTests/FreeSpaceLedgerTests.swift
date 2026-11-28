@@ -8,6 +8,7 @@ import Testing
 struct FreeSpaceLedgerTests {
     private let floor = FreeSpaceFloor.bytes
 
+    // Validates: APP-029
     /// `copyfile` reserves a file's size when it starts, so a fresh figure already shows a
     /// started write. It is not charged a second time.
     @Test func aFreshFigureIsNotChargedTwiceForAStartedWrite() {
@@ -20,6 +21,7 @@ struct FreeSpaceLedgerTests {
         #expect(!admitted3)
     }
 
+    // Validates: APP-029
     /// A figure that lags or never moves leaves the projection in charge.
     @Test func aFigureThatNeverMovesStillCountsEveryCommittedWrite() {
         var ledger = FreeSpaceLedger()
@@ -32,6 +34,7 @@ struct FreeSpaceLedgerTests {
         #expect(ledger.inFlightBytes == 2000)
     }
 
+    // Validates: APP-029
     /// A landed write stays counted: its bytes are on the disk. A write that left nothing
     /// behind gives its bytes back.
     @Test func aWriteThatLandedNothingGivesItsBytesBackAndALandedOneDoesNot() {
@@ -66,6 +69,7 @@ struct FreeSpaceLedgerTests {
         #expect(next, "nothing was written, so the room is still there")
     }
 
+    // Validates: ENR-008
     /// Space freed while writes are in flight: a figure that rises above the last one is
     /// live, and the projection is re-based on it less what is still in flight.
     @Test func freedSpaceIsAdmittedBeforeTheStretchEnds() {
@@ -80,6 +84,7 @@ struct FreeSpaceLedgerTests {
         #expect(ledger.available(reported: floor + 10500) == floor + 10500 - 2000)
     }
 
+    // Validates: ENR-008
     /// A figure that holds still is not live, however many writes land: no re-base.
     @Test func aFigureThatHoldsStillNeverRebases() {
         var ledger = FreeSpaceLedger()
@@ -90,6 +95,7 @@ struct FreeSpaceLedgerTests {
         #expect(!second)
     }
 
+    // Validates: APP-029
     /// Someone else's write lowers the figure below the projection: the figure is believed.
     @Test func aFigureLowerThanTheProjectionIsBelieved() {
         var ledger = FreeSpaceLedger()
@@ -100,6 +106,7 @@ struct FreeSpaceLedgerTests {
         #expect(ledger.available(reported: floor + 500) == floor + 500)
     }
 
+    // Validates: APP-029
     /// A write committed without the check (the photo on screen) before the ledger's
     /// first reading is assumed not to be in that reading yet.
     @Test func bytesCommittedBeforeTheFirstReadingAreAssumedUnseen() {
@@ -110,6 +117,7 @@ struct FreeSpaceLedgerTests {
         #expect(ledger.available(reported: floor + 1500) == floor + 500)
     }
 
+    // Validates: APP-029
     /// No figure is not evidence of no room: the ledger admits, then holds to what it has
     /// projected from the last figure it did read.
     @Test func anUnknownFigureAdmitsUntilAProjectionExists() {
@@ -154,6 +162,7 @@ struct VolumeCapacityHoldTests {
         }
     }
 
+    // Validates: ENR-008
     @Test func aWriteShowsAtOnceAndFreedSpaceAtTheNextCalculation() {
         let volume = Volume()
         let hold = volume.hold()

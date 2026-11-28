@@ -6,10 +6,10 @@ import SQLite3
 import Synchronization
 import Testing
 
-/// The owner's sidebar clicks waited 3–15 s: the window's reads waited for one of the main
+/// On the reference library, sidebar clicks waited 3–15 s: the window's reads waited for one of the main
 /// pool's four readers while background owners' reads held all four for seconds
 /// (`op=catalog.store.stall`, `connectionMs` up to 23 s with `lockMs` and `storeMs` 0). These
-/// tests rebuild that on a generated catalog of his shape and backlog (`OwnerShapedCatalog`)
+/// tests rebuild that on a generated catalog of its shape and backlog (`ReferenceShapedCatalog`)
 /// and measure it, as the baseline every design for it is judged by
 /// (`docs/research/2026-11-16-stall-reproduction-baseline.md`).
 ///
@@ -27,8 +27,8 @@ import Testing
 /// times inflated alike (`docs/research/2026-11-16-window-read-lanes.md`). A failure that only
 /// load causes is a test defect, so the answer times, live and quiet, with the load average,
 /// are written to the report as a measurement, and the click budget is held where it is real:
-/// the tour's scorecard on the owner's library. The test runs at the
-/// owner's size only on demand
+/// the tour's scorecard on the reference library. The test runs at the
+/// reference library's size only on demand
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only StallReproductionTests`), because building a
 /// 2.4 GB catalog is not a per-PR cost. The small variant runs in every check and proves the
 /// generator's backlog and the measurement themselves.
@@ -36,7 +36,7 @@ import Testing
 struct StallReproductionTests {
     /// Xcode's scheme always defines the key, empty unless the build-setting override is
     /// passed (`ProjectionEnrichmentScaleTests`), so the value is what is checked.
-    static let ownerSize = ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1"
+    static let referenceSize = ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1"
 
     /// The longest a window read may wait for a connection while the background owners run:
     /// the live store writes a stall line for any longer wait.
@@ -48,8 +48,8 @@ struct StallReproductionTests {
 
     /// The generated catalog holds the backlog it says it does, as the Store's own candidate
     /// reads count it.
-    @Test func theGeneratedCatalogHoldsTheOwnersBacklog() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+    @Test func theGeneratedCatalogHoldsTheReferenceBacklog() async throws {
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())
@@ -73,12 +73,13 @@ struct StallReproductionTests {
         #expect(try await store.backgroundReads.pairMirroredCopies(account: catalog.account) == MirrorWalk(paired: 0, unpaired: 0))
     }
 
+    // Validates: ARC-067
     /// The whole measurement runs on a small catalog: every background owner starts, every
     /// window read of every scope change is answered and timed, and every background read
     /// is replayed with SQLite's counts of the rows it visited.
     @Test func everyWindowReadAndBackgroundReadIsMeasuredOnASmallCatalog() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.01, ownersPlaces: true)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 0.01, referencePlaces: true)
         let report = try await StallReproduction.measure(catalog, in: directory, rounds: 1, readsStallLines: false)
         let renderSignatures = try #require(report.quiet.first { $0.name == "renderSignatureCandidates" })
         #expect(renderSignatures.returned == catalog.shape.renderSignaturesOwed)
@@ -90,21 +91,22 @@ struct StallReproductionTests {
         #expect(report.live.count == StallReproduction.scopeCount * 4)
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed: \(report.summary(catalog))")
-        // Every read visits rows in proportion to what it answers, as at the owner's size: a
+        // Every read visits rows in proportion to what it answers, as at the reference size: a
         // read that stops being proportional fails every check, not only an on-demand run.
         StallReproduction.expectProportionalVisits(report, catalog)
     }
 
-    /// The requirement at the owner's size: while every background owner runs, no window read
+    // Validates: ARC-067
+    /// The requirement at the reference size: while every background owner runs, no window read
     /// waits for a connection beyond the allowance, each window read visits rows in proportion
     /// to what it answers or to its scope, and background reads visit what they owe, or walk the
     /// library at most once per drain. Answer times are reported, not asserted.
-    @Test(.enabled(if: ownerSize))
+    @Test(.enabled(if: referenceSize))
     func windowReadsAreAnsweredWhileEveryBackgroundOwnerRuns() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let report = try await StallReproduction.measure(catalog, in: directory, rounds: 3, readsStallLines: true)
-        try StallReproduction.write(report.summary(catalog), named: "owner")
+        try StallReproduction.write(report.summary(catalog), named: "reference")
         let unanswered = report.live.filter { !$0.answered }
         #expect(unanswered.isEmpty, "\(unanswered.count) window reads failed")
 
@@ -231,7 +233,7 @@ enum StallReproduction {
     ///   once per index;
     /// - a walk for what is owed visits each row it walks at most once per index it joins, once
     ///   per drain.
-    static func expectProportionalVisits(_ report: Report, _ catalog: OwnerShapedCatalog) {
+    static func expectProportionalVisits(_ report: Report, _ catalog: ReferenceShapedCatalog) {
         let perOwedRow = StallReproductionTests.visitsPerOwedRow
         for read in report.quiet where !read.isWindowRead && libraryVisitingReads[read.name] == nil {
             let perRow = rowsReadByKey[read.name]?.rows ?? perOwedRow
@@ -267,7 +269,7 @@ enum StallReproduction {
     /// `readsStallLines`: read the Store's stall lines back from this process's log, which
     /// takes the unified log ten seconds or more to answer; a small catalog writes none.
     static func measure(
-        _ catalog: OwnerShapedCatalog,
+        _ catalog: ReferenceShapedCatalog,
         in directory: URL,
         rounds: Int,
         readsStallLines: Bool
@@ -282,7 +284,7 @@ enum StallReproduction {
 
     /// Every read once, one after another, on a Store whose connections count what each
     /// statement visited (`StatementVisits`). Nothing else runs.
-    private static func measureQuiet(_ catalog: OwnerShapedCatalog, into report: inout Report) async throws {
+    private static func measureQuiet(_ catalog: ReferenceShapedCatalog, into report: inout Report) async throws {
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let visits = StatementVisits()
@@ -410,7 +412,7 @@ enum StallReproduction {
     }
 
     /// The scopes a click visits: All Media, each library and the account, and an import.
-    private static func scopes(_ catalog: OwnerShapedCatalog, store: CatalogStore) async throws -> [SidebarSelection] {
+    private static func scopes(_ catalog: ReferenceShapedCatalog, store: CatalogStore) async throws -> [SidebarSelection] {
         let batch = try #require(try await store.windowReads.importBatches(counting: .newest(1, and: nil)).first)
         return [.allMedia, .library(catalog.pictures), .library(catalog.account), .library(catalog.archive), .importBatch(batch.batchID)]
     }
@@ -420,7 +422,7 @@ enum StallReproduction {
     /// completes, no model loads. While they run, the window's reads of every scope change are
     /// asked and timed; the Store's stall lines name what held them.
     private static func measureLive(
-        _ catalog: OwnerShapedCatalog,
+        _ catalog: ReferenceShapedCatalog,
         in directory: URL,
         rounds: Int,
         readsStallLines: Bool,
@@ -548,7 +550,7 @@ enum StallReproduction {
 
 extension StallReproduction.Report {
     /// The baseline's tables, as the research note records them.
-    func summary(_ catalog: OwnerShapedCatalog) -> String {
+    func summary(_ catalog: ReferenceShapedCatalog) -> String {
         func ms(_ duration: Duration?) -> String {
             duration.map { "\(DiagnosticsTiming.milliseconds($0))" } ?? "-"
         }
@@ -709,7 +711,7 @@ struct StallLine {
     let lockMs: Int
     let holders: [Holder]
 
-    /// Every stall line this process wrote since `date`. Only one suite runs at the owner's
+    /// Every stall line this process wrote since `date`. Only one suite runs at the reference library's
     /// size, so the lines are its Store's.
     static func read(since date: Date) throws -> [StallLine] {
         let log = try OSLogStore(scope: .currentProcessIdentifier)

@@ -219,7 +219,7 @@ struct PeopleView: View, Equatable {
     }
 }
 
-/// The question every merge asks first (owner decision, 2026-11-10), wherever it was asked:
+/// The question every merge asks first, wherever it was asked:
 /// a drop in the gallery, Merge Into ▸, or a name another person has.
 struct PeopleMergeAlert: ViewModifier {
     let question: PeopleMergeQuestion?

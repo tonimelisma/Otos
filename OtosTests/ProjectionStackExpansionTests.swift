@@ -6,6 +6,7 @@ import Testing
 /// the order the projection last published and never runs the order query again.
 @Suite(.testScope)
 struct ProjectionStackExpansionTests {
+    // Validates: APP-076
     @Test func expandingAStackReCollapsesThePublishedOrderWithoutAQuery() async throws {
         let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

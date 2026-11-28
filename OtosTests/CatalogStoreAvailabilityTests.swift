@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreAvailabilityTests {
+    // Validates: ARC-010
     /// A saved library whose folder is there is available, and its rows shown, the moment the
     /// catalog loads: no scan has to start before the window shows what the catalog holds
     /// (ADR 0008). Scanning is disabled, so nothing but the load can have answered.
@@ -33,6 +34,7 @@ struct CatalogStoreAvailabilityTests {
         await reloadedStore.shutdown()
     }
 
+    // Validates: ARC-010
     /// A saved library whose folder is gone loads unavailable, its rows kept.
     @Test func anUnreachableSavedLibraryLoadsUnavailable() async throws {
         let temp = try makeTestDirectory()
@@ -95,6 +97,7 @@ struct CatalogStoreAvailabilityTests {
         #expect(fields["errorCode"].flatMap(Int.init) != nil)
     }
 
+    // Validates: ARC-020, ARC-033
     @Test func unavailableLaunchRootPreservesRowsAndMarksLibraryUnavailable() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -162,6 +165,7 @@ struct CatalogStoreAvailabilityTests {
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
 
+    // Validates: ARC-018
     /// A root whose availability moves changes which rows are in reach, so it is announced
     /// naming no rows (`CatalogChangedRows.unnamed`), never as the scan's own "no row changed"
     /// (`.none`): an owner whose reads are bound to the roots read, such as search, reads

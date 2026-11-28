@@ -67,8 +67,8 @@ elif [[ -n "$upstream_ref" ]]; then
 fi
 
 # Branch cleanup is read from GitHub, never described: done means origin holds only the
-# default branch and the head branches of open pull requests (AGENTS.md, "Git, CI, And Pull
-# Requests"). The listing is git's own; open pull requests are read through REST, which a
+# default branch and the head branches of open pull requests (CLAUDE.md, "Git, CI and
+# PRs"). The listing is git's own; open pull requests are read through REST, which a
 # cloud session reaches too.
 default_branch="$(git_value symbolic-ref --short refs/remotes/origin/HEAD)"
 default_branch="${default_branch#origin/}"
@@ -88,7 +88,7 @@ if remote_heads="$(git -C "$ROOT_DIR" ls-remote --heads origin 2>/dev/null)"; th
       branches_status="green"
       branches_text="origin holds only $default_branch and the branches of open pull requests."
     else
-      branches_text="origin holds branches with no open pull request: $(printf '%s' "$leftovers" | paste -sd ' ' -). Each holding nothing $default_branch lacks is swept by Branch Sweep; one holding work is this increment's to land or the owner's to decide."
+      branches_text="origin holds branches with no open pull request: $(printf '%s' "$leftovers" | paste -sd ' ' -). A closed pull request's branch is deleted by Branch cleanup; one holding work is this increment's to land."
     fi
   else
     branches_text="Could not read $repo_slug's open pull requests."

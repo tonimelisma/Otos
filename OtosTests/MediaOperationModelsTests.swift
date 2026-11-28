@@ -6,6 +6,7 @@ struct MediaOperationModelsTests {
     private static let source = LibraryRootPath(rawValue: "/tmp/card")
     private static let destination = LibraryRootPath(rawValue: "/tmp/library")
 
+    // Validates: ARC-044
     /// Two cards' imports can start in one millisecond. The batch was the start time in
     /// milliseconds, so the two runs shared one: the coordinator keys its runs and the
     /// catalog keys each run's assets on it, and the Imports sidebar would show one row.

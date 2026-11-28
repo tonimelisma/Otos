@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct IdentityRemapUITests {
+    // Validates: ARC-052
     @Test func gridSelectionRemapsSelectionAnchorAndBase() {
         let root = LibraryRootPath(rawValue: "/Library")
         let oldA = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "a.jpg"))
@@ -26,6 +27,7 @@ struct IdentityRemapUITests {
         #expect(remapped.base == [newA])
     }
 
+    // Validates: ARC-052
     /// A published state that shows a remapped identity carries the batch that made it.
     /// Applying that state moves selection, focus, the compare pair and the painted tile
     /// to the new identity before the new order is compared with the old one, so none of

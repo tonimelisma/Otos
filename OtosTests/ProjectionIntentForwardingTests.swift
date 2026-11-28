@@ -5,7 +5,7 @@ import Testing
 
 /// The window's Projection intents reach Projection off the main actor (DES-119): a Move to
 /// Trash's hide is applied while the main thread is still busy, not after its next turn. A
-/// consumer bound to the main actor resumed only between main-thread turns, so on the owner's
+/// consumer bound to the main actor resumed only between main-thread turns, so on the test
 /// Mac a hide queued one turn (about 70 ms in a Debug build) behind every intent before it.
 @Suite(.testScope)
 struct ProjectionIntentForwardingTests {

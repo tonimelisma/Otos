@@ -1,9 +1,9 @@
-# Plan 0117: what a blank-slate review of the codebase changes (2026-11-19)
+# What a blank-slate review of the codebase changed (2026-11-19 to 2026-11-21)
 
 A review of the whole codebase asked of every part: "built from a blank slate today, would it
 look like this?" Each recommendation was then argued against from the ADRs, research notes and
 requirement rows, and every one that survived was measured or prototyped against a kill
-criterion set in advance. This plan keeps only what survived the evidence. It names, for each
+criterion set in advance. This note keeps only what survived the evidence. It names, for each
 step:
 
 - the evidence;
@@ -72,7 +72,7 @@ People and the harness first.
   - A second search-index start starts nothing.
   - A failing Maps leaves place names quiet until a named backoff wake (ADR 0051).
   - The migration freeze covers every table, trigger and view a migration builds (ADR 0002).
-    No divergence existed, and the owner's upgraded catalog matches a fresh build byte for
+    No divergence existed, and the reference catalog upgraded in place matches a fresh build byte for
     byte.
 - **#980.** A VP9 video is undecodable before any frame is fetched, and a frame AVFoundation
   cannot seek to is read at its sync frame. Fourteen account videos had cost about 3.4 GB of
@@ -145,8 +145,8 @@ People and the harness first.
 ## Steps
 
 Every step has landed or was stopped. Step 2, one owner for People's act overlay, was
-measured and stopped (below). What remains is the closing recount of the fix table (above),
-over the same two-week span after the last step landed: 2026-11-21 to 2026-12-05.
+measured and stopped (below). The closing recount of the fix table (above), over the two weeks
+after the last step landed (2026-11-21 to 2026-12-05), is tracked in a GitHub issue.
 
 ## Measured and dropped
 
@@ -154,7 +154,7 @@ over the same two-week span after the last step landed: 2026-11-21 to 2026-12-05
 | --- | --- |
 | Split `CatalogStore` into several actors | Stock holds: p50 0.02 ms, p95 0.44 ms, p99 1.9 ms. Every hold over 50 ms was a local fix, landed as step 1. Writes span domains in one transaction (trash carry, import settlement, library removal, face undo). ADR 0002 keeps one owner. |
 | Derive change notifications from the writer | Step 3's evidence: broader, not safer. Kept only as step 3's guard. |
-| Promote a wanted People or Duplicates build's background reads | Their reads waited p95 0.10–0.20 ms, at most 0.20 % of a build. Small sample: 4 People and 3 Duplicates builds at owner size. |
+| Promote a wanted People or Duplicates build's background reads | Their reads waited p95 0.10–0.20 ms, at most 0.20 % of a build. Small sample: 4 People and 3 Duplicates builds at reference size. |
 | A generic `SerialLane` | Saves about 11 lines a port against a 25-line bar. Lines were the wrong criterion; what it would buy is an awaitable "settled" fact for tests. Measured that way it still does not pay: six test fixes in a month waited on a fact they did not own, and only some were lane settles. |
 | A subscribe-then-loop helper for background owners | `PhotoDescriptionWriter` needed four hooks beyond `drain`. About half the owners do not share the shape. The three subscribe-race answers are one guarantee. |
 | A generic retry ledger | `PacingLedger` passed every requirement test and saved 2 lines in total. Timings are pinned by ENR-009/026/027/030/031/032 and APP-029/068. |
@@ -172,10 +172,7 @@ over the same two-week span after the last step landed: 2026-11-21 to 2026-12-05
 - **Duplicates waited behind People.** A Duplicates build waited 102 s for the heavy-load turn
   behind a People pass. ADR 0055 runs one heavy load at a time by design. Whether that wait is
   felt belongs to the weekly run's tour, not to this plan.
-- **HEVC frame-seek failure.** It reproduces only on the owner's own files offline. No
+- **HEVC frame-seek failure.** It reproduces only on files of the reference library, offline. No
   generated file triggers it.
 - **Measurement conditions.** The actor-hold and read-turn numbers come from a Debug test host
   at load average 164–227. They rank causes; they are not felt latencies.
-
-Each step's increment deletes its section here. The plan is deleted when the last one lands,
-after the fix table above is recounted for the same span of time.

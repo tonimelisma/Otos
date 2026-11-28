@@ -1,6 +1,6 @@
 # Scene label hierarchy (ADR 0050): each label of Vision's classifier with the labels it is
-# always named beside, at its confidence or higher, in every stored reading of it. Made by
-# script/scene-label-hierarchy.sh; see docs/research/2026-11-19-info-labels-and-text.md.
+# always named beside, at its confidence or higher, in every stored reading of it. Derived
+# once from the stored readings of a reference library; see docs/research/2026-11-19-info-labels-and-text.md.
 identifier	ancestors	readings
 accordion	music,musical_instrument	52
 adult	people	113529

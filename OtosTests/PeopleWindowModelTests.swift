@@ -239,6 +239,7 @@ struct PeopleWindowModelTests {
         return Model.Walk(performed: performed, mostPeople: mostPeople, failures: failures)
     }
 
+    // Validates: APP-072
     @Test(arguments: [11, 12, 13, 14] as [UInt64])
     func theWindowsActsFollowTheModel(seed: UInt64) async throws {
         let walk = try await walk(seed: seed, steps: 50)

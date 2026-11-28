@@ -1,7 +1,7 @@
 # MapKit's zoom-out limit, the globe, and panning past the poles
 
 Date: 2026-11-13. Research for the Places map (ADR 0040, `docs/design/places.md`), done
-after the owner asked why the map stops zooming out at about the size of North America
+to answer why the map stops zooming out at about the size of North America
 while it lets the view pan past the poles into a gray grid. Measured on macOS 27 with
 the dev build at a 1232 × 845 pt map, by reading the `op=map.camera` and
 `op=map.cluster` lines (`span=` is latitude × longitude degrees) and screenshots, plus
@@ -31,7 +31,7 @@ one standalone `MKMapView` probe.
 - A center bound wider than the world east–west (origin −1 world, three worlds wide)
   lets a pan **west** cross the antimeridian (the logged center went −122.67 → 106.04 →
   −25.25 → −156.54 over three drags) but stops a pan **east** at 180°: only west was
-  tested at first, and the owner found the east stop (below).
+  tested at first, and the east stop was found later (below).
 - A bound that follows the visible height (`onMapCameraChange(frequency:
   .continuous)`) holds the view at the edge: a drag north stopped with the center at
   77.63° and a 25.10° latitude span (top edge at the world's edge), and a zoom out
@@ -39,14 +39,14 @@ one standalone `MKMapView` probe.
 
 ## Decision taken
 
-The owner chose the flat standard map over the satellite globe (2026-11-13), knowing
+The flat standard map was chosen over the satellite globe (2026-11-13), knowing
 the zoom-out stays at MapKit's limit. Panning to the map's own edge (85°) still showed
-Web Mercator's polar stretch, so the owner then chose to stop panning at 75° north and
+Web Mercator's polar stretch, so the next choice was to stop panning at 75° north and
 south, widened for any located item farther out. Measured with the dev build: a drag
 north stopped with the view's top at 75.00°N (center 53.64°, span 63.65°), a drag
 south at 75°S (center −53.64°).
 
-That first build held the band with `MapCameraBounds`, and the owner then found a pan
+That first build held the band with `MapCameraBounds`, and testing then found a pan
 east stopping at California. Measured on the installed app: the center pinned at
 180.00° every time it was dragged east, while drags west crossed the antimeridian.
 The same held for a bound one world wide (x 0…W: east stopped at −180.00°). A bound

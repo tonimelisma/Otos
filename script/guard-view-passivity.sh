@@ -12,6 +12,7 @@ check_root() {
     if ! is_allowlisted "$rel"; then echo "FAIL: ARC-011/ARC-015 view passivity violation: $line" >&2; return 1; fi
   done < <(grep -RInE 'CatalogStore|CatalogProjection|import GRDB|\bGRDB\b' "$root/OtosKit/Views" --include='*.swift' || true)
 }
+# Validates: ARC-011, ARC-015
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
   if check_root "$d/missing" 2>/dev/null; then echo "guard-view-passivity self-test failed (a missing scan root passed)" >&2; return 1; fi

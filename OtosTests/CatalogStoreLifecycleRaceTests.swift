@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreLifecycleRaceTests {
+    // Validates: ARC-003, ARC-024
     @Test func concurrentStartupAndMutationShareOneInitialLoad() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -81,6 +82,7 @@ struct CatalogStoreLifecycleRaceTests {
         #expect(invocations.count { $0 == addedPath } == 1)
     }
 
+    // Validates: ARC-003, ARC-009, ARC-025, ARC-026
     @Test func staleCallbacksCannotMutateSamePathReplacementScan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

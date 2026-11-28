@@ -9,6 +9,7 @@ import Testing
 @MainActor
 @Suite(.testScope)
 struct CatalogWindowViewModelTrashTests {
+    // Validates: APP-027
     @Test func moveToTrashActsWithoutAskingAndRegistersUndo() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let trash = try makeTestDirectory()
@@ -30,6 +31,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-039
     @Test func undoPutsItemsBackAndRedoMovesThemAgain() async throws {
         try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -59,6 +61,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-045
     @Test func localItemsMoveWithoutTheLargeDownloadQuestion() async throws {
         try await withCatalogedLibrary(fileCount: 1, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -76,6 +79,7 @@ struct CatalogWindowViewModelTrashTests {
 
     // MARK: - The large-download question, read when the targets change (APP-045)
 
+    // Validates: APP-045
     @Test func aCommandWhoseTargetsWereReadHidesInTheStepThatAppliesIt() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -93,6 +97,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-045
     @Test func aCommandBeforeItsTargetsAreReadWaitsForItsOwnReadBeforeHidingAnything() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -114,6 +119,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-045
     @Test func cloudOnlyTargetsOverTheThresholdAreAskedAboutBeforeAnythingIsHidden() async throws {
         try await withSizedLibrary { fixture in
             let files = CloudOnlyFiles(["big.jpg"])
@@ -132,7 +138,8 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
-    /// The owner's trade-off (`docs/research/2026-11-15-trash-question-at-selection.md`): the
+    // Validates: APP-045
+    /// The chosen trade-off (`docs/research/2026-11-15-trash-question-at-selection.md`): the
     /// question is answered from the targets' files as read when the targets last changed. A
     /// file macOS evicted since is moved without the question; the queue downloads it under
     /// the free-space floor, and a failed download stops and asks.
@@ -154,6 +161,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-045
     /// The same trade-off the other way: a file downloaded since its targets were read is
     /// still asked about, and the answer moves it.
     @Test func aFileDownloadedSinceItsTargetsWereReadIsStillAskedAbout() async throws {
@@ -174,6 +182,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-027
     @Test func loupeTrashingTheLastItemFocusesThePreviousOne() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -188,6 +197,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-027
     @Test func loupeTrashingAMiddleItemFocusesTheNextOne() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -201,6 +211,7 @@ struct CatalogWindowViewModelTrashTests {
         }
     }
 
+    // Validates: APP-027
     @Test func gridTrashingTheTrailingItemsSelectsTheOneBeforeThem() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let model = try makeTrashModel(store: fixture.store, trash: makeTestDirectory())
@@ -221,6 +232,7 @@ struct CatalogWindowViewModelTrashTests {
 @MainActor
 @Suite(.testScope)
 struct CatalogWindowViewModelTrashInterleavingTests {
+    // Validates: APP-085
     @Test func theItemsLeaveThePublishedGridBeforeTheMarkReturns() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
@@ -248,6 +260,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     @Test func aFailedMarkBringsTheItemsBackAndSaysSo() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
@@ -272,6 +285,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     @Test func anUndoBeforeTheMarkLandsPutsBackExactlyWhatItHid() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
@@ -310,6 +324,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     @Test func aSecondMoveBeforeTheFirstLandsHidesBothAndUndoesEachAlone() async throws {
         try await withCatalogedLibrary(fileCount: 3, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
@@ -339,6 +354,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     /// A second Move to Trash right after the first, as a held mark lets it come, can be issued
     /// in the same millisecond. It once took the first command's identity, so Projection held
     /// one command's items under both and the second item stayed on the grid.
@@ -348,6 +364,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         #expect(first < second)
     }
 
+    // Validates: APP-085
     @Test func aScopeChangedMidMarkStillShowsTheItemsGone() async throws {
         try await withCatalogedLibrary(fileCount: 2, fileNamePrefix: "trash") { fixture in
             let gate = ArrivalGate()
@@ -372,6 +389,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     /// Put Back shows its result before its file work (DES-119): with the undo's work held at
     /// its suspension, Undo has the item back in the window; the work, let go, puts the file
     /// back and the item stays where it is.
@@ -401,6 +419,7 @@ struct CatalogWindowViewModelTrashInterleavingTests {
         }
     }
 
+    // Validates: APP-085
     /// A Put Back whose file cannot come back: shown at once, then gone again with the
     /// put-back alert (DES-076), the failure delivered at the undo's suspension.
     @Test func anUndoThatCannotPutTheFileBackTakesTheItemAwayAndSaysSo() async throws {

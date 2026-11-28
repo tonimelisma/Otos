@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogProjectionEmptyStateTests {
+    // Validates: ARC-021
     @Test func storeBackedAllMediaEmptyStateCountsUnavailableCatalogedMedia() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "catalog.sqlite")
@@ -54,6 +55,7 @@ struct CatalogProjectionEmptyStateTests {
         await secondStore.shutdown()
     }
 
+    // Validates: APP-060
     /// Duplicate detection never holds back the window: with the duplicates build parked
     /// at its suspension, the loaded window — sidebar and grid — is already published, with
     /// its groups unknown rather than empty; released, the groups follow.
@@ -98,6 +100,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// Rows that were only added carry nothing a duplicate group is built from, so they are
     /// published in the window without a rebuild of the groups; a change to a row the
     /// catalog holds still rebuilds them.
@@ -169,6 +172,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// Each derived owner is rebuilt only when a kind of fact its answer is built from moved
     /// (`DuplicatesProjection.inputs`, `PeopleGallery.inputs`): a new person is a faces
     /// fact, which People reads and the groups do not; copies kept together are a copies
@@ -239,6 +243,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A row only added is one more still not yet checked for faces, so People's unchecked
     /// tally counts it, though neither the groups nor the assignment are rebuilt for it.
     @Test func addedRowsAreCountedInPeoplesTallyWithoutRebuildingDuplicates() async throws {
@@ -307,6 +312,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: APP-060
     /// The groups are a fact about the whole catalog, so a change of scope neither waits for
     /// their build nor starts one: with the build parked at its suspension, choosing a
     /// library publishes it; released, the groups are built exactly once.
@@ -357,6 +363,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: APP-044
     /// Before the catalog's first load nothing is known, so nothing is claimed: no
     /// "No Media", no title (APP-044). A catalog that really is empty says so once loaded.
     @Test func beforeTheCatalogLoadsNoEmptinessIsClaimed() async throws {
@@ -387,6 +394,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: APP-044
     /// The load is the moment the window becomes meaningful, so it publishes at once
     /// instead of waiting for the background cadence (APP-044). The cadence here is a
     /// minute; the wait is ten seconds, so only an immediate publication passes.
@@ -429,6 +437,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-019
     /// A window that shows no item has no grid a background change could reorder, so a change
     /// of which rows exist publishes at once: a library added to an empty catalog is listed,
     /// and its first scan batch shown, without waiting for the cadence. The cadence is an
@@ -467,6 +476,7 @@ struct CatalogProjectionEmptyStateTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-019
     /// The cadence still paces a shown grid: once the window shows items, a library added
     /// beside them is owed a publication that no doorbell rings, and is published on the next
     /// tick (here an hour away).

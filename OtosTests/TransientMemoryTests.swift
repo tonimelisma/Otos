@@ -5,9 +5,9 @@ import Testing
 
 /// Freed memory the footprint keeps (ADR 0056): on macOS 27 a freed malloc block of 4 KB or
 /// more stays dirty in the process until malloc reuses it
-/// (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). On the owner's library
+/// (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`). On the reference library
 /// the app held 460 MB of dirty malloc regions at idle against a live heap of 324 MB. These
-/// run the launch and the tour's scope visits on a catalog of the owner's shape, with every
+/// run the launch and the tour's scope visits on a catalog of the reference shape, with every
 /// background owner running, and measure malloc's dirty bytes less its live bytes (vmmap's
 /// `FRAG SIZE` total) after each step, record which call stacks made and freed the blocks of
 /// 4 KB and up (`MallocSiteProbe`), and write both to `build/transient-memory/`.
@@ -17,48 +17,50 @@ import Testing
 /// of them and count their allocations as the tour's. What always runs for the same rule is
 /// deterministic and process-local: the builder's own tests (`MappedArrayBuilderTests`) and the
 /// lint that keeps a grouping from growing its groups (`grouping_grows_arrays`).
-@Suite(.testScope, .serialized, .enabled(if: StallReproductionTests.ownerSize))
+@Suite(.testScope, .serialized, .enabled(if: StallReproductionTests.referenceSize))
 struct TransientMemoryTests {
+    // Validates: ARC-071
     @Test func theTourSequenceOnASmallCatalog() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 0.02)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 0.02)
         let (run, sites, overflowed) = try await MallocSiteProbe.record {
             try await TourSequence.run(catalog, in: directory)
         }
         #expect(!overflowed)
         #expect(!sites.isEmpty)
         try TourSequence.write(run, sites: sites, overflowed: overflowed, named: "small")
-        // An owner-scale read builds in mapped regions (`MappedArrayBuilder`) or at its length:
+        // A library-scale read builds in mapped regions (`MappedArrayBuilder`) or at its length:
         // none of them outgrows a buffer bigger than a bounded page's, here at 2 % of the
-        // owner's size.
+        // reference library's size.
         let grown = sites.filter { site in
             site.growsAnArrayInADatabaseAccess && site.largest > Self.boundedPageBlock
-                && Self.ownerScaleReads.contains { name in site.frames.contains { $0.contains(name) } }
+                && Self.referenceScaleReads.contains { name in site.frames.contains { $0.contains(name) } }
                 // The process's identity table is held and grows by design (ARC-070).
                 && !site.frames.contains { $0.contains("MediaAssetIdentityTable") }
         }
         #expect(grown.isEmpty, "\(grown.map { "largestKB=\($0.largest / 1024) " + $0.frames.filter { $0.contains("OtosKit") }.prefix(3).joined(separator: " < ") })")
     }
 
-    /// The largest buffer a bounded read's array may outgrow at 2 % of the owner's size: a page
+    /// The largest buffer a bounded read's array may outgrow at 2 % of the reference size: a page
     /// of a walk is at most a few hundred rows, whatever the library's size.
     static let boundedPageBlock = 16 * 1024
 
     /// The reads and builds whose results grow with the library, by the names their frames
     /// carry: the order and its stacks, the filter options, the duplicates candidates, the
     /// People snapshot, a root's rows and the derived folder's walk.
-    static let ownerScaleReads = [
+    static let referenceScaleReads = [
         "fetchOrderedAssetIDRows", "orderedAssets", "fetchCandidates", "PhotoStackRule", "tallyFilterOptionRows",
         "fetchSamePhotoCandidates", "candidatePairs", "peopleSnapshot", "PeopleFaces", "fetchExistingAssetRows", "namedRows",
     ]
 
-    @Test func theTourSequenceAtTheOwnersSize() async throws {
+    // Validates: ARC-071
+    @Test func theTourSequenceAtTheReferenceSize() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let (run, sites, overflowed) = try await MallocSiteProbe.record {
             try await TourSequence.run(catalog, in: directory)
         }
-        try TourSequence.write(run, sites: sites, overflowed: overflowed, named: "owner")
+        try TourSequence.write(run, sites: sites, overflowed: overflowed, named: "reference")
         try? FileManager.default.removeItem(at: directory)
         // After the sequence's last step, malloc holds at most this much freed (dirty less live):
         // 82 and 92 MB before the reads built in mapped regions, 27 and 51 MB after
@@ -67,7 +69,7 @@ struct TransientMemoryTests {
         #expect(last.malloc.fragmentBytes <= Self.freedAfterTheSequence, "\(run.lines.joined(separator: "\n"))")
     }
 
-    /// The bound on malloc's freed-but-held bytes after the owner-size sequence.
+    /// The bound on malloc's freed-but-held bytes after the reference-size sequence.
     static let freedAfterTheSequence = 64 * 1_048_576
 }
 
@@ -113,7 +115,7 @@ enum TourSequence {
         try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
     }
 
-    static func run(_ catalog: OwnerShapedCatalog, in directory: URL) async throws -> Run {
+    static func run(_ catalog: ReferenceShapedCatalog, in directory: URL) async throws -> Run {
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let thumbnails = directory.appending(path: "Thumbnails", directoryHint: .isDirectory)

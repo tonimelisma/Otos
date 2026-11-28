@@ -1,7 +1,7 @@
-# Immich full resync against the owner's server version (2026-11-14)
+# Immich full resync against the test server's version (2026-11-14)
 
 Question: does Otos's full resync (ADR 0046 §5, `ImmichCatalogSync`, `ImmichClient.syncEvents`)
-read what the owner's server actually sends? The resync was written from Immich `main`
+read what the test Immich server actually sends? The resync was written from Immich `main`
 (`docs/research/2026-11-13-immich-sync-reset.md`) and has never run against the live server.
 
 ## Why not against the live server
@@ -9,7 +9,7 @@ read what the owner's server actually sends? The resync was written from Immich 
 The account's session token is a login-Keychain item of the installed app
 (`net.melisma.Otos.immich-session`, `ImmichKeychainSessionStore`). A dev build reads its own
 service (`net.melisma.Otos.dev.immich-session`), and no build other than the installed app can
-read that item without the owner's Keychain approval, so the real resync path cannot run in a
+read that item without the user's Keychain approval, so the real resync path cannot run in a
 `CFFIXED_USER_HOME` sandbox without someone handling the token. It was not run. The installed
 app's log of the last 24 hours shows only incremental passes
 (`op=catalog.immich.sync phase=pass full=false completed=true`); it never logs the server's
@@ -59,7 +59,7 @@ No mismatch was found. `ImmichClientTests.aFullResyncsLinesDecodeAsImmich33Write
 decodes a reset stream and a from-zero stream shaped as 3.3.0 writes them (a deletion before
 the upserts, a trashed archived asset with every `AssetV2` field, an audio asset, an EXIF line
 with null size, the completion). What stays unproven is the live run itself: a resync's purge
-on the owner's 147,024 rows has not been observed.
+on the test account's 147,024 rows has not been observed.
 
 ## Sources
 

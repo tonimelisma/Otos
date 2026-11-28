@@ -4,6 +4,7 @@ import Foundation
 import Testing
 
 struct MediaCompanionPairingTests {
+    // Validates: ARC-031, ARC-045
     @Test func pairsSinglePrimaryByStemIgnoringExtensionCase() {
         let primary = scanned("IMG_1.JPG", kind: .image)
         let companion = ScannedCompanionFile(
@@ -18,6 +19,7 @@ struct MediaCompanionPairingTests {
         #expect(paired[0].kind == .xmp)
     }
 
+    // Validates: ARC-045
     @Test func rawPlusJPEGPrefersRawPrimary() {
         let jpeg = scanned("IMG_1.JPG", kind: .image)
         let raw = scanned("IMG_1.CR2", kind: .raw)
@@ -31,6 +33,7 @@ struct MediaCompanionPairingTests {
         #expect(paired[0].primaryRelativePath?.rawValue == "IMG_1.CR2")
     }
 
+    // Validates: ARC-045
     /// On a case-sensitive volume names that differ by case are different files, so they
     /// share no stem; on a case-insensitive one they do (ADR 0052, ARC-056).
     @Test func pairsByTheVolumesOwnStemEquality() {
@@ -55,6 +58,7 @@ struct MediaCompanionPairingTests {
         #expect(sensitive[0].primaryRelativePath == nil)
     }
 
+    // Validates: ARC-045
     /// A precomposed and a decomposed spelling of one stem are one stem on every volume.
     @Test func pairsAcrossUnicodeNormalization() {
         let composed = "Caf\u{00E9}"
@@ -76,6 +80,7 @@ struct MediaCompanionPairingTests {
         }
     }
 
+    // Validates: ARC-045
     @Test func theStemKeyKeepsTheFolderAndDropsOnlyTheLastExtension() {
         let raw = FilesystemNamespaceSemantics.stemKey(
             relativePath: MediaRelativePath(rawValue: "2026/DSC01234.ARW"),
@@ -119,6 +124,7 @@ struct MediaCompanionPairingTests {
 
 @Suite(.testScope)
 struct MediaCompanionInventoryTests {
+    // Validates: ARC-031, ARC-045
     @Test func scanInventoriesCompanionsWithoutEnteringMediaQueries() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -142,6 +148,7 @@ struct MediaCompanionInventoryTests {
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["IMG_1.JPG"])
     }
 
+    // Validates: ARC-045
     @Test func targetedDeleteRepairsCompanionPairing() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

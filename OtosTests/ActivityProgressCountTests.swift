@@ -21,6 +21,7 @@ struct ActivityProgressCountTests {
         return (store, scanned.testAssets.map(\.id), scanned.testAssets)
     }
 
+    // Validates: APP-096
     @Test func enrichmentsCountIsEveryRowItsWalkOwes() async throws {
         let (store, ids, _) = try await catalogOfThreeStills()
         #expect(
@@ -30,6 +31,7 @@ struct ActivityProgressCountTests {
         )
     }
 
+    // Validates: APP-096
     @Test func eachCountEqualsWhatItsWalkReadsAndFallsAsWorkIsWritten() async throws {
         let (store, ids, assets) = try await catalogOfThreeStills()
         _ = await store.applyEnrichmentBatch(assets.map { asset in
@@ -64,6 +66,7 @@ struct ActivityProgressCountTests {
         #expect(try await store.backgroundReads.renderSignaturesLeft() == signatures.count - 1, "a written signature is done")
     }
 
+    // Validates: APP-096
     /// What an owner reports done is what the catalog accepted from it, counted as it writes,
     /// beside what its walk still owes: after signing three stills, 3 finished and none left.
     @Test func anOwnersProgressCountsTheItemsItWrote() async throws {

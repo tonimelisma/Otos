@@ -472,8 +472,8 @@ final class TileContentStore {
     /// The asset's current thumbnail, for a surface other than its grid tile (the loupe's
     /// placeholder, a cover, a duplicate), so it is not decoded again: nil while the store
     /// holds none, or only an older one its tile keeps painted until the current decode lands.
-    /// An edited photo's pre-edit thumbnail is never handed out as its picture (owner,
-    /// 2026-11-19: "it shows in the loupe the unedited version for a subsecond").
+    /// An edited photo's pre-edit thumbnail is never handed out as its picture: it
+    /// would show in the loupe, unedited, for a moment.
     func currentImage(for id: MediaAssetID) -> DisplayImage? {
         guard let content = content(for: id), content.imageDecodedKey == content.imageKey else { return nil }
         return content.image

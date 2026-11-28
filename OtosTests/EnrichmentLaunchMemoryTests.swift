@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// What enrichment costs the footprint when it starts, on a catalog of the owner's shape
+/// What enrichment costs the footprint when it starts, on a catalog of the reference shape
 /// (peak footprint ≤ 700 MB, `docs/scorecard-targets.json`). Measured by the kernel's own footprint
 /// (`ProcessResourceSample`).
 ///
@@ -17,9 +17,9 @@ import Testing
 ///   letting it go. Before `FileBytes`, each 1 MiB chunk was an autoreleased `NSData` kept until
 ///   the job ended, and a 300 MB hash left 300 MB in the footprint.
 ///
-/// At the owner's size only on demand
+/// At the reference size only on demand
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only EnrichmentLaunchMemoryTests`), alone, because the
-/// footprint is the whole process's. Writes `build/enrichment-launch-memory/owner.txt`. A
+/// footprint is the whole process's. Writes `build/enrichment-launch-memory/reference.txt`. A
 /// measurement, not a benchmark.
 @Suite(.testScope, .serialized)
 struct EnrichmentLaunchMemoryTests {
@@ -30,10 +30,11 @@ struct EnrichmentLaunchMemoryTests {
     /// Passes enough to walk far past the window: each claims up to four batches of 32.
     static let passes = 200
 
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
+    // Validates: ENR-013
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
     func enrichmentAddsItsWindowNotItsBacklog() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
 
@@ -85,7 +86,7 @@ struct EnrichmentLaunchMemoryTests {
 
         \(vmmap)
         """
-        let url = SourceTree.root.appending(path: "build/enrichment-launch-memory/owner.txt")
+        let url = SourceTree.root.appending(path: "build/enrichment-launch-memory/reference.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
 
@@ -190,6 +191,7 @@ struct FileBytesTests {
         #expect(throws: FileBytes.ReadError.self) { try FileBytes.whole(directory.appending(path: "missing")) }
     }
 
+    // Validates: ENR-013
     @Test func chunksArriveInOrderInOneBuffer() throws {
         let url = try makeTestDirectory().appending(path: "bytes")
         let contents = Data((0 ..< 10000).map { UInt8(truncatingIfNeeded: $0) })

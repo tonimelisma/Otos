@@ -10,6 +10,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelMediaItemMenuTests {
+    // Validates: APP-037
     @Test func contextClickOutsideSelectionSelectsOnlyTheHit() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
@@ -31,6 +32,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.currentTargetFileURLs == [ids[3].fileURL])
     }
 
+    // Validates: APP-037
     @Test func contextClickInsideSelectionKeepsIt() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
@@ -52,6 +54,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.currentTargetFileURLs == ids[0 ... 2].map(\.fileURL))
     }
 
+    // Validates: APP-037
     @Test func modelIsBuiltSynchronouslyForFreshTargets() throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
@@ -69,6 +72,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.openWithMenuTask == nil)
     }
 
+    // Validates: APP-037
     /// Reveal acts on the same targets as Open, Share and Copy: in Loupe that is the
     /// focused item, never a grid multi-selection left behind it (APP-037).
     @Test func revealUsesTheCurrentTargetsInEveryMode() async throws {
@@ -88,6 +92,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(workspace.revealed == [[ids[0].fileURL, ids[2].fileURL], [ids[1].fileURL]])
     }
 
+    // Validates: APP-051
     /// Reveal shows where a photo lives, not what a hand-off gives: an edited photo is
     /// revealed as its original, and nothing is rendered for it (ADR 0037).
     @Test func revealShowsTheOriginalOfAnEditedPhoto() async throws {
@@ -108,6 +113,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         }
     }
 
+    // Validates: APP-037
     @Test func performRoutesToTheMenuBarIntents() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)

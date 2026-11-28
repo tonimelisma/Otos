@@ -2,10 +2,10 @@
 
 Date: 2026-11-14. An evaluation of the Duplicates list as built on 2026-11-04
 (`docs/research/2026-11-04-duplicates-layout.md`), read from its spec, its two research
-passes and its code, and the layout that followed. The owner asked for the evaluation and
-then for the design it ended in; `docs/design/duplicates.md` records that design.
+passes and its code, and the layout that followed. The evaluation came first, then
+the design it ended in; `docs/design/duplicates.md` records that design.
 
-Labels: **[M]** measured earlier on the owner's library; **[U]** inferred.
+Labels: **[M]** measured earlier on the reference library; **[U]** inferred.
 
 ## Who visits, and what they want
 
@@ -25,7 +25,7 @@ instances only on doubt. The list served the one who wants every instance.
 
 1. **Ordered by date, a browsing order.** The groups that need a person sat among those
    that need nobody.
-2. **Identical copies drew one picture twice and hid what differed.** The owner's library
+2. **Identical copies drew one picture twice and hid what differed.** The reference library
    was 110 identical pairs in one folder **[M, 2026-11-02]**: same picture, same size, and
    the file name, the one differing fact, in the tooltip. The 2026-11-02 pass had the rule
    (the header says what the copies share, the rows say what differs); the 2026-11-04
@@ -55,5 +55,5 @@ bar, its receipt and Undo; no confirmation.
 ## Not verified here
 
 The built screen was not seen while this was written: the smoke capture refuses to start
-beside a running Otos, and the owner declined screen access. The layout is checked by its
+beside a running Otos, and screen access was declined. The layout is checked by its
 presentation tests and by a capture taken in the increment that built it.

@@ -18,7 +18,7 @@ import FoundationModels
 /// the photo; a rate limit or a concurrent request is the model being busy; everything else is
 /// the model, which can answer no request now — Apple Intelligence off, the Mac not eligible,
 /// the model not downloaded, a capability it lacks, or a failure in its service that no public
-/// case names (on the owner's Mac, 2026-11-20, a `ModelManagerError` 1026 relayed from an asset
+/// case names (on the test Mac, a `ModelManagerError` 1026 relayed from an asset
 /// lock the system could not take). A model failure holds every request, so a failure that is
 /// not about the photo is never retried photo by photo across the library.
 nonisolated enum PhotoDescriber {

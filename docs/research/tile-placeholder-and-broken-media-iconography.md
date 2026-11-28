@@ -4,13 +4,13 @@ Status: non-authoritative research note.
 
 Date: 2026-07-09
 
-Input for the broken-media placeholder work requested by the owner (wonky toy
+Input for the broken-media placeholder work requested by the user (wonky toy
 camera producing zero-byte and truncated AVI/JPEG files that render as QuickLook
 document icons instead of thumbnails or placeholders).
 
 ## Root cause of the "document icon" tiles (evidence)
 
-- Toy-camera library (`…/Family/Summer Photos`, library_root 4) contains
+- Toy-camera library (`…/Toy Camera`, library_root 4) contains
   zero-byte and truncated files alongside real `_001` siblings:
   `2026/05/20260515_191748.avi` = 0 bytes, `2026/05/20260514_195133.jpg` =
   0 bytes, `2026/05/20260514_195430.avi` = 96 KB (truncated); the `_001`
@@ -62,11 +62,11 @@ Consequences:
 - RAW has a loading-glyph candidate (`r.square`) but **no broken variant**;
   differentiating broken-RAW from broken-image requires either sharing
   `photo.slash` or compositing (e.g. `r.square` plus a small
-  `exclamationmark.triangle` companion view). Owner decision.
+  `exclamationmark.triangle` companion view). A product decision.
 - Broken placeholders should reuse the loading placeholder's visual family
   (neutral square, dim centered glyph, same sizing policy) so the states read
   as siblings, and broken tiles must show **no lower-right kind badge**
-  (owner rule, 2026-07-09).
+  (a product rule).
 
 ## Repair consideration for already-stored icon thumbnails
 

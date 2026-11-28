@@ -5,9 +5,9 @@
 
 ## Context
 
-`script/check.sh` took 5.5–7 minutes, and an increment ran it several times. The owner
-asked for a verification loop of a couple of minutes, measured, and allowed doing less
-work per commit to get there. The measurements and sources are in
+`script/check.sh` took 5.5–7 minutes, and an increment ran it several times. The goal is a
+verification loop of a couple of minutes, measured, doing less work per commit to get
+there where needed. The measurements and sources are in
 `docs/research/2026-11-01-build-and-check-speed.md`. The facts that decide this:
 
 - Every increment starts in a fresh git worktree with an empty `build/DerivedData`, so
@@ -35,14 +35,14 @@ log lives; one run at a time per build folder, the tree identity a run reports, 
 load each model from.
 
 References but does not own: the check's supervision (heartbeat, deadlock detection,
-one entry point; `AGENTS.md` and ADR 0015), the benchmark design (ADR 0043), the
+one entry point; `CLAUDE.md` and ADR 0015), the benchmark design (ADR 0043), the
 installed app's build (ADR 0030), test architecture (ADR 0023).
 
 ## Decision
 
 1. **One shared compilation cache.** `otos_build_settings` in `script/lib/xcode.sh` is
-   the single list of settings every verification build passes: `build.sh`, `bench.sh`
-   and `face-accuracy.sh`, each through `otos_build_checkout ... verification`. They build
+   the single list of settings every verification build passes: `build.sh` and `bench.sh`,
+   each through `otos_build_checkout ... verification`. They build
    into the same `build/DerivedData`, so they must pass the same settings or each rebuilds
    what the other built. The list turns on `COMPILATION_CACHE_ENABLE_CACHING` with
    `COMPILATION_CACHE_CAS_PATH` at Xcode's own default store,
@@ -73,7 +73,7 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
    installs, one benchmarks and one checks. Two `xcodebuild` runs against one DerivedData
    fail on its locked build database (exit 65). `otos_hold_build_folder` in
    `script/lib/build-folder.sh` holds the folder for the rest of the calling script:
-   `check.sh`, `build.sh`, `test.sh`, `face-accuracy.sh` and
+   `check.sh`, `build.sh`, `test.sh` and
    `build_and_run.sh` hold `build/DerivedData`, `bench.sh` its measured checkout's, `install.sh` holds
    `build/InstallDerivedData`. A second run waits for the first to exit, which the
    kernel reports, and logs `op=<run>.wait reason=buildFolderBusy holder=<pid> op=<run>`.
@@ -99,7 +99,7 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
 10. **The diff picks the tier.** `check.sh` lists the paths the working tree changes
     against its merge base with `origin/main`, untracked files included, with rename
     detection off (`--no-renames`), so a move lists the path it left as well as the one it
-    reached: with it on, moving `Otos/Foo.swift` to `script/` listed only the `script/`
+    reached: with it on, moving a file such as Otos/Foo.swift to `script/` listed only the `script/`
     path and the tree took the static tier with the build missing a file. When every one
     is in `docs/`, `.github/`, `.claude/`, a Markdown file, the lint config, or a script
     off the build path, it runs the **static** tier: every gate, no build, no tests.
@@ -140,7 +140,7 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
       harness causes.
 
 12. **A machine with no Xcode runs the gates and builds nothing.** A Claude Code cloud
-    session is an Ubuntu VM (AGENTS.md, "Cloud Sessions"). Every gate is a shell, Python or
+    session is an Ubuntu VM (CLAUDE.md, "Where sessions run"). Every gate is a shell, Python or
     Ruby script or a pinned lint binary, and `script/lint-tools.sh` pins a Linux build of
     each binary beside the macOS one, so the VM runs all of them. The Linux SwiftLint
     cannot load SourceKit and skips the rules that need it, `custom_rules` among them;
@@ -150,22 +150,21 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     VM's result never reads as a pass: its build, tests and SourceKit rules are CI's run of
     the same `check.sh` on GitHub's Xcode 27 runner (`Build And Test (Xcode 27)`), which
     builds from the compilation cache main's newest run saved (item 14).
-    - **Rejected: building on the owner's Mac through a remote shell.** It made every cloud
+    - **Rejected: building on the test Mac through a remote shell.** It made every cloud
       contribution depend on one machine being awake and reachable, and on a shell that
       fences Xcode's own sandboxes.
     - **Rejected: a second entry point for the VM.** It would hold a second list of
       gates, which drifts from `check.sh`'s.
 13. **A commit is checked within five minutes, here and on CI together; one that changes
-    Swift within six to nine.** The owner (2026-11-26): "just try to ensure each commit
-    wraps up in 5 minutes of testing from the moment dev works. local and CI together,
-    everything." Measured after items 14–18: a script or doc change takes 4 min 35 s to
+    Swift within six to nine.** Every commit is verified within five minutes of testing,
+    local and CI together, from the moment it is ready. Measured after items 14–18: a script or doc change takes 4 min 35 s to
     5 min 45 s from push to gate with no queue; a Swift change recompiles its module
     (the test module's 555 CPU-seconds, about 4 min on the runner's three cores), about
-    8 min; and a wait of up to 12 min for a runner when the owner's five concurrent macOS
-    jobs are taken. The owner accepted six to nine minutes for a Swift change rather than
-    paying for larger runners or dropping `main`'s run after a merge ("6-9 is fine"). Every `check.sh` run prints
+    8 min; and a wait of up to 12 min for a runner when the account's five concurrent macOS
+    jobs are taken. Six to nine minutes for a Swift change is accepted rather than
+    paying for larger runners or dropping `main`'s run after a merge. Every `check.sh` run prints
     its stages' durations (`op=check.stage … seconds=`, `op=check.duration`), and the
-    budget counts from the moment a commit is ready to push until CI's `Required CI Gate`
+    budget counts from the moment a commit is ready to push until CI's `CI gate`
     reports. Measured on 2026-11-26, before this item: `Build And Test (Xcode 27)` took
     7 min 45 s, of which SwiftFormat 64 s, the build 3.5 min (SwiftCompile 420 CPU-s on the
     runner's three cores, every job a miss) and the suite 2 min 20 s; a cloud VM's first
@@ -203,11 +202,11 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     type, as `--only` names one; suites are dealt into three groups by their number of
     tests, largest first, each to the lightest group. Shards 1 and 2 run their groups
     (`-only-testing:`), and shard 3 runs everything else (`-skip-testing:` of those two), so
-    a test the dealing does not see still runs. `Required CI Gate` passes only when every
+    a test the dealing does not see still runs. `CI gate` passes only when every
     shard did, which is the verification. Only shard 1 saves the caches on `main`.
     - **The queue is GitHub's.** A hosted Mac took 0, 100 and 180 s to start on
       2026-11-26, and three shards ask for three. Five macOS jobs run at once on the
-      owner's plan. No setting of a job removes that wait; it is reported beside the job's
+      account's plan. No setting of a job removes that wait; it is reported beside the job's
       own time, and a run that misses the budget only because of it says so.
     - **Rejected: one larger runner** (`xcode-27-xlarge`): billed even for a public
       repository, and its cores would still run the suite's CPU-seconds in series with the
@@ -249,7 +248,7 @@ installed app's build (ADR 0030), test architecture (ADR 0023).
     The appearance is set from each launch's start, because a switch mid-launch was still
     animating the toolbar when the next capture was taken (45947165362). Shard 3 runs the complement of the dealt groups and
     finished first in every sharded run measured, so the captures ride on it rather than on a
-    fourth runner, which would queue against the owner's five concurrent macOS jobs. The
+    fourth runner, which would queue against the account's five concurrent macOS jobs. The
     capture to read is the window as the screen composes it (`screencapture -l`, found by
     the app's pid): the app's own `cacheDisplay` rendering, its readiness signal, drew the
     grid blank and no toolbar on its first run (45857429826). Two launches of the grid added
@@ -278,7 +277,7 @@ Rejected on measurement: the build recompiled every file (107 s against 137 s cl
 ### Share one DerivedData between worktrees
 
 Rejected: parallel runs against one DerivedData caused the suite deadlocks
-`AGENTS.md` describes, and their builds would invalidate each other.
+`CLAUDE.md` describes, and their builds would invalidate each other.
 
 ### Compilation caching without prefix mapping
 

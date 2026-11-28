@@ -35,6 +35,7 @@ struct FaceAnalyzerTests {
         #expect(FaceAlignment.similarity(from: points, to: FaceAlignment.template) == nil)
     }
 
+    // Validates: ENR-022
     /// A face is read only when its box height times the alignment scale is about the
     /// template's face height: 50 to 150, inclusive.
     @Test func admissionAcceptsOnlyFaceSizedAlignments() {
@@ -50,6 +51,7 @@ struct FaceAnalyzerTests {
 
     // MARK: - The crop
 
+    // Validates: ENR-022
     /// Where the aligned face reaches past the photo's edge, the crop is black and opaque,
     /// never transparent; inside the photo it keeps the photo's pixels.
     @Test func theCropIsOpaqueWhereItReachesPastThePhoto() throws {
@@ -85,6 +87,7 @@ struct FaceAnalyzerTests {
         ))
     }
 
+    // Validates: ENR-022
     /// Vision's classifier sees a person around a real face and none around a pattern: a
     /// portrait's face box reads at or above `FaceAnalyzer.minimumPersonConfidence`, the same
     /// box over a patterned image below it.
@@ -110,6 +113,7 @@ struct FaceAnalyzerTests {
         #expect(object < FaceAnalyzer.minimumPersonConfidence, "object \(object)")
     }
 
+    // Validates: ENR-025
     /// The model cannot tell anyone by a face blurred to nothing: a portrait's aligned crop,
     /// shrunk to 8 px and enlarged back, reads along `FaceRecognisability.direction`, while
     /// the crop itself does not.
@@ -153,6 +157,7 @@ struct FaceAnalyzerTests {
 
     // MARK: - Real faces
 
+    // Validates: ENR-022
     /// The whole analysis on real portraits (`OtosTests/Fixtures/Faces`, public domain, sources in its `SOURCES.md`): each
     /// has one face, admitted, with its box and points on the face. One person twelve years
     /// apart reaches the threshold a suggestion needs; a different person stays below it.

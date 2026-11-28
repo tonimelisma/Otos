@@ -4,6 +4,7 @@ import Testing
 
 @MainActor
 struct LoupeVideoPlayerTests {
+    // Validates: APP-020
     @Test func panePresentationVideoIdentityGuard() {
         let idA = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
@@ -21,6 +22,7 @@ struct LoupeVideoPlayerTests {
         #expect(displayMismatch == .thumbnail(idB))
     }
 
+    // Validates: APP-020
     /// DES-022: the player is sized to the picture so AVKit has no letterbox to
     /// paint black. A phone portrait clip is stored landscape with a quarter-turn
     /// transform; its displayed size is portrait.

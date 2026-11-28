@@ -7,6 +7,7 @@ import Testing
 /// published in the step that applies it.
 @Suite(.testScope)
 struct CatalogProjectionShownFirstTests {
+    // Validates: APP-086
     /// Liked only: a Dislike takes its photo out with no read; a withdrawn one brings it back;
     /// an undo held after it puts it back at once; the read of the landed write retires it.
     @Test func aChoiceTheFilterExcludesLeavesTheGridBeforeItsWrite() async throws {
@@ -53,6 +54,7 @@ struct CatalogProjectionShownFirstTests {
         }
     }
 
+    // Validates: APP-088
     /// The expansion is published inside the intent that asks for it, from the collapse the
     /// last pass made, with no order read.
     @Test func anExpansionIsPublishedInTheStepThatAppliesIt() async throws {

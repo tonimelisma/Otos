@@ -18,6 +18,7 @@ extension AppKitWindowTests {
             SourceTree.root.appending(path: "build/DesignEvidence/scope-waiting", directoryHint: .isDirectory)
         }
 
+        // Validates: APP-084
         @Test(arguments: [
             ("places", SidebarSelection.places),
             ("people", .people),
@@ -54,6 +55,7 @@ extension AppKitWindowTests {
             }
         }
 
+        // Validates: APP-090
         /// DES-121 in a real window: while the catalog opens past the first frame, the
         /// sidebar's fixed rows and the open's status under the one indicator, drawn in light
         /// and dark into `build/DesignEvidence/catalog-opening/`, with the window's Tab stops.
@@ -99,6 +101,7 @@ extension AppKitWindowTests {
             }
         }
 
+        // Validates: APP-090
         /// DES-053 for the open's status: one height whether it is opening, updating with a
         /// step, optimizing, or failed.
         /// The open's compaction is its own act, named as Lightroom names it, with no step.
@@ -108,6 +111,7 @@ extension AppKitWindowTests {
             #expect(presentation.detail.isEmpty)
         }
 
+        // Validates: APP-090
         @Test func theOpeningStatusHoldsOneHeight() {
             func height(_ presentation: CatalogOpeningPresentation) -> CGFloat {
                 let host = NSHostingView(rootView: CatalogOpeningStatusView(opening: presentation).frame(width: 400))
@@ -125,6 +129,7 @@ extension AppKitWindowTests {
             #expect(Set(heights).count == 1, "heights \(heights)")
         }
 
+        // Validates: APP-084
         /// DES-053 and DES-018 across waiting and loaded: each bar is one height, and On This
         /// Day's day title holds its place whether or not its summary has arrived.
         @Test func everyWaitingBarHoldsTheLoadedBarsHeightAndTitle() throws {

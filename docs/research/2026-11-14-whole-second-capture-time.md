@@ -14,7 +14,7 @@ Are both true? What causes each, and what fixes it?
 
 ## Method
 
-- Two copies of the owner's catalog, cloned into the worktree's `build/` and opened only by
+- Two copies of the reference catalog, cloned into the worktree's `build/` and opened only by
   `sqlite3` 3.54 and Python's `sqlite3`, then deleted:
   `catalog-v51-before-second-fixes.sqlite` (the copy that note used) and
   `catalog-v53-before-v55.sqlite` (taken from the installed app at 13:20 today). The Immich

@@ -1,12 +1,12 @@
 # Grid layout without the compositional solve (2026-11-15)
 
 Follows `2026-11-14-grid-structure-without-diffable-snapshot.md`, which measured the
-compositional layout's per-section solve and left it in place. The owner has since ordered
-it replaced.
+compositional layout's per-section solve and left it in place. It has since been decided to
+replace it.
 
 ## Question
 
-The installed app on the owner's catalog (158,765 items, 4,816 day sections, All Media by
+The installed app on the reference catalog (158,765 items, 4,816 day sections, All Media by
 date) stalls the main thread on every structural apply, and background enrichment causes
 one every few seconds:
 
@@ -46,7 +46,7 @@ cost proportional to what is on screen, and what is left of an apply once it doe
 - **Stall monitor.** `MainRunLoopStallMonitor` reports a stall only while the app is
   active (`NSApplication.shared.isActive`), which nothing in a test run makes the test
   host, so its absence from a test-hosted window would prove nothing; the main thread's own
-  instruction count stands in for it here, and the installed app's log is the owner-scale confirmation.
+  instruction count stands in for it here, and the installed app's log is the reference-scale confirmation.
 
 ## Findings
 
@@ -148,11 +148,11 @@ the order; none was built.
   over sections plus arithmetic over rows. Its pixels are the compositional layout's,
   kept as `MediaGridLayoutTests`' oracle; it invalidates only on a width or backing-scale
   change. The filmstrip keeps its one-section compositional layout.
-- No reorder needs a cheaper apply path at the owner's size: the full `performBatchUpdates`
+- No reorder needs a cheaper apply path at the reference library's size: the full `performBatchUpdates`
   with the derived moves is well under the hang threshold, so every surviving tile keeps
   its view and its painted thumbnail, and no reorder is damped or deferred.
 - The structural-apply log line gains `commitMs`, the main thread's synchronous share, so
-  the installed app's own log can confirm this at the owner's size.
+  the installed app's own log can confirm this at the reference library's size.
 - Product-visible difference: the → case above, and nothing else measured.
 
 ## Sources

@@ -227,7 +227,7 @@ This decision extends rather than replaces ADR 0019; nothing in 0019 is retired.
 
 Superseded by this ADR and already removed from the tree:
 
-- `OtosKit/Services/ImportPlanDetailReader.swift` and `OtosKit/Views/ImportPlanOverlay.swift`
+- OtosKit/Services/ImportPlanDetailReader.swift and OtosKit/Views/ImportPlanOverlay.swift
   — the plan-details sheet, replaced by "the grid is the plan view".
 - The `.waitingForDestination` presentation state.
 - The `copy · preexisting · companion · blocked · skipped packages` summary string.

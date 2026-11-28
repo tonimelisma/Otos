@@ -1,6 +1,6 @@
 # Foundation models over the library: descriptions, and what they make possible
 
-Date: 2026-11-14. A survey for the owner's question: what could Otos do with foundation
+Date: 2026-11-14. A survey of the question: what could Otos do with foundation
 models over its photos and videos, and could the facts Otos already holds (people, places,
 dates, text, labels, embeddings) feed a model that writes an English description of each
 photo? What would that description be used for? It reads Apple's WWDC26 sessions, shipping
@@ -16,7 +16,7 @@ pass did not try.
   macOS 27's Foundation Models framework takes an image in a prompt (`Attachment(…)` with
   `CGImage`, `NSImage`, `CVPixelBuffer` or a file URL) on the on-device model, with an
   8,192-token context **[source: WWDC26 241]**. Otos measured about 2.4 s a photo warm,
-  9.7 s cold, English only **[measured]**: about 13 hours for the owner's ~19,400 assets as
+  9.7 s cold, English only **[measured]**: about 13 hours for the reference library's ~19,400 assets as
   background enrichment. LibrePhotos ships the same idea with LFM2.5-VL-450M (about 370 MB,
   under a second a photo on a recent CPU) and feeds the model the recognised people's names
   and the reverse-geocoded place **[source]**.
@@ -26,13 +26,13 @@ pass did not try.
   descriptions avoids the Finnish inflection problem that ruled captions out as a search
   index in `2026-11-09-keyword-search.md` §4.
 - **The description should not bake in mutable facts.** People are renamed and reassigned,
-  and place names change with the Mac's language; a description that says "Max" goes stale
-  the moment Max is renamed, and re-describing costs 2.4 s a photo. The blank-slate shape is
+  and place names change with the Mac's language; a description that says "Person B" goes stale
+  the moment Person B is renamed, and re-describing costs 2.4 s a photo. The blank-slate shape is
   a **visual description written against face slots** ("[P1] holds a fish beside [P2] on a
   jetty") plus Otos's own facts composed when it is read **[untested]**. LibrePhotos bakes
   names into the text; it has no rename story in its docs.
 - **The strongest uses, in the order the evidence supports them:**
-  1. **Search that knows who and what together.** "Max holding a fish", "kids on the jetty
+  1. **Search that knows who and what together.** "Person B holding a fish", "kids on the jetty
      at the cottage": SigLIP finds the scene but cannot know names; the face filter knows
      names but not the scene. A description, or a filter + embedding combination, answers
      both.
@@ -65,8 +65,8 @@ pass did not try.
   (tap or lasso to a mask, downloaded model) and `GenerateObjectnessBasedSaliencyImageRequest`
   (salient-object rectangles).
 - **Private Cloud Compute model** **[source: WWDC26 241]**: 32,000-token context, needs an
-  entitlement. It is off the device, which the owner's search decision ruled out (memory
-  `search-quality-is-my-call`: on-device only).
+  entitlement. It is off the device, which the search decision ruled out (on-device
+  only).
 - **Limits already measured** **[measured]**: Finnish is not in `supportedLanguages`, and a
   request for Finnish keywords returned English; the `.contentTagging` use case with an image
   failed (`ModelManagerError 1001`). The model changes when the user updates macOS, so a
@@ -151,7 +151,7 @@ which costs a re-description per affected photo.
   fused (reciprocal rank fusion is the usual choice). The 52-query bake-off set in
   `2026-11-09-keyword-search.md` is the oracle: does fusion raise recall@10 above 82%?
   **[untested]**
-- **People and scene together**: "Max fishing" = person filter ∩ "fishing" in the
+- **People and scene together**: "Person B fishing" = person filter ∩ "fishing" in the
   description, or person filter ∩ SigLIP ranking without any description at all. The second
   needs no model and should be measured first.
 - **Video moments**: describe sampled frames per scene and keep timestamps, so a search
@@ -195,9 +195,9 @@ which costs a re-description per affected photo.
 - **Generative edits (expand, remove)**: they write pixels Otos did not capture; outside
   the RAW9-first editing scope.
 
-## 5. Open product questions (for the owner)
+## 5. Open product questions
 
-1. Which of §4's uses matter to you; descriptions are only worth 13 hours of background work
+1. Which of §4's uses matter; descriptions are only worth 13 hours of background work
    if a surface reads them.
 2. Should a generated description be visible (Info pane) and editable, or only feed search
    and accessibility?
@@ -209,19 +209,19 @@ which costs a re-description per affected photo.
 ## 6. Next measurements, in order
 
 1. Person filter ∩ SigLIP ranking on the bake-off queries that name people: no model.
-2. Foundation Models probe on 200 of the owner's photos: slot-token reliability,
+2. Foundation Models probe on 200 reference photos: slot-token reliability,
    hallucination rate against the scene labels, refusals, time warm and under enrichment.
 3. Hybrid FTS5 + SigLIP recall@10 on the 52-query set.
 4. If 2 is too slow or too loose: LFM2.5-VL-450M through Core ML on the CPU, same set.
 
-## 7. Follow-up: the owner's choices, a probe, Private Cloud Compute and the HIG
+## 7. Follow-up: the choices, a probe, Private Cloud Compute and the HIG
 
-The owner chose (2026-11-14): descriptions shown at the top of the Info pane and titles for
+Chosen (2026-11-14): descriptions shown at the top of the Info pane and titles for
 On This Day; names and ages given to the model so it knows which face is whom; a description
-written again whenever its facts change ("2.4 s is nothing"), so §3's face slots are not
+written again whenever its facts change (2.4 s is cheap), so §3's face slots are not
 needed; no editing; no audio; Private Cloud Compute acceptable. Built in ADR 0053.
 
-### Probe on the owner's photos [measured]
+### Probe on the reference photos [measured]
 
 A command-line probe passed a stored 2560 px preview, downscaled to 1,024 px, with the faces
 listed left to right by position and the people's names and ages:
@@ -235,36 +235,36 @@ Both named the right person at the right face. Each run was a new process, so ev
 paid the model's load; the 2.4 s warm figure is from the keyword-search probe
 (`2026-11-09-keyword-search.md` §2).
 
-### First pass on the owner's library, and the fix [measured]
+### First pass on the reference library, and the fix [measured]
 
 The installed app's first 16 descriptions (revision 1) gave invented names to people in photos
 with no faces read: "Eight-year-old Jasper holds a stick…", "Aunt Per is helping Baby Mia…",
-"Toby, 7, and Claire, 4…"; a named person with no birthday got an invented age ("Mia, 8");
+"Toby, 7, and Claire, 4…"; a named person with no birthday got an invented age ("Person A, 8");
 and nearly every one ended "…a memory the family will cherish forever". The rule against other
 names was only in the instructions.
 
 Probed on the same previews with the same model:
 
-| Instructions and facts | Mia photo (named, no birthday) | Jamie and Tyler | Photos naming no one |
+| Instructions and facts | Person A photo (named, no birthday) | Jamie and Tyler | Photos naming no one |
 | --- | --- | --- | --- |
 | Rule only in the instructions: "use no other names" | "A boy lies on his stomach…" | "Jamie holds a child…" | "A toddler…", no names |
-| The rule in each photo's facts (revision 2) | "Mia is lying on his stomach, peering over a blue barrier." | "Jamie holds Tyler in front of a fence…" | "A toddler holds a fishing rod…"; "A box of San Pellegrino fruit drink sits on a table." |
+| The rule in each photo's facts (revision 2) | "Person A is lying on his stomach, peering over a blue barrier." | "Jamie holds Tyler in front of a fence…" | "A toddler holds a fishing rod…"; "A box of San Pellegrino fruit drink sits on a table." |
 
-Revision 2 on the owner's library still invented ages ("A 5-year-old and a 7-year-old peer over a
+Revision 2 on the reference library still invented ages ("A 5-year-old and a 7-year-old peer over a
 glass dome"), placeholder people in photos with no one in them ("A, B, and C are surrounded by a
 colorful box of fruit snacks") and names from a screenshot's text ("Finnish and Habib"), while
-Mia was named right. The instructions spoke of names and ages for every photo.
+Person A was named right. The instructions spoke of names and ages for every photo.
 
-| Instructions (revision 3 picks one per photo) | Result on the owner's previews |
+| Instructions (revision 3 picks one per photo) | Result on the reference previews |
 | --- | --- |
 | Never mention names or ages, for photos naming no one | six of six clean: "A young boy and a young girl peek from behind a curved glass dome"; "A box of San Pellegrino fruit drink sits upright"; the screenshot read as a chat |
-| Names given, "use no other names" | Mia, Ian, Jamie and Tyler named right; one of five invented "Lucas" and "Emma" for unnamed children |
+| Names given, "use no other names" | Person A, Ian, Jamie and Tyler named right; one of five invented "Lucas" and "Emma" for unnamed children |
 | Names given, plus "everyone else stays unnamed" | no invented name in five runs; Sam named in two of three; sent where everyone was named, it called Tyler "a boy" and added a child who was not there, so it is sent only when someone is unnamed |
 
 ### The eval [measured]
 
 `script/description-eval.sh` (ADR 0053) runs the app's own facts, prompt and model call on 36 of
-the owner's stills read from the installed catalog: 12 naming no one, 12 with every face named,
+the reference library's stills read from the installed catalog: 12 naming no one, 12 with every face named,
 12 with named and unnamed faces, the same 36 every run. Counts of answers flagged:
 
 | Revision | Group | Invented name | Invented age | Given name left out | Memory remark |
@@ -302,7 +302,7 @@ model at the same time; one process at a time gets the model.
 
 - *Generative AI*: "Clearly identify when and where you use AI"; "clearly communicate that
   AI-generated content may contain errors"; make it easy to refine or revert results. Otos
-  labels each description `Written by Apple Intelligence`; the owner chose no editing.
+  labels each description `Written by Apple Intelligence`; the choice was no editing.
 - *Materials*: content over photos needs a dimming layer (35% over bright content) or glass.
   *VoiceOver*: describe meaningful images, keep descriptions current.
 - Photos for Mac's caption lives in its Info window (⌘I), for search; its guide says nothing

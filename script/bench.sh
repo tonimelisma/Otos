@@ -10,7 +10,7 @@
 #                                   process-to-process noise allow, beyond every process's
 #                                   range, and 4 when either side has no records. The weekly
 #                                   run (script/perf.sh) calls it; by hand only to find the
-#                                   commit behind a felt miss, or when the owner asks.
+#                                   commit behind a felt miss, or when someone asks.
 #   script/bench.sh history [case]  Every recorded result, newest first, with the change in
 #                                   instructions from the previous record on the same machine.
 #

@@ -34,6 +34,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
         )
     }
 
+    // Validates: ENR-008
     @Test func twoConsecutiveProviderUnavailableOpensBreakerAndSuppressesNextFile() async throws {
         // Production policy: backgroundPerRootCap=4, globalConcurrency=16, so without
         // the breaker the third file would dispatch immediately. With the breaker it

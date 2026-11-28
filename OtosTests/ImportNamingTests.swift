@@ -19,6 +19,7 @@ struct ImportNamingTests {
         #expect(result == CaptureWallComponents(year: 2026, month: 8, day: 14, hour: 16, minute: 34, second: 18))
     }
 
+    // Validates: ARC-057
     /// 1_754_000_000 is 2025-07-31 22:13:20 UTC. The calendar carries UTC so the result
     /// can only match if the supplied zone, not the calendar's own, decides the wall time.
     @Test func fallbackUsesTheSuppliedLocalTimeZone() throws {

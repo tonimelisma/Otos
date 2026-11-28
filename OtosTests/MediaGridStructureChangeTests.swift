@@ -28,6 +28,7 @@ struct MediaGridStructureChangeTests {
         (0 ..< days * perDay).map { days - 1 - $0 / perDay }
     }
 
+    // Validates: ARC-023
     @Test func anUnchangedGridLooksUpNothing() {
         let old = Self.grid(Self.everyPhotoOnItsDay)
         let change = MediaGridStructureChange(from: old, to: Self.grid(Self.everyPhotoOnItsDay))
@@ -36,6 +37,7 @@ struct MediaGridStructureChangeTests {
         #expect(change.retainedCount == old.orderedIDs.count)
     }
 
+    // Validates: ARC-023
     /// A photo leaving one day for another is looked up once, where it arrives; every
     /// other photo of both days lies in a run its day shares, and stays put.
     @Test func aPhotoChangingDayIsTheOnlyItemLookedUp() throws {
@@ -66,6 +68,7 @@ struct MediaGridStructureChangeTests {
         try MediaGridStructureTests.replay(#require(MediaGridBatchUpdates.between(change)), from: old, to: new)
     }
 
+    // Validates: ARC-023
     /// Random moves, inserts and removals over a day-grouped grid: the summary's counts
     /// and order equality are what comparing every identity answers, and the batch
     /// replays to the new structure.

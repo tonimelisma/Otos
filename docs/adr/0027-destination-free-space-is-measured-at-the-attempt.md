@@ -83,7 +83,7 @@ threshold.
 
 ## Context
 
-The owner clicked `Import 38 Items` on a card that could not fit and saw nothing:
+A user clicked `Import 38 Items` on a card that could not fit and saw nothing:
 the run was refused before any byte by a run-level precheck, and the refusal was
 drawn for 24 ms before a speculative re-plan erased it. Four days later the card
 had grown to 680 items / 54.8 GB against 37.7 GB free — both sides of the
@@ -103,7 +103,7 @@ established three platform facts:
 3. Prior art (Lightroom Classic) does not predict; it advises, guards at the
    attempt, and reports a partial outcome mid-run.
 
-The owner's decision on 2026-09-13 followed: import as much as fits, stop at a
+The decision on 2026-09-13 followed: import as much as fits, stop at a
 floor, make the stop a designed and resumable outcome.
 
 ## Rejected alternatives
@@ -156,5 +156,4 @@ floor, make the stop a designed and resumable outcome.
   destination's reported available capacity — `Not everything will fit yet ·
   37.7 GB available` — sampled by the coordinator on each Ready publish with the
   same reader the floor uses. It is two measured values and this rule, not a
-  forecast; it gates nothing and the act stays the whole plan (owner decision,
-  2026-09-13).
+  forecast; it gates nothing and the act stays the whole plan.

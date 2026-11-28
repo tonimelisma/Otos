@@ -10,7 +10,7 @@ import Foundation
 /// names the right person at the right face and never guesses an identity.
 ///
 /// What the model is asked depends on the photo, because the model writes whatever its
-/// instructions mention. Measured on the owner's library (ADR 0053): instructions that spoke of
+/// instructions mention. Measured on a reference library (ADR 0053): instructions that spoke of
 /// names and ages, sent for photos with no named face, came back with invented names ("Jasper",
 /// "Aunt Per"), invented ages ("a 5-year-old and a 7-year-old") and placeholder people ("A, B,
 /// and C" beside a box of fruit snacks). So a photo naming no one is described with
@@ -75,11 +75,11 @@ nonisolated struct PhotoDescriptionPrompt: Equatable, Sendable {
     }
 
     /// The instructions for a photo: whether it names anyone, and whether anyone else in it is
-    /// unnamed. The owner asked for "an extremely simple, matter of fact description of the
-    /// image" (2026-11-19): asked for "lively, playful sentences", the model wrote "a superhero
+    /// unnamed. The description is an extremely simple, matter-of-fact account of the image:
+    /// asked for "lively, playful sentences", the model wrote "a superhero
     /// car ready for action" and "numbers and letters dancing across the screen" for a
     /// screenshot. A given age is never written: told to mention one "only when it adds
-    /// something", the model wrote the owner's own age and gave unnamed children ages of its own
+    /// something", the model wrote the photographer's own age and gave unnamed children ages of its own
     /// ("Baby, 4"). Ages stay in the facts, where they tell a baby from an adult.
     static func instructions(naming: Bool, othersUnnamed: Bool) -> String {
         var parts = [

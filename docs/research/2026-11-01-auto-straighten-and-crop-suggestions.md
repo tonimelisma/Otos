@@ -192,8 +192,8 @@ Findings:
 3. **Do not reimplement Upright** (Adobe patents).
 
 **Crop suggestions:**
-1. The first two heuristics (Subject, Thirds) were in the weakest published class, and the
-   owner judged them unproven; they are gone.
+1. The first two heuristics (Subject, Thirds) were in the weakest published class, and
+   were judged unproven; they are gone.
 2. FocalNet (MIT, 19 MB), a small ranker trained on human crop ratings, is the one built
    (ADR 0045). GAIC's weights stay unlicensed (above), and FrameLite is too large (section 5).
 3. Neither Apple's aesthetics score nor a vision-language model is a substitute.
@@ -217,19 +217,19 @@ Findings:
   - FocalNet's own choice 7%;
   - no crop 0%.
 - **Cost:**
-  - FrameLite (Qwen3.5-0.8B fine-tune): 1.9 GB and 8 s a photo here. Ruled out by the owner.
+  - FrameLite (Qwen3.5-0.8B fine-tune): 1.9 GB and 8 s a photo here. Ruled out.
   - FocalNet: 19 MB and 0.1 s.
 - **Licences:** FocalNet MIT; FrameLite Apache-2.0; ProCrop non-commercial and no-derivatives,
   and unreleased.
 
-**Crops on the owner's photos, blind:**
+**Crops on the reference library's photos, blind:**
 - **40 varied local photos,** each crop rated 1–5:
   - uncropped averaged 3.97;
   - FocalNet 4.03, but it kept 28 of 33 essentially whole;
   - FrameLite 3.70, better than uncropped on 13 and worse on 19.
-  - The owner: tight crops are fine as suggestions, since the button is optional.
-- **A/B on 10 photos FocalNet did crop**, drawn from 300 random local photos: the owner judged
-  them good crops.
+  - Verdict: tight crops are fine as suggestions, since the button is optional.
+- **A/B on 10 photos FocalNet did crop**, drawn from 300 random local photos: they were judged
+  good crops.
 - **How often it crops:** FocalNet cropped 45 of the 300 (15%).
 
 **GeoCalib against calibrated gravity:**

@@ -4,7 +4,7 @@ Supports ADR 0002, "Change Journal" and "Scan Update Cadence", and ARC-025/ARC-0
 
 ## Question
 
-Every launch walked both fixed libraries in full: on the owner's library 16,924 files in a
+Every launch walked both fixed libraries in full: on the reference library 16,924 files in a
 cloud-synced (File Provider) folder and 788 in a second, six batches that changed nothing and
 still held the writer about 1.9 s, finished eight seconds after launch. Can a launch know,
 without walking, that nothing under a root changed since the catalog last reflected it? And is
@@ -53,7 +53,7 @@ the cost PR #891 removed.
 
 ## Is the walk what keeps the provider busy?
 
-Observed on the owner's machine: the provider's extension process starts with Otos (its elapsed
+Observed on the test Mac: the provider's extension process starts with Otos (its elapsed
 time equals Otos's on three launches) and runs at 80–90 % CPU for minutes; a sample shows it
 serving XPC requests against its own SQLite store; Spotlight's indexer is busy at the same time.
 

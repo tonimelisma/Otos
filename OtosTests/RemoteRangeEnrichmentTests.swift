@@ -31,6 +31,7 @@ struct RemoteRangeEnrichmentTests {
 
     // MARK: - The byte source
 
+    // Validates: APP-066
     @Test func aRangeOutsideTheFileIsNilAndAskedOfNoServer() throws {
         let requests = RequestCount()
         let source = RemoteByteSource(reader: Self.reader(serving: Data(repeating: 7, count: 10), requests: requests))
@@ -42,6 +43,7 @@ struct RemoteRangeEnrichmentTests {
         #expect(requests.value == 1)
     }
 
+    // Validates: APP-066
     /// A short, failed or unanswered read throws: never a definitive absence.
     @Test func aReadTheServerDoesNotAnswerInFullThrows() {
         let short = RemoteByteSource(reader: RemoteRangeReader(size: 10) { _, _, completion in
@@ -74,6 +76,7 @@ struct RemoteRangeEnrichmentTests {
 
     // MARK: - The Store's answering fact
 
+    // Validates: APP-066
     /// An account is not claimed until its owner says its server answers, and stops being
     /// claimed when it says the server does not.
     @Test func anAccountIsEnrichableOnlyWhileItsServerAnswers() async throws {
@@ -94,6 +97,7 @@ struct RemoteRangeEnrichmentTests {
 
     // MARK: - Enrichment over ranges
 
+    // Validates: APP-066
     /// A listed account row gets its metadata from ranged reads of its original: the
     /// capture date the file holds, stamped, with no download and no rendering.
     @Test func anAccountRowsMetadataIsReadInRanges() async throws {
@@ -144,6 +148,7 @@ struct RemoteRangeEnrichmentTests {
         await store.shutdown()
     }
 
+    // Validates: APP-066
     /// A row the server did not answer for waits out the pacing ledger before it is
     /// claimed again.
     @Test func anUnansweredRowIsPacedBeforeItIsClaimedAgain() {

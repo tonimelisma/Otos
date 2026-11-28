@@ -4,7 +4,7 @@ Supports ADR 0015 (the scorecard) and `script/scorecard.sh`.
 
 ## Question
 
-Two of six owner-size sandbox tours (160,002 files) produced scorecards with `clicks=1`. By
+Two of six reference-size sandbox tours (160,002 files) produced scorecards with `clicks=1`. By
 the time the script read the session back with `log show`, the unified log's store no longer
 held the act lines. The script's live readout of the tour's own `op=tour` lines still had them.
 Can the whole session be captured live? Does a live stream lose lines under load? Can the
@@ -30,7 +30,7 @@ subsystem ran in each style, and the indices that came through were counted.
   274 MB file. A tour logs at a small fraction of that rate. Each tour's `op=scorecard.capture
   phase=closed` line reports the measured cost: lines, bytes, drop notices and the stream's
   CPU time.
-- **A tour at the owner's library size, captured at debug level.** A settled tour of the
+- **A tour at the reference library's size, captured at debug level.** A settled tour of the
   160,002-file sandbox library ran 7.5 minutes. Its capture held 295,935 lines of the session
   (89 MB), with 234 drop notices; the stream itself used 3 min 19 s of CPU.
   `log show` of the same window held 150,086 of the session's lines. The dev build's
@@ -58,6 +58,6 @@ session. `log show` alone is used only when no capture exists, and
 then the line says its loss cannot be counted (`complete=unknown`). Compact style does not
 print the process image. The script supplies it, since it launched that executable.
 
-At debug level the app's own logging rate at the owner's library size made the stream drop.
+At debug level the app's own logging rate at the reference library's size made the stream drop.
 Whether it still drops at info level is answered by every tour's `dropped=` count, and a
 tour that drops says it is `PARTIAL`.

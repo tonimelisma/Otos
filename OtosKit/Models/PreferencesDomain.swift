@@ -13,7 +13,7 @@ import Foundation
 /// session sees its own changes and `base` is left exactly as it was, however the session
 /// ends. A read-only tour runs on `.sessionOnly(.standard)` (`PreferencesDomain.configured`):
 /// its filter, sort, scope and zoom live for the visible session only, and a tour cut short
-/// before its restore step leaves the owner's saved place untouched (ADR 0020).
+/// before its restore step leaves the user's saved place untouched (ADR 0020).
 ///
 /// The domain itself is `Sendable` and `Hashable`; the `PreferenceStore`
 /// instance it creates is not — it is owned by the isolation that created it.

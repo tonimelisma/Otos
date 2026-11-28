@@ -1,5 +1,7 @@
 # Trash status bar
 
+GOVERNS: `OtosKit/Views/TrashStatusBar.swift`
+
 The surface that reports the Move to Trash queue (DES-089). Items the user moved to
 the Trash disappear from Otos at once; this bar is how Otos says the work behind them
 is still happening, typically while cloud-only files download so they can go to the

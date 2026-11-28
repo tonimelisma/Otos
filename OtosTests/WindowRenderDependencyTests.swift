@@ -14,6 +14,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct WindowRenderDependencyTests {
+    // Validates: ARC-068
     @Test func aOneTileHideRendersTheDetailColumnAlone() {
         let (model, shown) = makeShowingModel()
         model.selectAssets([shown.mediaGrid.orderedAssetIDs[0]])
@@ -26,6 +27,7 @@ struct WindowRenderDependencyTests {
         #expect(rendered.again() == [.detail])
     }
 
+    // Validates: ARC-068
     @Test func aPublicationThatChangedNothingRendersNothing() {
         let (model, shown) = makeShowingModel()
         model.selectAssets([shown.mediaGrid.orderedAssetIDs[0]])
@@ -51,6 +53,7 @@ struct WindowRenderDependencyTests {
         #expect(!again.contains(.sidebar))
     }
 
+    // Validates: ARC-068
     /// A choice is drawn on its tile, by the grid's reconfigure of the tiles the tile store
     /// changed (this model's store holds none); nothing else in the window shows it but the
     /// toolbar's choice control.

@@ -1,7 +1,7 @@
 # Duplicate detection: competitors, patterns and a design study
 
 Date: 2026-10-31. A research pass and a design study. No code or behavior changed, and
-nothing here is a requirement: the design below is a proposal for the owner to accept,
+nothing here is a requirement: the design below is a proposal to accept,
 change or reject before any plan is written.
 
 Labels: **[D]** documented by the vendor or Apple; **[E]** reported by users or
@@ -416,11 +416,11 @@ The bottom bar (DES-018) owns the duplicates fact only:
   at erase time, the matching library row is re-checked as current, reachable and not
   pending trash.
 
-### Open questions for the owner
+### Open questions
 
 1. Trash undo restores curation but not edits, and only within the session (APP-039,
    ADR 0022). That gap exists today; a duplicates act makes it more visible. Close it in
    the same work, or separately?
 2. Should the bare-key commands exist at all, or menu items only?
-3. Calibrating Same photo needs a real library sample; the owner's library is the
+3. Calibrating Same photo needs a real library sample; the reference library is the
    obvious one.

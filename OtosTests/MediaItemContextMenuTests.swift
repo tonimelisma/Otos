@@ -8,6 +8,7 @@ import Testing
 /// the command back through the single `perform` closure.
 @MainActor
 struct MediaItemContextMenuTests {
+    // Validates: APP-037
     @Test func menuRendersEveryEntryWithEnablement() {
         let preview = OpenWithApplication(
             url: URL(fileURLWithPath: "/System/Applications/Preview.app"),
@@ -46,6 +47,7 @@ struct MediaItemContextMenuTests {
         #expect(menu.items[3].isEnabled)
     }
 
+    // Validates: APP-036, APP-037
     @Test func menuItemsRouteToPerform() throws {
         let photos = OpenWithApplication(
             url: URL(fileURLWithPath: "/System/Applications/Photos.app"),
@@ -103,6 +105,7 @@ struct MediaItemContextMenuTests {
 }
 
 extension MediaItemContextMenuTests {
+    // Validates: APP-072
     /// DES-113: an unnamed person's entry counts every photo of them and opens with `Name
     /// This Person` over the people to merge them into and `New Name…`; highlighting a face
     /// item outlines the faces it acts on, so two people the menu names alike are told
@@ -138,6 +141,7 @@ extension MediaItemContextMenuTests {
         #expect(recorder.outlines == [[first], [second], [first], [], [first], []])
     }
 
+    // Validates: APP-072
     /// The only face's acts sit at the top level under a heading naming whose they are, the
     /// list a submenu named by the words it completes; each item performs its own command.
     @Test func aFlattenedGroupKeepsItsListInOneSubmenu() throws {

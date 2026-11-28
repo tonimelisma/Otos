@@ -7,7 +7,7 @@
 
 Every background owner started the moment the catalog's load returned, beside the window's
 first read, and its tasks inherited `.userInitiated` from a task the window model started on
-the main actor. Tours on the owner's library (installed f192041a,
+the main actor. Tours on the reference library (installed f192041a,
 `docs/research/2026-11-16-performance-baseline.md`) measured:
 
 | Owners running | Launch to first grid | Peak footprint |
@@ -54,7 +54,7 @@ publication to ADR 0005.
    - **A load the user waits on does not take a turn.** A query's or the intent to search's
      encoder load (`run(_:for: .user)`, `LoadWaiter.user`) is granted at once, before the first
      grid and beside the load running, and no waiting load is granted while it runs. On the
-     owner's library the first search, typed about 6 s after launch, waited 1,306 ms for an
+     reference library the first search, typed about 6 s after launch, waited 1,306 ms for an
      encoder load that had itself waited 2.7 s behind six background loads
      (`docs/research/2026-11-16-first-search-after-launch.md`). Rejected: letting the user's
      load take the next turn, which still waits for the load running (a People pass ran 8.9 s
@@ -64,7 +64,7 @@ publication to ADR 0005.
      which records the request it made as a revision (`userAwaited`, ADR 0032 rule 2); the
      pass that starts while it is uncovered runs `for: .user`, and a background People pass
      already waiting is promoted to the user's (`LoadAdmission.promote`, machine event
-     `.promote`), granted at once. On the owner's library a face named Kim left its twin HEIC
+     `.promote`), granted at once. On the reference library a face named Kim left its twin HEIC
      Unidentified for 133 s, the People pass waiting in the room's memory hold (2026-11-19). A
      pass owed only to background facts (faces read, catalog changes) waits its turn as before.
      Rejected: marking the pass from the catalog change the act wrote, which the projection
@@ -93,7 +93,7 @@ publication to ADR 0005.
    released. Opening, wanting and shutting down are synchronous, so the main actor calls them
    in the step that applies the intent, and teardown from a deinit that cannot await.
 
-7. **A description request takes a turn.** On the owner's library a cold request made the
+7. **A description request takes a turn.** On the reference library a cold request made the
    system load its 3B model and image encoder into the model's service while a People pass
    ran; the machine-wide compressor grew 1.5 GB in 3.6 s and the kernel went to
    memory-pressure warning, and each time the background room reopened the two started
@@ -107,8 +107,8 @@ publication to ADR 0005.
    service's, not Otos's footprint, so this is not the two-loads-at-once overlap rejected below;
    nothing else is granted until both end.
 8. **A heavy load that raised the pressure is admitted against the room it was seen to take;
-   a description never waits for headroom.** The owner's direction (2026-11-18): "Descriptions
-   should run when the app is foreground ed. OS will swap running apps." His machine sat at
+   a description never waits for headroom.** Descriptions run while the app is in front, and
+   the OS swaps running apps out (2026-11-18). The test Mac sat at
    45–53 % available, so the cost floor this decision used to set for descriptions (67 %
    available) held all of them: 0 written, 755 owed on the tour of 6dc46aa3
    (`docs/research/2026-11-16-performance-baseline.md`). The memory a request takes is in the
@@ -122,7 +122,7 @@ publication to ADR 0005.
      at a time, so the background heavy load granted last when the room's memory hold begins
      (ADR 0057) is the one the machine was carrying as the level rose (`op=load.admission
      phase=pressureRaised`). Its requirement (`LoadAdmissionMachine.RoomNeed`) is a share of
-     `kern.memorystatus_level`, read by the room: the line at which the owner's Mac goes to
+     `kern.memorystatus_level`, read by the room: the line at which the test Mac goes to
      warning, 32 % (`BackgroundLoad.warningLinePercent`: across the tours of
      `docs/research/2026-11-17-launch-pressure-dips.md` the kernel read warning at as much as
      31 %, never above, and returned to normal only at 33 % or more), plus its measured cost —
@@ -167,8 +167,8 @@ starve every bounded load behind it.
   at warning in 617 s: each re-admission a few points higher fell back below the line, since
   the bar did not cover what a request costs.
 - **A cost floor for descriptions (67 % available) with a per-session ratchet** (#941, #943).
-  It stopped the dips, and with them every description on the owner's machine, which never
-  reached 67 %; the owner's direction of 2026-11-18 replaces it (decision 8).
+  It stopped the dips, and with them every description on the test Mac, which never
+  reached 67 %; the direction of 2026-11-18 replaces it (decision 8).
 - **Holding descriptions at memory-pressure warning.** Before #943 a request held at warning
   loaded the model, raised the level, was held, and was let start again at the return to
   normal: 13 dips in 128 s. A description is held only at critical (ADR 0057).

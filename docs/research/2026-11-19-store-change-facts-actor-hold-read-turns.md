@@ -9,7 +9,7 @@ Three measurements that decide three proposed Store changes:
   `notifyCatalogChanged` site? Where does the hand-named change over-notify, under-notify, or
   omit a fact the write produced?
 - **M2.** How long does one hold of the `CatalogStore` actor last, per entry point, on a
-  generated owner-shaped catalog with every background owner running? How long do the blocking
+  generated reference-shaped catalog with every background owner running? How long do the blocking
   calls on it take (`database()` open+migrate, `rootIsAvailable`, `deleteStagingIfNeeded`)?
   Decision bar: an actor split or a blocking-work move is justified only if a p99 hold is over
   ~50 ms or a blocking call is over ~10 ms at p99.
@@ -20,7 +20,7 @@ Three measurements that decide three proposed Store changes:
 
 ## Method
 
-Nothing touched the owner's catalog or library. The only read of his data was `log show` of the
+Nothing touched the reference catalog or library. The only read of reference data was `log show` of the
 installed app's own unified log for the last 7 days (M2, below). Every experiment that wrote
 used a catalog the tests generate.
 
@@ -46,7 +46,7 @@ worktree.
   enrichment, trash, import, people and search suites, with the harness on.
   It made 909 Stores, 4,476 commits and 7,614 notifications, and the suite was green.
 - **M1, overhead.** `ExperimentMeasurements.observerOverheadOnBulkInsert`: 150,000
-  `media_asset` rows inserted into an owner-shaped catalog at scale 0.01, once as one
+  `media_asset` rows inserted into a reference-shaped catalog at scale 0.01, once as one
   `INSERT … SELECT` and once as 150,000 single-row statements, three repetitions. The observer
   timed its own callbacks (`callbackNanos`).
 - **M2, actor holds.** `CatalogStore` got a custom `SerialExecutor` that runs every job on a
@@ -227,7 +227,7 @@ What the over-bar holds are:
     pages, about 165 µs per log line.
   - Window reads, which pass through the actor, waited behind it: `orderedAssetIDs`,
     `filterOptions` and `importBatches` all have a 14.5–14.8 s maximum in that run.
-  - Cause of the count: a generator artifact. The owner's installed app logged
+  - Cause of the count: a generator artifact. The installed app on the reference library logged
     `malformedFaceRow` 0 times in the last 7 days. The O(n) synchronous loop is real.
 - **`photoDescriptionCandidatesByKey`, 449 ms.** It filters and sorts the asked ids
   (`CatalogStore.swift:11369`) on the actor before its read.
@@ -241,7 +241,7 @@ Blocking calls on the actor:
 
 | Call | Where | n | p50 | p95 / p99 | Max |
 | --- | --- | --- | --- | --- | --- |
-| `database()` open + migrate, owner-size catalog at the current schema | scale runs | 4 | – | – | 18.1–46.8 ms each |
+| `database()` open + migrate, reference-size catalog at the current schema | scale runs | 4 | – | – | 18.1–46.8 ms each |
 | `database()` open + migrate | whole suite, many catalogs, some migrated from the baseline | 914 | 25.6 ms | 353 / 1,154 ms | 3,096 ms |
 | `rootIsAvailable` | scale runs (paths absent) | 9 | 0.04 ms | – | 0.34 ms |
 | `rootIsAvailable` | whole suite | 1,349 | 0.08 ms | 1.0 / 9.5 ms | 122 ms |
@@ -313,7 +313,7 @@ time.
     between the write and the notification;
   - `DerivedRemoval.perform`, which deletes files on the actor and reached 160 ms.
 
-  `database()` open, 18–47 ms at the owner's size and seconds when migrating, crosses the bar
+  `database()` open, 18–47 ms at the reference library's size and seconds when migrating, crosses the bar
   too. But nothing that needs the catalog can run before it, so moving it buys nothing.
   `rootIsAvailable` is under the bar here (p99 9.5 ms under the suite's load). Its cost on a
   File Provider root is not measured.
@@ -326,9 +326,9 @@ time.
 
 - **Debug build and machine load.** The test host is unoptimized, and the load average was
   164–227. Holds and file times are wall-clock times on that machine.
-- **The owner's data.**
-  - His File Provider roots: `rootIsAvailable` and file removals there talk to `fileproviderd`.
-  - His real face vectors: the 95,000 malformed rows are the generator's.
-  - His real staged camera originals: 5–30 MB files, where the test used 512 KB.
-- **Few builds.** Only 4 People and 3 Duplicates builds ran under `want` at the owner's size.
+- **The reference data.**
+  - Its File Provider roots: `rootIsAvailable` and file removals there talk to `fileproviderd`.
+  - Its real face vectors: the 95,000 malformed rows are the generator's.
+  - Its real staged camera originals: 5–30 MB files, where the test used 512 KB.
+- **Few builds.** Only 4 People and 3 Duplicates builds ran under `want` at the reference library's size.
   The bound comes from the turn machine's own waits across 12,000 reads, not from many builds.

@@ -11,6 +11,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelUndoTests {
+    // Validates: APP-039
     @Test func likeThenUndoRestoresNotRatedAndRedoReappliesLike() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let model = makeUndoModel(store: library.store)
@@ -39,6 +40,7 @@ struct CatalogWindowViewModelUndoTests {
         }
     }
 
+    // Validates: APP-039
     @Test func undoOfABatchRestoresMixedPriorsPerAsset() async throws {
         try await withCatalogedLibrary(fileCount: 3) { library in
             let model = makeUndoModel(store: library.store)
@@ -65,6 +67,7 @@ struct CatalogWindowViewModelUndoTests {
         }
     }
 
+    // Validates: APP-039
     @Test func aChoiceThatChangesNothingRegistersNoUndo() async throws {
         try await withCatalogedLibrary(fileCount: 1) { library in
             let model = makeUndoModel(store: library.store)
@@ -80,6 +83,7 @@ struct CatalogWindowViewModelUndoTests {
         }
     }
 
+    // Validates: APP-039
     /// Undo never auto-advances, and it shows what it changed (F-18): after a like advanced
     /// to the next photo, undoing it selects the liked photo again rather than leaving the
     /// change out of sight.
@@ -104,6 +108,7 @@ struct CatalogWindowViewModelUndoTests {
         }
     }
 
+    // Validates: APP-039
     @Test func storeReportsPriorChoicesPerRow() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let ids = library.ids

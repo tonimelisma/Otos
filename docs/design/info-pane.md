@@ -1,5 +1,7 @@
 # Info pane
 
+GOVERNS: `OtosKit/Views/InfoPaneView.swift`
+
 The inspector pane that says what Otos knows about the current item (DES-088, APP-041,
 ADR 0050). It shares the trailing column with the Edit pane and is laid out the way the
 Edit pane is (`edit-panel.md`), so pressing I and E in turn changes the content of the
@@ -54,9 +56,9 @@ Labels share one leading edge; a long value wraps beside its label rather than u
 | Exposure (a still) | Shutter Speed, Aperture, ISO, Focal Length, Compensation, Program, Metering, Flash, White Balance |
 | Video (a movie) | Duration, Frame Rate, Codec |
 
-The order puts first what the user reads — the description (owner decision, 2026-11-14) —
+The order puts first what the user reads — the description —
 then what they act on and look for — who is in the photo, what is in it, where and which file
-it is — and the capture's own facts after (owner decision, 2026-11-12). A movie has no
+it is — and the capture's own facts after. A movie has no
 Description.
 
 Which sections show depends only on the kind, so every still has the same rows and every
@@ -94,8 +96,8 @@ has a location to show, as a control whose subject does not exist is omitted (DE
 ## Description
 
 What Apple's on-device model wrote about the still (ADR 0053): one plain, matter-of-fact sentence
-naming the people at their faces, written again whenever a fact it was written from changes. The
-owner chose it for the top of the pane and asked for no editing (2026-11-14), so it has no
+naming the people at their faces, written again whenever a fact it was written from changes. It
+leads the pane and is not editable, so it has no
 Edit, Retry or Revert control. Generated text is identified, as the HIG asks
 (`Written by Apple Intelligence`). It stays in the inspector, never over the photo: Photos
 for Mac shows a caption only in its Info window, and text over a photo needs a dimming layer
@@ -104,8 +106,8 @@ or glass that covers the picture under review (DES-060A).
 ## In This Photo
 
 What search recognised in the photo, the two readings it already makes (ADR 0048): Vision's
-scene labels and the text in it. The owner asked for both to be listed, and for text to be
-shown only as far as Vision is sure of it (2026-11-12).
+scene labels and the text in it. Both are listed, and text is
+shown only as far as Vision is sure of it.
 
 - **Labels** are named in the Mac's language (`SceneLabelNames`, ADR 0050), or in English
   where no checked name exists, each name once. A label is a button: clicking it searches for
@@ -118,8 +120,8 @@ shown only as far as Vision is sure of it (2026-11-12).
   search still matches every line. Long text shows its first 8 lines and a **Show More** link
   button under them; open, it reads **Show Less**. HIG (Typography): text in a scrolling region
   is not cut short unless the rest is one step away. The button has no ellipsis, as it asks
-  for nothing more before it acts. The next photo's text starts closed (owner, 2026-11-19).
-- There is no sidebar row for text (owner, 2026-11-12): finding photos by their text is the
+  for nothing more before it acts. The next photo's text starts closed.
+- There is no sidebar row for text: finding photos by their text is the
   search field's.
 
 ## Keyboard and motion

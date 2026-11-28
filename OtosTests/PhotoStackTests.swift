@@ -43,6 +43,7 @@ struct PhotoStackTests {
         }
     }
 
+    // Validates: ARC-062
     @Test func aRawAndItsJPEGArePairedAndTheJPEGIsTheKey() throws {
         let pair = try #require(stacks([candidate("a/DSC1.ARW", .raw), candidate("a/dsc1.jpg", .image)]).first)
         #expect(pair.id.kind == .pair)
@@ -53,6 +54,7 @@ struct PhotoStackTests {
         #expect(pair.label(of: id("a/DSC1.ARW")) == "RAW")
     }
 
+    // Validates: ARC-062
     @Test func anyOtherCountPairsNothing() {
         #expect(stacks([candidate("DSC1.ARW", .raw)]).isEmpty)
         #expect(stacks([candidate("DSC1.JPG", .image), candidate("DSC1.HEIC", .image)]).isEmpty)
@@ -64,6 +66,7 @@ struct PhotoStackTests {
         #expect(stacks(withMovie).count == 1)
     }
 
+    // Validates: ARC-062
     @Test func theLatestChoiceIsTheKey() throws {
         let pair = try #require(stacks([
             candidate("DSC1.ARW", .raw, chosenAt: 20),
@@ -72,6 +75,7 @@ struct PhotoStackTests {
         #expect(pair.key == id("DSC1.ARW"))
     }
 
+    // Validates: APP-075
     @Test func aCollapsedPairShowsItsKeyInItsKeysPlace() throws {
         let pair = try #require(stacks([candidate("DSC1.ARW", .raw), candidate("DSC1.JPG", .image)]).first)
         let all = CatalogStacks([pair])
@@ -86,6 +90,7 @@ struct PhotoStackTests {
         #expect(result.grid.shownForHiddenMember[id("DSC1.ARW")] == id("DSC1.JPG"))
     }
 
+    // Validates: APP-075
     @Test func anExpandedPairShowsEveryMemberAsItsOwnPhoto() throws {
         let pair = try #require(stacks([candidate("DSC1.ARW", .raw), candidate("DSC1.JPG", .image)]).first)
         let ids = [id("DSC1.ARW"), id("DSC1.JPG")]
@@ -97,6 +102,7 @@ struct PhotoStackTests {
         #expect(result.grid.files(reachedThrough: id("DSC1.ARW")) == [id("DSC1.ARW")])
     }
 
+    // Validates: APP-075
     /// A filter that leaves one member shows it as an ordinary photo, and a filter that hides
     /// the key shows the other member.
     @Test func aStackWithOneMemberPresentIsNotOneHere() throws {
@@ -108,7 +114,8 @@ struct PhotoStackTests {
         #expect(result.grid == .empty)
     }
 
-    /// A collapsed pair is one photo and is not marked (owner, 2026-11-19); expanded, each file
+    // Validates: APP-076
+    /// A collapsed pair is one photo and is not marked; expanded, each file
     /// shows its own type.
     @Test func theTileShowsTheStacksBadge() throws {
         let pair = try #require(stacks([candidate("DSC1.ARW", .raw), candidate("DSC1.JPG", .image)]).first)
@@ -149,6 +156,7 @@ struct PhotoStackTests {
         try #require(stacks.first { $0.id.kind == .burst })
     }
 
+    // Validates: ARC-062
     /// Stills sharing a burst identifier are one burst, its frames in capture order, its key
     /// the first frame; one carrier alone, or carriers of different bursts, make none.
     @Test func stillsSharingABurstIdentifierAreOneBurst() throws {
@@ -163,6 +171,7 @@ struct PhotoStackTests {
         #expect(stacks([frame("IMG_1.HEIC", burst: "B1", at: 1), frame("IMG_2.HEIC", burst: "B2", at: 2)]).isEmpty)
     }
 
+    // Validates: ARC-062
     /// The default key is the first Liked frame; the user's latest choice wins over it.
     @Test func aBurstsKeyIsItsChosenThenItsFirstLikedFrame() throws {
         let liked = try burst(in: stacks([
@@ -176,6 +185,7 @@ struct PhotoStackTests {
         #expect(chosen.key == id("IMG_3.HEIC"))
     }
 
+    // Validates: ARC-062
     /// A pair whose file carries the identifier is one frame, shown as the pair's key, and
     /// both its files are the burst's.
     @Test func aPairIsOneFrameOfABurst() throws {
@@ -189,6 +199,7 @@ struct PhotoStackTests {
         #expect(burst.isRaw(id("IMG_1.DNG")))
     }
 
+    // Validates: APP-075
     /// A collapsed burst is its key frame's one tile; Move to Trash on it reaches every file
     /// of every frame; a file it hides goes to that tile, through its pair.
     @Test func aCollapsedBurstIsOneTileReachingEveryFile() throws {
@@ -207,6 +218,7 @@ struct PhotoStackTests {
         #expect(TileStackPresentation.of(id("IMG_1.JPG"), in: result.grid).badgeLabel == "2")
     }
 
+    // Validates: APP-094
     /// Shown separately (Settings), a RAW and its processed file pair nothing: each is its own
     /// photo, and a burst's frames are the stills that carry its identifier.
     @Test func separatelyARawAndItsProcessedFileAreTwoPhotos() throws {
@@ -222,6 +234,7 @@ struct PhotoStackTests {
         #expect(stacks(files).contains { $0.id.kind == .pair }, "paired, the same files make pairs")
     }
 
+    // Validates: APP-076
     /// An expanded burst shows every frame on its band, a pair frame still collapsed with its
     /// own badge; expanding that pair too shows both its files, and each is its own photo.
     @Test func anExpandedBurstShowsItsFramesAndTheirPairs() throws {
@@ -246,6 +259,7 @@ struct PhotoStackTests {
         #expect(filesShown.grid.pair(shownBy: id("IMG_1.DNG")) == pair)
     }
 
+    // Validates: APP-075
     /// A burst with one frame present is no burst here, even when that frame is an expanded
     /// pair whose two files are both present: the pair is one frame, so the burst neither
     /// collapses its files to one tile nor carries Move to Trash to frames the scope hides.
@@ -264,6 +278,7 @@ struct PhotoStackTests {
         #expect(result.grid.shownForHiddenMember.isEmpty)
     }
 
+    // Validates: APP-075
     /// A choice on a collapsed stack is its key's: the stack carries the key's choice, a
     /// pair's from the file it shows and a burst's from its key frame's shown file.
     @Test func aStackCarriesItsKeysChoice() throws {
@@ -335,6 +350,7 @@ struct PhotoStackExpansionChangeTests {
         return stacks
     }
 
+    // Validates: APP-088
     @Test func aChangedExpansionIsTheFullCollapse() {
         var generator = SplitMix(seed: 52)
         var changedOrders = 0

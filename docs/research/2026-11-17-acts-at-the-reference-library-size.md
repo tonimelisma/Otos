@@ -1,12 +1,12 @@
-# Acts at the owner's library size (2026-11-17)
+# Acts at the reference library size (2026-11-17)
 
 ## Question
 
 The target "every act's result is visible within 0.1 s" is measured only in a sandbox: the
-owner's library takes no act. Sandbox libraries of 28, 200 and 2,000 generated photos measured
+reference library takes no act. Sandbox libraries of 28, 200 and 2,000 generated photos measured
 the choice acts at 0–1 ms, Move to Trash at 8–34 ms and Put Back at 4–31 ms. The costs of an
 act that grow with the library (the window's state apply and grid edit, the projection's
-re-read, the Store's write) are met only at his size, about 160,000 items in All Media. Do the
+re-read, the Store's write) are met only at its size, about 160,000 items in All Media. Do the
 acts hold the target there?
 
 ## Method

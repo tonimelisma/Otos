@@ -4,15 +4,15 @@
 
 #887 made the first search's words answer correct by reading every text reading into memory
 before the index's first pass reconciled its embeddings (`search.texts phase=loaded`). On the
-owner's tour of 1a54ff7d that load took 4,548 ms, the words answer waited for it, and the
+reference library's tour of 1a54ff7d that load took 4,548 ms, the words answer waited for it, and the
 footprint rose from 241 to 645 MB over the same seconds (412 MB before #887). How much of the
 rise is the text load, and what does a blank-slate design hold instead?
 
 ## Attribution: the launch pass, step by step
 
-A hosted probe on a generated catalog of the owner's shape (`OwnerShapedCatalog` at scale 1:
-164,699 embeddings, 75,795 text readings of which 12,633 hold text, 2.7 MB of folded text; his
-own catalog, read-only: 75,823 readings, 13,545 with text, 6.47 MB of stored JSON, 10.9 lines
+A hosted probe on a generated catalog of the reference shape (`ReferenceShapedCatalog` at scale 1:
+164,699 embeddings, 75,795 text readings of which 12,633 hold text, 2.7 MB of folded text; the
+reference catalog, read-only: 75,823 readings, 13,545 with text, 6.47 MB of stored JSON, 10.9 lines
 and 478 bytes a reading) ran the reads of the index's launch pass in its order, on 1a54ff7d,
 in a quiet test process, sampling the kernel's footprint and malloc's live bytes after each:
 
@@ -86,7 +86,7 @@ letters, Chinese, Japanese, Korean, Thai, Devanagari, emoji, a 42-letter word), 
 2, 3, 5 and 9 characters at every position as written and as folded, and pairs of words: the
 index answers each exactly as matching every reading does.
 
-## Measured on the generated owner-shaped catalog
+## Measured on the generated reference-shaped catalog
 
 All three are on-demand runs at scale 1 (`OTOS_SCALE_TEST=1`), each alone, while other
 agents' checks loaded the Mac:
@@ -104,7 +104,7 @@ agents' checks loaded the Mac:
   source, its asset) and nothing else, 4.0 rows visited per row returned. The generated
   readings repeat a small vocabulary, so these words are far broader than a real query: `open`
   matched every reading with text, 12,633, in 550 ms cold; `ca` 11,410 in 67 ms; `営業` 4,209 in
-  24 ms. On the owner's library the tour's `sky` matched 12.
+  24 ms. On the reference library the tour's `sky` matched 12.
 - `EXPLAIN QUERY PLAN` (`aMatchReadsTheIndexFirstAndEachRowByItsKey`): the FTS5 table first,
   then `search_text_folded` by its integer key, `search_text` by `idx_search_text_source`, and
   `media_asset` by its key. No table is scanned.
@@ -119,6 +119,6 @@ is a product decision this change does not make.
 
 ## Not measured here
 
-- The owner's tour after the change (first search and launch footprint): the next tour.
-- Bench cases that may move (the owner-shaped catalog's readings now take his widths): not
+- The reference library's tour after the change (first search and launch footprint): the next tour.
+- Bench cases that may move (the reference-shaped catalog's readings now take the reference widths): not
   measured until the next daily run.

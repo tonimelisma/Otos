@@ -218,7 +218,7 @@ extension CatalogStore {
     /// Every migration runs with foreign keys enforced as its statements run
     /// (`foreignKeyChecks: .immediate`), so nothing is left to verify when it ends. GRDB's
     /// default instead turns enforcement off and then runs `PRAGMA foreign_key_check`, which
-    /// reads every table that holds a foreign key — on an owner-shaped catalog nearly the
+    /// reads every table that holds a foreign key — on a reference-shaped catalog nearly the
     /// whole file, 0.6–8.8 s per migration (`docs/research/2026-11-15-catalog-open-cost.md`).
     /// Those migrations rebuild no table, delete no row another table refers to, and change
     /// no referenced key, so no foreign-key action fires and no constraint is tested that the
@@ -693,7 +693,7 @@ extension CatalogStore {
     }
 
     /// The file is compacted when at least this share of its pages is free… A tenth: on the
-    /// owner's catalog v71 left 23.6 % of 2.8 GB free (634 MB), which a quarter left in place;
+    /// reference catalog v71 left 23.6 % of 2.8 GB free (634 MB), which a quarter left in place;
     /// below a tenth, the reads of what remains are spread over a file barely larger.
     static let compactionFreeShare = 0.10
     /// …and the free pages hold at least this much: rewriting the file costs about as long per
@@ -709,7 +709,7 @@ extension CatalogStore {
     /// Rewrites the catalog without its free pages (`VACUUM`) when a tenth of it or more, and at
     /// least 256 MB, is free, after the migrations and before anything else reads it. A table rebuild (v71's
     /// `media_asset`) or a removed library leaves its old pages free in the file, where SQLite
-    /// reuses them but never gives them back; on the owner's catalog v71 freed about 1.2 GB of
+    /// reuses them but never gives them back; on the reference catalog v71 freed about 1.2 GB of
     /// 2.8 GB, and the reads of what remains are spread over a file twice their size. VACUUM
     /// cannot run inside a migration's transaction, so it is this step of the open, which the
     /// window reports (`CatalogOpening.Phase.compacting`, DES-121), and it is decided by the
@@ -1684,7 +1684,7 @@ extension CatalogStore {
         underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> [ExistingAssetRow] {
-        // A root's rows are owner-scale: read from the cursor as `MappedArrayBuilder` says.
+        // A root's rows are library-scale: read from the cursor as `MappedArrayBuilder` says.
         let rows: RowCursor = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
             // Cached: a listing reads one subtree per folder it completes.
@@ -2691,7 +2691,7 @@ nonisolated struct CatalogWriteAudit: Sendable {
 
 /// Every connection the Store's pools open and what each is doing, so a read that waited a
 /// second or more names what held it. Visible tiles' reads and the window's reads on the
-/// other pool waited 5–10 s together on the owner's launch and were released within 50 ms of
+/// other pool waited 5–10 s together on the reference library's launch and were released within 50 ms of
 /// each other while the writer kept committing, and no probe rebuilt it
 /// (`docs/research/2026-11-15-startup-read-stalls.md`): the next such wait has to say what was
 /// running at the time.

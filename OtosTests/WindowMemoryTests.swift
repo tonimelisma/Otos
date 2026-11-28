@@ -5,35 +5,36 @@ import Synchronization
 import Testing
 
 /// The window's memory across scope changes and re-reads (ADR 0005, "One copy of
-/// an order"): on a catalog of the owner's shape with every background owner off, the
+/// an order"): on a catalog of the reference shape with every background owner off, the
 /// projection's held orders, collapses, stacks and window are measured after All Media's first
 /// publication and again after 20 scope changes, each followed by a whole re-read of the shown
 /// order: the distinct ID arrays they reference, the IDs those hold per distinct asset, their
 /// bytes per asset, and the process footprint (`phys_footprint`, reported, not judged: it
 /// moves with the allocator). The held IDs must not climb: an order read again that came back
 /// as held is held once, and an ID holds no string of its own (`MediaAssetIdentityTable`).
-/// At the owner's size (`OTOS_SCALE_TEST=1`, run alone) each checkpoint is written to
+/// At the reference size (`OTOS_SCALE_TEST=1`, run alone) each checkpoint is written to
 /// `build/window-memory/run.txt`, and each step as it ends to `run.progress`.
 @Suite(.testScope, .serialized)
 struct WindowMemoryTests {
     /// The IDs the held arrays may hold per distinct asset they name: All Media's order, its
     /// collapse (the order less the stacks' hidden files) and the stacks' own member arrays,
-    /// about 7 % of the files on the owner's shape. An order held twice is about three.
+    /// about 7 % of the files on the reference shape. An order held twice is about three.
     static let idsPerAssetLimit = 2.2
 
     /// What the held arrays may hold per distinct asset, in bytes: their IDs at
     /// `idsPerAssetLimit`, each a 4-byte place in the identity table.
     static let bytesPerAssetLimit = 10
 
-    /// The test process's footprint after the 20 steps at the owner's size, run alone: 144 MB
+    /// The test process's footprint after the 20 steps at the reference size, run alone: 144 MB
     /// measured with 4-byte IDs, 212–220 MB with IDs that hold their path strings
     /// (`docs/research/2026-11-17-asset-identity-memory.md`).
-    static let ownerSizeFootprintLimit: UInt64 = 180 * 1_048_576
+    static let referenceSizeFootprintLimit: UInt64 = 180 * 1_048_576
 
+    // Validates: ARC-069
     @Test func heldIDsDoNotClimbAcrossScopeChanges() async throws {
-        let ownerSize = StallReproductionTests.ownerSize
+        let referenceSize = StallReproductionTests.referenceSize
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: ownerSize ? 1 : 0.02)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: referenceSize ? 1 : 0.02)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let batch = try #require(try await store.windowReads.importBatches(counting: .newest(1, and: nil)).first)
@@ -57,7 +58,7 @@ struct WindowMemoryTests {
         defer { draining.cancel() }
 
         // Each step as it ends, so a run that stops says where.
-        let progress = Progress(enabled: ownerSize)
+        let progress = Progress(enabled: referenceSize)
         progress.append("catalog rows=\(catalog.shape.assets)")
         try await Self.settle(projection, on: .allMedia)
         let first = try Self.census(held)
@@ -82,8 +83,8 @@ struct WindowMemoryTests {
         let after = try Self.census(held)
         await store.shutdown()
 
-        let lines = ["scale=\(ownerSize ? 1 : 0.02)"] + first.lines("after=1") + after.lines("after=20")
-        if ownerSize {
+        let lines = ["scale=\(referenceSize ? 1 : 0.02)"] + first.lines("after=1") + after.lines("after=20")
+        if referenceSize {
             let url = SourceTree.root.appending(path: "build/window-memory/run.txt")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
@@ -94,8 +95,8 @@ struct WindowMemoryTests {
         #expect(after.all.elements <= first.all.elements + first.all.elements / 20, "\(report)")
         #expect(Double(after.all.elements) <= Double(after.distinctAssets) * Self.idsPerAssetLimit, "\(report)")
         #expect(after.all.bytes <= after.distinctAssets * Self.bytesPerAssetLimit, "\(report)")
-        if ownerSize {
-            #expect(after.footprint <= Self.ownerSizeFootprintLimit, "\(report)")
+        if referenceSize {
+            #expect(after.footprint <= Self.referenceSizeFootprintLimit, "\(report)")
         }
     }
 
@@ -114,7 +115,7 @@ struct WindowMemoryTests {
         }
     }
 
-    /// Appends a line to `build/window-memory/run.progress` at the owner's size.
+    /// Appends a line to `build/window-memory/run.progress` at the reference size.
     private struct Progress {
         let url: URL?
 

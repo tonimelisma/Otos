@@ -5,8 +5,8 @@
 
 ## Context
 
-The owner asked why the browser's filter offers people and places nowhere (2026-11-12), and
-accepted a Places filter of country and town in the same filter popover as the file types
+The browser's filter offered people and places nowhere (2026-11-12). It gains a Places
+filter of country and town in the same filter popover as the file types
 and People. The catalog holds each item's primary location as coordinates (ADR 0039,
 ADR 0040) and no place names: the Info pane looks one item's name up when it shows it
 (ADR 0050), and nothing else in Otos names a place.
@@ -78,7 +78,7 @@ descriptor (APP-013, ADR 0011); the owner-state rules the reader follows (ADR 00
   one of them in that language. Checking a country includes all of it; unchecking one town
   of a checked country narrows it to the rest. The popover offers the countries and towns
   named for the located items in the scope of the sidebar row the window shows, as it
-  offers file types (`CatalogStore.filterOptionTally(for:)`, owner order 2026-11-13): a library
+  offers file types (`CatalogStore.filterOptionTally(for:)`, 2026-11-13): a library
   never offers a town only a card holds, so no choice matches nothing. A row's leaves (an
   area or a stack under Places, a person under People, a group under Duplicates) keep the
   row's filter (APP-013) and are offered the row's choices, so a leaf never loses a choice

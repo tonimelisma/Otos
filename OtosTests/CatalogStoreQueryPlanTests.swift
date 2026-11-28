@@ -6,6 +6,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreQueryPlanTests {
+    // Validates: ARC-037, APP-025, ENR-003
     @Test func descriptorQueryFiltersAndSortsBySQLiteBestValues() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -50,6 +51,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(wrongKind.isEmpty)
     }
 
+    // Validates: ARC-037
     @Test func querySchemaStreamsCatalogOrderAndEnrichmentCandidatesFromIndexes() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -99,9 +101,10 @@ struct CatalogStoreQueryPlanTests {
         #expect(!usesTemporarySort(plans.globalEnrichment))
     }
 
+    // Validates: ARC-022
     /// A scope that names its rows by a key — an import batch, a set of identical copies, a
     /// stack's members — reads them by that key and sorts the few it finds. Walking the order
-    /// index for them instead read every row of the owner's catalog: an import batch's
+    /// index for them instead read every row of the reference catalog: an import batch's
     /// 210 rows took 16 s, one group of identical copies 36 s
     /// (`docs/research/2026-11-15-keyed-scope-query-plans.md`). The place options of a keyed
     /// scope start from its rows the same way, not from every named cell.
@@ -167,11 +170,12 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-057, APP-069, APP-083
     /// The narrow scopes no key names start every read — the order under each sort, the
     /// filter's types, the count and the place options — from an index that holds their rows:
     /// a map area from its cells' located rows, On This Day from its day, Duplicates from the
     /// digests its group subquery finds. Walking the order index for them tested every row of
-    /// the owner's catalog: 56,000 pages for 283 rows of Helsinki, 29,000 for 705 rows of a
+    /// the reference catalog: 56,000 pages for 283 rows of Helsinki, 29,000 for 705 rows of a
     /// day, 155,000 for 126 copies, against 869, 5,500 and 5,700
     /// (`docs/research/2026-11-15-proportional-small-scopes.md`).
     @Test func narrowScopesSeekTheirOwnRows() async throws {
@@ -226,6 +230,7 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-057
     /// The Swift cell of a coordinate is the one SQLite generates for it, at the cell's edges,
     /// below zero and at the clamps, so an area's cell bounds never leave out a row inside it.
     @Test func anAreasCellsAreTheCellsSQLiteGivesItsCoordinates() async throws {
@@ -245,6 +250,7 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-057
     /// The Places scopes join `asset_metadata` for the coordinate (ADR 0040). The order
     /// must still come from the capture index — a walk, never a temporary sort. Places reads
     /// each row's coordinate from `idx_asset_metadata_location`, never from the table row that
@@ -317,6 +323,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(rows.first?.coordinate == PlaceCoordinate(latitude: 60.17, longitude: 24.94))
     }
 
+    // Validates: ENR-031, ENR-030
     /// Place names (ADR 0051): the unnamed cells' read walks the place-cell index in its own
     /// order — no scan of every location, no temporary sort — and the filter options' read
     /// walks the roots' rows in `idx_media_asset_stack_candidate`, each located row's coordinate
@@ -391,6 +398,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(cells["c.jpg"] == PlaceCell(latitude: 4499, longitude: 8999))
     }
 
+    // Validates: APP-068
     /// ADR 0048: what an empty search answer leaves out of the items it is still reading — the
     /// rows that will get no thumbnail — is one seek of `idx_media_asset_no_thumbnail_coming` per
     /// root, visiting only those rows: never a row awaiting its thumbnail, one holding one, or a
@@ -455,13 +463,14 @@ struct CatalogStoreQueryPlanTests {
         #expect(stillClaimed == 2)
     }
 
+    // Validates: ARC-062
     /// ARC-037: `.removableVolume` roots claim with the metadata-only predicate and
     /// index. Assert the index choice on EXPLAIN QUERY PLAN — a correctness-only
     /// assertion would not catch a narrow query silently planning against the broad
     /// index.
     /// ADR 0052: the stack candidates' read seeks the RAW folders and each folder's stills
     /// through the candidate index. Without it each folder scanned its whole root, and on the
-    /// owner's 10,917 RAW folders the window's first publication took minutes.
+    /// reference library's 10,917 RAW folders the window's first publication took minutes.
     @Test func stackCandidatesSeekTheirFoldersThroughTheCandidateIndex() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -497,9 +506,10 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: ARC-022, APP-044
     /// v55: the window's reads test every row they walk for whether it is shown and whether it
     /// is a Live Photo's movie. Each walks an index that carries those columns, so a row is
-    /// tested without its table row being read (one random page read per row on the owner's
+    /// tested without its table row being read (one random page read per row on the reference
     /// catalog, `docs/research/2026-11-14-window-reads-and-launch.md`); and the launch's
     /// maintenance writes find their few rows through partial indexes, never a table walk.
     @Test func theWindowReadsTestRowsInTheirIndexesAndLaunchWritesFindTheirRowsByIndex() async throws {
@@ -512,7 +522,7 @@ struct CatalogStoreQueryPlanTests {
         let tested: Set = ["pending_trash_batch_unix_ms", "awaiting_presence", "hidden_by_source", "best_kind", "content_identifier"]
         var orderQueries: [(String, SQLQuery)] = []
         // Every sort the window offers (v66 for name and size): sorting All Media by name walked
-        // a name index of the key alone, 152,822 pages on the owner's catalog.
+        // a name index of the key alone, 152,822 pages on the reference catalog.
         let sorts: [(MediaSortField, String)] = [(.bestDate, "best_capture"), (.name, "name"), (.size, "size")]
         for (field, prefix) in sorts {
             for (direction, suffix) in [(MediaSortDirection.descending, "desc"), (.ascending, "asc")] {
@@ -560,6 +570,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(editsPlan.contains("USING INDEX idx_media_asset_unrendered_edit"), "\(editsPlan)")
     }
 
+    // Validates: ENR-027
     /// Search's reads (ADR 0048): what is owed walks each root's assets by an index and looks
     /// each up in the embedding table by its key; what is current is read by the embedding
     /// table's key, each asset looked up by its own. Nothing scans a table whole.
@@ -587,6 +598,7 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: ENR-032
     /// The description writer's reads (ADR 0053): its candidates walk the roots' stills by the
     /// asset key, and each still's faces, people, place, readings and description row are
     /// found by their own keys — no table but `media_asset` is scanned.
@@ -620,6 +632,7 @@ struct CatalogStoreQueryPlanTests {
         }, "\(keyed)")
     }
 
+    // Validates: ENR-028
     /// v53's one-time cleanup visits each text reading once, as it must to find the empty ones,
     /// and finds each reading's asset by the asset's key: it never scans `media_asset`.
     @Test func theEmptyTextReadingsCleanupFindsEachAssetByItsKey() async throws {
@@ -636,7 +649,7 @@ struct CatalogStoreQueryPlanTests {
     /// The filter's options are read over the shown row's scope (APP-013, APP-025), whatever
     /// that row is, in one walk of the scope's rows with each row's kind, format and located
     /// cell — never a scan of every row, every location or every search row, and never a
-    /// table row. Measured on the owner's 166,554-photo catalog (2026-11-13): every row's reads
+    /// table row. Measured on the reference library's 166,554-photo catalog (2026-11-13): every row's reads
     /// about a second at most warm, the same scale as the every-source read they replace. The
     /// languages read scans only `place_cell`, one row per named cell.
     @Test func theOptionsReadsOfEveryRowAreIndexDriven() async throws {
@@ -700,9 +713,10 @@ struct CatalogStoreQueryPlanTests {
         #expect(!languagesPlan.contains("media_asset") && !languagesPlan.contains("asset_metadata"))
     }
 
+    // Validates: APP-060, APP-083
     /// Duplicates group copies by digest through the digest index alone: the copies read and
     /// the Duplicates scope's group subquery never visit a row without a digest and never
-    /// group through a temporary B-tree. On the owner's catalog (2026-11-14) the copies read
+    /// group through a temporary B-tree. On the reference catalog (2026-11-14) the copies read
     /// fell from 1.4 s to 0.04 s warm, since most of its rows, an Immich account's, have none.
     @Test func duplicatesGroupThroughTheDigestIndex() async throws {
         let temp = try makeTestDirectory()
@@ -736,9 +750,10 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-072
     /// Whether a row holds a face of one person is answered with one seek by person and
     /// photo, never by walking every face of the person: the likeness a person's photos are
-    /// ordered by and the People filter, for one library and for several. On the owner's
+    /// ordered by and the People filter, for one library and for several. On the reference
     /// catalog (2026-11-14: 147,024 rows of one account, 14,614 faces of its most
     /// photographed person) the walk never let a person's photos open. The person's photos
     /// themselves are found from the person's faces, once each: a narrow scope
@@ -812,6 +827,7 @@ struct CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-069
     /// On This Day's left-out photos are sought by each row's key, never by a scan of every
     /// search row — which a `NOT IN` list did once per outer row when the read started from
     /// the place cells (the filter's place options).
@@ -832,13 +848,14 @@ struct CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN search_embedding"))
     }
 
-    /// On a catalog of the owner's shape, On This Day's read seeks the day's rows and, for
+    // Validates: APP-069
+    /// On a catalog of the reference shape, On This Day's read seeks the day's rows and, for
     /// each, its search row by key; the check that the row is current for the photo's
     /// thumbnail reads the asset row the media choice is read from, so the read seeks
     /// `media_asset` once, through the day's index, and scans nothing. A label write's own
     /// question of one photo finds the asset and its search row by their keys.
-    @Test func onThisDaysCurrentLabelsAreSoughtByKeyOnAnOwnerShapedCatalog() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+    @Test func onThisDaysCurrentLabelsAreSoughtByKeyOnAReferenceShapedCatalog() async throws {
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
         let dbQueue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         let match = try #require(AnniversaryMatch.years(for: CalendarDay(year: 2026, month: 11, day: 16)))
         let (read, write) = try await dbQueue.read { db in
@@ -870,6 +887,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(writeLines.contains { soughtByKey(Substring($0)) }, "\(write)")
     }
 
+    // Validates: APP-069
     /// On This Day's years-or-months match seeks the day's rows in earlier years through the
     /// day's index, bounded by the year's start, never by a scan or a walk of every row.
     @Test func onThisDaysYearRowsAreSoughtThroughTheDayIndex() async throws {
@@ -1227,6 +1245,7 @@ private func usesTemporarySort(_ plan: String) -> Bool {
 }
 
 extension CatalogStoreQueryPlanTests {
+    // Validates: APP-089, ENR-026
     /// ADR 0047: what is owed faces is read from partial indexes over only the rows that owe
     /// them, never a walk of every row, which the preview reader's candidates and People's
     /// unchecked count each did on every catalog change. Each query states its index's
@@ -1265,6 +1284,7 @@ extension CatalogStoreQueryPlanTests {
 }
 
 extension CatalogStoreQueryPlanTests {
+    // Validates: ENR-021, ENR-027
     /// ADR 0009: every background owner's walk is a range of one index it names, in that
     /// index's order, so a page never sorts and never restarts from the first row. A newest-first
     /// walk's three phases each read a range of the window's date order index; a key walk seeks
@@ -1284,7 +1304,7 @@ extension CatalogStoreQueryPlanTests {
         // Each walk and the source indexes its derived rows are found in without a table read.
         // SQLite names the walk's index plain `INDEX`, not `COVERING INDEX`, because the order
         // column is a generated one; the row a walk tests is still read from the index alone
-        // (8.9k pages for the owner-shaped catalog's whole embedding walk, against 253k).
+        // (8.9k pages for the reference-shaped catalog's whole embedding walk, against 253k).
         struct Walk {
             let name: String
             let sql: @Sendable (String, String) -> String
@@ -1327,9 +1347,10 @@ extension CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-065
     /// v65: the rows an account owes its source's images are walked from the partial index of
     /// exactly those rows, so an account whose images are current reads none (it read every row
-    /// of the owner's 147,064, 10.7–12.2 s cold).
+    /// of the reference library's 147,064, 10.7–12.2 s cold).
     @Test func sourceProductCandidatesWalkTheirPartialIndex() async throws {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)
@@ -1342,7 +1363,7 @@ extension CatalogStoreQueryPlanTests {
 
     /// The rows on screen owed their source's images are read by key, one seek a row: ranging
     /// the account's source-item index visited all of its rows (406 ms for 120 rows on the
-    /// owner's catalog, 24 ms by key).
+    /// reference catalog, 24 ms by key).
     @Test func visibleSourceProductCandidatesSeekTheirKeys() async throws {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)
@@ -1353,6 +1374,7 @@ extension CatalogStoreQueryPlanTests {
         #expect(!plan.contains("SCAN"), "\(plan)")
     }
 
+    // Validates: ARC-022
     /// v71: a wide scope filtered to Liked or Disliked rows seeks the chosen rows' index and
     /// sorts the few it finds, for its order and its count, in every order, and returns them in
     /// the order the walk would; a filter that takes Not Rated rows walks the order.
@@ -1412,8 +1434,9 @@ extension CatalogStoreQueryPlanTests {
         }
     }
 
+    // Validates: APP-081
     /// ADR 0054: the mirror probe walks the library outer and seeks the account's
-    /// size index inner. The other order walked every account row (over 75 s on the owner's
+    /// size index inner. The other order walked every account row (over 75 s on the reference
     /// catalog against 0.16 s), so the order itself is asserted, not only the index.
     @Test func theMirrorProbeWalksTheLibraryAndSeeksTheAccount() async throws {
         let dbQueue = try DatabaseQueue()
@@ -1431,6 +1454,7 @@ extension CatalogStoreQueryPlanTests {
 }
 
 extension CatalogStoreQueryPlanTests {
+    // Validates: ARC-022
     /// Every order a wide scope can ask for — each sort, under each filter the window offers —
     /// walks its order index in order, sorts nothing, and tests each row it walks from that
     /// index entry and the indexes its plan names (a person's faces, a place's cell), never
@@ -1439,9 +1463,9 @@ extension CatalogStoreQueryPlanTests {
     /// `media_asset`'s and `asset_metadata`'s tables. With no filter, a scope of whole libraries
     /// visits about one index entry per row it returns. A filter of chosen rows only (Liked,
     /// Disliked) seeks them and sorts the few it finds, as a narrow scope does. On a generated
-    /// catalog of the owner's shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
+    /// catalog of the reference shape (`docs/research/2026-11-17-every-order-the-window-asks-for.md`).
     @Test func everyOrderOfAWideScopeWalksItsIndexAndReadsNoTableRow() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
         let path = catalog.databaseURL.path(percentEncoded: false)
         let queue = try makeTestDatabaseQueue(path: path)
         let (picks, trees) = try await queue.write { db in
@@ -1632,11 +1656,11 @@ extension CatalogStoreQueryPlanTests {
 
     /// Step 5 of plan 0117 turns the asset-key predicate into one typed predicate; before any
     /// text changes, every statement that names the key has its plan recorded, on a catalog of
-    /// the owner's shape. Any later edit that changes a plan fails here, and so does a
+    /// the reference shape. Any later edit that changes a plan fails here, and so does a
     /// statement added or removed without its recording. A changed plan is re-recorded only
     /// deliberately: a failing run writes every current plan to the file its last issue names.
     @Test func everyStatementThatNamesAnAssetsKeyKeepsItsRecordedPlan() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
         let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         let statements = Self.assetKeyStatements
         #expect(Set(statements.map(\.name)).count == statements.count)
@@ -1670,7 +1694,7 @@ private enum AssetKeyPlans {
 
     static let header = """
     # The query plan of every runtime statement that names an asset's key, on a generated
-    # catalog of the owner's shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
+    # catalog of the reference shape (CatalogStoreQueryPlanTests.assetKeyStatements). A change
     # here is a changed plan: record it only on purpose, from the file the failing run names.
 
     """

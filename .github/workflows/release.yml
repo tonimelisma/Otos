@@ -1,18 +1,18 @@
-# Publishes every main commit whose CI passed and that changes the app as an update of the
-# installed app (ADR 0059): script/release.sh builds it on GitHub's xcode-27 runner, signs it
-# with the owner's Apple Development certificate and with Otos's EdDSA update key, and publishes
-# it as the release v<x.y.z> with Sparkle's feed. Installed copies find it within the hour.
+# Publishes every main commit that changes the app as an update of the installed app (ADR 0059),
+# and only once that commit's `CI gate` has passed (ADR 0062). It starts on the push itself, beside
+# CI: script/release.sh builds, signs and launch-checks the app on GitHub's xcode-27 runner while
+# CI runs, then waits for CI's `CI gate` on the same commit and publishes only if it succeeded.
+# A failed gate publishes nothing; a cancelled one (a newer push superseded it) is skipped.
 #
-# It runs after CI, and only for a push to main that CI passed: a pull request, whoever opened
-# it, never reaches this workflow or its secrets. The secrets live in Azure Key Vault
-# <vault>, managed from the owner's private repository <secrets-repo>. The job's
-# first step signs in keylessly: GitHub's OIDC token for this job is exchanged for a vault token
-# of the Entra app gh-otos-release, which trusts only repo:tonimelisma/Otos:environment:release
-# and may read only these secrets. The environment "release" needs no secrets, only the
-# variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_KEY_VAULT, and the owner can require an
-# approval there. The step masks each value and puts it in the job's environment:
-#   OTOS_CERTIFICATE_P12        the "Apple Development" certificate and its private key, .p12,
-#                               base64 (vault secret apple-development-p12-base64)
+# Only a push to main reaches this workflow, and the `release` environment admits only main (its
+# deployment branch policy), so a pull request, whoever opened it, never reaches its secrets.
+# The secrets live in Azure Key Vault. The job's first step signs in keylessly: GitHub's OIDC
+# token for this job is exchanged for a vault token of an Entra app that trusts only
+# repo:tonimelisma/Otos:environment:release and may read only these secrets. The environment
+# holds no secrets, only the variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_KEY_VAULT. The
+# step masks each value and puts it in the job's environment:
+#   OTOS_CERTIFICATE_P12        the maintainer's "Apple Development" certificate and its private
+#                               key, .p12, base64 (vault secret apple-development-p12-base64)
 #   OTOS_CERTIFICATE_PASSWORD   that export's password (apple-development-p12-password)
 #   OTOS_DEVELOPMENT_TEAM       the team ID, kept out of the repository (apple-development-team)
 #   OTOS_SPARKLE_PRIVATE_KEY    the update key (Sparkle's generate_keys -x; otos-sparkle-private-key);
@@ -21,9 +21,7 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
@@ -36,12 +34,12 @@ concurrency:
 jobs:
   release:
     name: Publish Update
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: xcode-27
     timeout-minutes: 60
     environment: release
     permissions:
       contents: write # the release and its assets
+      checks: read # this commit's `CI gate`
       id-token: write # the OIDC token the vault sign-in exchanges
     steps:
       - name: Fetch release secrets from Azure Key Vault
@@ -96,22 +94,27 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check out the commit CI passed
+      - name: Check out the pushed commit
         if: steps.ready.outputs.ready == 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           # The build number is the commit count.
           fetch-depth: 0
           persist-credentials: false
 
       - name: Select the newest Xcode 27
+        id: xcode
         if: steps.ready.outputs.ready == 'true'
-        run: |
-          set -euo pipefail
-          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
-          sudo xcode-select --switch "$xcode/Contents/Developer"
-          xcodebuild -version
+        run: script/ci-select-xcode.sh >> "$GITHUB_OUTPUT"
+
+      # The resolved Swift packages main's Build Cache saved for these pins, so the build
+      # fetches none of them again; script/release.sh seeds its own folder from them.
+      - name: Restore the resolved packages
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('Otos.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: The signing certificate, in a keychain of this run's own
         id: keychain
@@ -148,7 +151,7 @@ jobs:
             keep && inside { print }
             keep && /END CERTIFICATE/ { exit }' > "$RUNNER_TEMP/cert.pem"
           if ! security verify-cert -c "$RUNNER_TEMP/cert.pem" -p codeSign -R ocsp -R require; then
-            echo "::warning::Apple's revocation check did not accept the certificate in OTOS_CERTIFICATE_P12 (verify-cert's reason above). If Xcode then refuses it as revoked or expired, export the newest valid one into the vault (<secrets-repo>)."
+            echo "::warning::Apple's revocation check did not accept the certificate in OTOS_CERTIFICATE_P12 (verify-cert's reason above). If Xcode then refuses it as revoked or expired, export the newest valid one into the vault."
           fi
           rm -f "$RUNNER_TEMP/cert.pem"
           echo "identity=$identity" >> "$GITHUB_OUTPUT"
@@ -168,7 +171,7 @@ jobs:
       # generated media only.
       - name: Upload the launch check's captures
         if: ${{ always() && steps.ready.outputs.ready == 'true' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-captures-${{ github.run_id }}
           path: build/release-captures/

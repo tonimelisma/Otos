@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The English reading of a query in a language Apple Translation does not offer (Estonian):
 /// the words a glossary written for Otos holds become English, and every other word stays as
-/// typed for SigLIP 2's multilingual tower. On the owner's library, Estonian picture queries
+/// typed for SigLIP 2's multilingual tower. On the reference library, Estonian picture queries
 /// scored recall@10 80 read this way, 49 as typed, against 85 for the same queries in English
 /// (`docs/research/2026-11-09-keyword-search.md` §9).
 ///

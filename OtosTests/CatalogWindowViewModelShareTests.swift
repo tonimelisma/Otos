@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelShareTests {
+    // Validates: APP-036
     @Test func gridSharesOrderedSelection() {
         let model = makeShareModel()
         let ids = makeIDs(count: 4)
@@ -20,6 +21,7 @@ struct CatalogWindowViewModelShareTests {
         #expect(model.currentTargetFileURLs == [ids[0].fileURL, ids[2].fileURL])
     }
 
+    // Validates: APP-036
     @Test func loupeSharesFocusedAsset() {
         let model = makeShareModel()
         let ids = makeIDs(count: 3)
@@ -32,6 +34,7 @@ struct CatalogWindowViewModelShareTests {
         #expect(model.currentTargetFileURLs == [ids[1].fileURL])
     }
 
+    // Validates: APP-036
     @Test func compareSharesActivePane() {
         let model = makeShareModel()
         let ids = makeIDs(count: 3)
@@ -45,6 +48,7 @@ struct CatalogWindowViewModelShareTests {
         #expect(model.currentTargetFileURLs == [ids[0].fileURL])
     }
 
+    // Validates: APP-036
     @Test func noTargetPresentsNothing() {
         let model = makeShareModel()
         model.applyState(shareWindowState(ids: makeIDs(count: 2)))

@@ -59,7 +59,7 @@ Map view mode.
   and a stack's box takes in another stack's items. It is not written to the browser
   place; a relaunch reopens the map. Neither leaf is a sidebar row; the sidebar keeps
   Places highlighted for them (`sidebarRow`).
-- **A click drills in; a double-click opens** (owner decision, 2026-11-12). A click on a
+- **A click drills in; a double-click opens**. A click on a
   stack zooms into it, as a click on a cluster does on nearly every map; one whose
   members share a coordinate, which no zoom can split, opens. A double-click opens the
   stack. The map has no selection. A stack's tap acts only on a click AppKit counts as
@@ -117,7 +117,7 @@ Map view mode.
   carries it. MapKit's `MapCameraBounds` is rejected: it bounds only the center, and with
   any bound MapKit's pan stops the center at the antimeridian going east while wrapping
   going west (`MapClusterPolicy.panBand`, `keptInside`; the satellite globe, the one MapKit view
-  that zooms out to the whole Earth, was rejected by the owner on 2026-11-13,
+  that zooms out to the whole Earth, was rejected on 2026-11-13,
   `docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 - **The map is not a view mode; the modes open its area.** While the map shows, the
   view-mode picker selects no segment, and choosing one — or ⌘1 / ⌘2 / ⌘3 — opens the
@@ -159,7 +159,7 @@ The first build opened a grid only from a stack whose members shared one coordin
 and zoomed every other stack by at most a quarter of the viewport.
 
 Cons: photos taken a few meters apart never share a coordinate, so reaching them took
-one double-click per zoom step — the owner counted seventeen (2026-11-01). Photos, Mylio
+one double-click per zoom step — seventeen in one count (2026-11-01). Photos, Mylio
 and Lightroom Classic's Visible on Map filter all show an area's photos at whatever
 zoom the user stopped at.
 
@@ -208,9 +208,9 @@ SwiftUI annotations cannot keep up.
 ### Joining `asset_metadata` by its key alone
 
 The first build joined each located row's `asset_metadata` row by key and rejected an index,
-measured on a 16,254-row catalog in 30 ms warm. At the owner's size it is most of Places'
+measured on a 16,254-row catalog in 30 ms warm. At the reference size it is most of Places'
 first paint: the row that holds the coordinate also holds the metadata record, so the join
-read nearly the whole table — 59,151 pages for 50,000 located rows of an owner-shaped
+read nearly the whole table — 59,151 pages for 50,000 located rows of a reference-shaped
 catalog of 166,000, against 2,778 with `idx_asset_metadata_location`, which holds the key and
 the coordinate of the located rows (`docs/research/2026-11-15-places-first-paint.md`). An
 area joins through the same index and reads a table row, for the virtual place cells it tests,
@@ -255,7 +255,7 @@ Nothing is replaced. The empty-state drawing moved from `MediaGridView` to the s
 - `docs/design/design-system.md`: DES-103, DES-104, DES-105; `docs/design/places.md`.
 - `docs/architecture.md`: dataflow, ViewModel row, where-to-change row.
 - `docs/research/2026-10-31-map-views-in-photo-managers.md`.
-- `docs/product/roadmap.md`: reverse geocoding, geotag editing, nearby, show-on-map.
+- the idea pile ([issue #52](https://github.com/tonimelisma/Otos/issues/52)): reverse geocoding, geotag editing, nearby, show-on-map.
 
 ## Reversal Plan
 

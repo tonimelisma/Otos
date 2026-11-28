@@ -8,11 +8,11 @@
 Most of Otos's work runs unasked: enrichment reads every photo (thumbnails, previews,
 details, digests), the materializer downloads cloud originals, faces are found and put
 together into people, places named, search prepared, photos described, duplicates
-grouped, details re-read after a parser fix, and each Immich account synced. On the owner's
+grouped, details re-read after a parser fix, and each Immich account synced. On the reference
 cloud library some of it lasts hours. Before this ADR none of it was visible except People's
 unchecked tally (DES-109), search's still-reading count inside an empty result (DES-108) and
-an account's status in Settings. The owner asked where a user could see what is going on,
-and when, unintrusively, and chose a sidebar line plus scope lines from six options
+an account's status in Settings. A user needs to see what is going on,
+and when, unintrusively; a sidebar line plus scope lines was chosen from six options
 (2026-11-21: a footer at the grid's end, a Window ▸ Activity panel, a toolbar indicator, and a
 per-photo Info section were the others).
 
@@ -44,8 +44,8 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    parked (`WorkProgress.counted`'s `parked`, the items that wait out a failure or are being
    tried again). Busy alone is not enough: an owner retrying parked items is busy, and a retry
    that fails moves nothing — read as work, a library with a thousand paced rows flipped its
-   row between working and waiting at every retry (owner, 2026-11-27: "why does its progress
-   bar disappear and reappear all the time"). A kind is paused while every owner moving it
+   row between working and waiting at every retry, its progress bar disappearing and
+   reappearing all the time. A kind is paused while every owner moving it
    waits on a hold. A kind that cannot move waits while something stops it or items it has
    left are parked, and keeps waiting, with what stopped it still said, through its owners'
    retries until it has finished an item more than when it began to wait — a fact its count
@@ -54,12 +54,11 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    it work. An owner that groups a kind's finished items (`Watched.Role.grouping`: People's
    assignment, the duplicate groups) has no count; while only it moves the kind, the row says
    that it groups (`Grouping faces into people`, `Grouping duplicates`), draws a spinner in
-   place of a bar, and keeps its count only while items are left (owner, 2026-11-28). The board keeps when a kind's stretch of work began, which only orders the line;
-   no time is shown. The owner rejected a list of finish times (2026-11-21: "it's a status
-   window. not when something was done"). An Immich account reads syncing or connecting
+   place of a bar, and keeps its count only while items are left. The board keeps when a kind's stretch of work began, which only orders the line;
+   no time is shown. A list of finish times was rejected (2026-11-21): it is a status
+   window, not a record of when something was done. An Immich account reads syncing or connecting
    (working), offline (waiting), signed out (needs you), or online (up to date).
-3. **A problem is said only when the user would notice it** (owner, 2026-11-27: "why are we
-   showing these to the user? what does the user care about?";
+3. **A problem is said only when the user would notice it** (what the user cares about;
    `docs/research/2026-11-27-activity-and-the-hig.md`). Every round asks each watched owner
    what stops its work (`QuiescentOwner.troubles()`, `OwnerTrouble`), and the cause carries
    its standing (`OwnerTrouble.Standing`):
@@ -110,9 +109,9 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    Enrichment is one walk serving four of these; each owed row is filed under exactly one
    (`EnrichmentPurpose`: a thumbnail, a video's faces, the photo info, the digest, the first
    that applies), alike in Swift at the claim and in SQL in the count
-   (`EnrichmentClaimGateway.purposeSQL`). The owner rejected names that hid the work —
-   `Showing photos`, `Finding people`, `Reading details` for three unrelated jobs (2026-11-27:
-   "Reading details is also incredibly obscure") — and `Making thumbnails` while it counted an
+   (`EnrichmentClaimGateway.purposeSQL`). Names that hid the work were rejected —
+   `Showing photos`, `Finding people`, `Reading details` for three unrelated jobs (2026-11-27;
+   `Reading details` is obscure) — and `Making thumbnails` while it counted an
    account's details as thumbnails still to make ("it doesn't make any sense"). Downloads are a
    means, not an outcome, so they are no row. `BackgroundOwnerSet.activityOwners()` is the one
    map from owner to kind; one owner can serve several kinds, each counted and stopped apart
@@ -121,8 +120,7 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    People gallery's tally and the derived folder's launch tidy are machinery and are not
    watched. Work that has its own surface — an import, Move to Trash, export, reorganization, a
    pane's download — is not listed (one fact, one owner).
-5. **Every row says how much is left, exactly** (owner, 2026-11-26: "each should give the
-   actual progress", "shouldn't each of these have a progress bar?"). Each kind has one owner
+5. **Every row says how much is left, exactly**, with a progress bar (2026-11-26). Each kind has one owner
    that counts its work, or several whose counts it sums (`QuiescentOwner.progress(for:)`,
    `WorkProgress.counted`): the items each has finished, counted at each write the catalog
    accepted (`OwnerActivity.finished`; enrichment counts the rows of a fully applied batch by
@@ -136,16 +134,16 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
    at a glance, where `19,659 of 20,715` named a total from when the stretch began that matched
    nothing they knew. A fall of the count is not work done: an item stops being owed when its
    facts change again or its row goes, and a writer whose every attempt failed had read as
-   thousands done (owner, 2026-11-26: "Whatever the problem the status needs to be right!"). A
+   thousands done; whatever the problem, the status is right (2026-11-26). A
    row draws its determinate bar only while it works; a paused or waiting row keeps its count
-   and draws none ("It cant give a progress bar if theres none"). A row draws one indicator:
+   and draws none: there is no progress to show. A row draws one indicator:
    its bar while it works, a spinner only while it works with nothing counted, a warning while
    it needs the user, none while it waits (HIG Progress indicators: never switch between a
    spinner and a bar). A failed count publishes nothing new (ADR 0032 rule 4). No row shows a
    percentage, a remaining time or a rate: every number is a count Otos holds.
 6. **Only what runs or waits is listed.** The popover lists the kinds and accounts that work,
    are paused, wait or need the user, and says `Everything else is up to date` for the rest
-   (owner, 2026-11-21: "Only running or stuck"). Apple's Feedback guidance is that people expect
+   (2026-11-21: only running or stuck). Apple's Feedback guidance is that people expect
    a task to succeed and need to hear only when it does not; nine `Up to date` rows hid the two
    that mattered.
 7. **One place to look, plus the scope's own line.** The sidebar's foot carries the Activity
@@ -162,8 +160,7 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
   every ring is as current as the last ring.
 - **The view model polls `ownerStatuses()`.** A poll stands in for facts the owners can
   report (ADR 0033).
-- **A bare `Waiting to try again`.** Shipped first and rejected by the owner ("I don't know
-  any of these statuses"): it names neither the problem nor what happens next, which the
+- **A bare `Waiting to try again`.** Shipped first and rejected as unreadable: it names neither the problem nor what happens next, which the
   HIG asks of a stalled process (Progress indicators), and it was inferred from a backoff
   wake that cannot say why it was armed.
 - **Every kind listed, `Up to date` included.** Shipped first; replaced by decision 6.
@@ -179,7 +176,7 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
   with a problem naming its source, says it without repeating every kind under every
   library and account.
 - **Only the counts Otos already held** (People's tally, the items a trouble stops). Shipped
-  first and rejected by the owner: a spinner beside `Reading photos` said neither what the
+  first and rejected: a spinner beside `Reading photos` said neither what the
   work was nor how far it had come. Each count is one COUNT over a partial index that already
   exists, read only when its owner's work moved.
 - **A total of the whole library per kind.** Its eligible set is a second predicate per kind
@@ -189,7 +186,7 @@ and where it is shown. It defers each owner's work and its holds to its own ADR 
   item), so a written count is not an item count.
 - **A toolbar indicator.** DES-040 keeps operation status out of the toolbar, and something
   is enriching nearly always, so it would be a permanently busy control in the chrome.
-- **Start and finish times per kind.** Shipped first and rejected by the owner: a list of
+- **Start and finish times per kind.** Shipped first and rejected: a list of
   when things finished does not say whether anything is still owed, and the user asks
   "is it done, working, or stuck", not "when".
 - **Holding a short job on screen for a minimum time.** Time standing in for a fact (ADR 0033);

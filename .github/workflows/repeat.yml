@@ -1,10 +1,13 @@
-# Runs one test suite many times on GitHub's Xcode 27 runner, stopping at its first failure
-# (script/check.sh --only with OTOS_TEST_ITERATIONS, ADR 0044 item 19). A cloud session's only
-# Mac is CI, so this is how it reproduces a failure that shows only sometimes. It is a
-# diagnosis run, started by hand, and outside the five-minute budget of a commit's check.
+# Runs a test suite many times on GitHub's Xcode 27 runner, stopping at its first failure
+# (script/check.sh --only with OTOS_TEST_ITERATIONS, ADR 0044 item 19). By hand, it is how a
+# session reproduces a failure that shows only sometimes. Weekly on main, it repeats the suites
+# that have failed only sometimes before (docs/lessons.md), so a flake that returns is seen
+# without waiting for it to fail a pull request. Outside a commit's check.
 name: Repeat A Suite
 
 on:
+  schedule:
+    - cron: "47 8 * * 3"
   workflow_dispatch:
     inputs:
       suite:
@@ -22,26 +25,28 @@ permissions:
 
 jobs:
   repeat:
-    name: Repeat A Suite
+    name: Repeat ${{ matrix.suite }}
     runs-on: xcode-27
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        # By hand: the one suite asked for. Weekly: the suites that have flaked.
+        suite: ${{ fromJSON(github.event_name == 'schedule' && '["StallReproductionTests", "RemovableVolumeMonitorLiveDiskImageTests", "MediaOperationCoordinatorTests", "CatalogProjectionShownFirstTests"]' || format('["{0}"]', inputs.suite)) }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Select the newest Xcode 27
         id: xcode
-        run: |
-          set -euo pipefail
-          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -n 1)"
-          sudo xcode-select --switch "$xcode/Contents/Developer"
-          xcodebuild -version
-          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+        run: script/ci-select-xcode.sh >> "$GITHUB_OUTPUT"
 
       - name: Restore the build caches
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
@@ -54,8 +59,8 @@ jobs:
       - name: Repeat the suite
         timeout-minutes: 110
         env:
-          SUITE: ${{ inputs.suite }}
-          OTOS_TEST_ITERATIONS: ${{ inputs.iterations }}
+          SUITE: ${{ matrix.suite }}
+          OTOS_TEST_ITERATIONS: ${{ inputs.iterations || '20' }}
           OTOS_CHECK_FAST_GATES: ubuntuJobs
         run: |
           set -euo pipefail
@@ -64,9 +69,9 @@ jobs:
 
       - name: Upload check logs
         if: ${{ !success() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: repeat-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: repeat-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
           path: logs/
           if-no-files-found: warn
           retention-days: 14

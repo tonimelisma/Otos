@@ -10,8 +10,8 @@ import Foundation
 /// 112 × 112 RGB face, with the model's normalisation folded into the image input, and returns
 /// a 512-d `FaceEmbedding`; two faces of one person have a high cosine.
 ///
-/// Chosen on the owner's labelled photos (`docs/research/2026-11-07-face-recognition-models.md`):
-/// it never mistook one of the owner's children for a sibling, and 8-bit weights changed no
+/// Chosen on a private labelled set (`docs/research/2026-11-07-face-recognition-models.md`):
+/// it never mistook one child for a sibling, and 8-bit weights changed no
 /// decision on a child's face against full precision.
 ///
 /// Owned by `FaceAnalyzer`, which runs it on its own serial queue.
@@ -72,7 +72,7 @@ nonisolated struct FaceEmbedding: Sendable, Equatable {
     let values: ArraySlice<Float>
 
     /// How far a stored embedding's squared length may sit from 1: every embedding in the
-    /// owner's catalog is within 2.2e-7 of it, as float rounding leaves a scaled vector.
+    /// reference catalog is within 2.2e-7 of it, as float rounding leaves a scaled vector.
     private static let storedTolerance: Float = 1e-4
 
     /// `values` scaled to unit length; nil unless there are `FaceEmbeddingModel.dimensions`

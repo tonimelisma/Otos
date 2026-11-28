@@ -3,7 +3,7 @@ import Foundation
 import Synchronization
 import Testing
 
-/// The tour measures the app the owner uses, so it must start every background owner unless
+/// The tour measures the app the user uses, so it must start every background owner unless
 /// a tour asks otherwise, take each step through the window's own intents, wait on what the
 /// window reports, and leave the window as it found it.
 @Suite(.testScope)
@@ -69,7 +69,7 @@ struct SmokeTourTests {
     }
 
     /// The wait for a sandbox library's first walk has a deadline of its own, longer than a
-    /// step's by default: a walk of the owner's library size takes minutes on a loaded Mac.
+    /// step's by default: a walk of the reference library's size takes minutes on a loaded Mac.
     @Test func theLibrarysFirstWalkHasADeadlineOfItsOwn() throws {
         let tour = [SmokeTour.tourVariable: "1"]
         let defaults = try #require(SmokeTour.Configuration(environment: tour))
@@ -172,6 +172,7 @@ struct SmokeTourTests {
         #expect(viewModel.showsLaunchDuplicates)
     }
 
+    // Validates: APP-043
     /// A tour reads the user's preferences and writes none: its domain is session-only over
     /// the user's own, and every other launch uses the user's own.
     @Test func aTourSessionsPreferencesAreSessionOnly() {
@@ -180,6 +181,7 @@ struct SmokeTourTests {
         #expect(PreferencesDomain.configured(environment: [SmokeTour.tourVariable: "0"]) == .standard)
     }
 
+    // Validates: APP-043
     /// A session-only store reads through to its base until it writes or removes a key, and
     /// never writes the base.
     @Test func aSessionOnlyStoreReadsTheBaseAndWritesOnlyMemory() throws {

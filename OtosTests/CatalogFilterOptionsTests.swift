@@ -5,6 +5,7 @@ struct CatalogFilterOptionsTests {
     private let jpeg = MediaFormatToken(rawValue: "JPEG")
     private let arw = MediaFormatToken(rawValue: "ARW")
 
+    // Validates: APP-013
     /// File types carry MediaMetadata's names (ADR 0039): every spelling of one type is one
     /// token, so it is one filter row, and a token restored from an older build is renamed.
     @Test func fileTypesTakeTheLibrarysNames() {
@@ -19,6 +20,7 @@ struct CatalogFilterOptionsTests {
         #expect(options.formats(for: .image, holding: .all) == [MediaFormatToken(rawValue: "HEIF"), jpeg])
     }
 
+    // Validates: APP-025
     /// The reported case: a RAW filter chosen in one library, then a scope — or a whole
     /// catalog — with no ARW in it. The filter still names ARW, so ARW still has a row
     /// under RAW, ticked, where it can be cleared.
@@ -34,6 +36,7 @@ struct CatalogFilterOptionsTests {
         #expect(cleared == .all)
     }
 
+    // Validates: APP-013
     @Test func selectingAWholeKindReplacesItsChildFileTypes() {
         let options = filterOptions()
         let formatOnly = MediaFilter.all.settingFileType(jpeg, kind: .image, included: true, options: options)
@@ -67,6 +70,7 @@ struct CatalogFilterOptionsTests {
         #expect(filter == MediaFilter(kinds: [.image]))
     }
 
+    // Validates: APP-025
     /// Every kind is one choice, present or not, so "all of them" is the same everywhere.
     @Test func selectingEveryKindCanonicalizesToAllItems() {
         let twoKinds = MediaFilter.all.settingKind(.image, included: true).settingKind(.video, included: true)
@@ -89,6 +93,7 @@ struct CatalogFilterOptionsTests {
         ])
     }
 
+    // Validates: APP-013
     /// People and Places show their head: the first five rows, any checked row past them,
     /// and the whole list once expanded; Show All is offered only past five rows.
     @Test func aLongListShowsItsHeadAndEveryCheckedRow() {

@@ -19,7 +19,7 @@ applies it?
 The code of `CatalogWindowViewModelTrash`, `MediaTrashCoordinator`, `FileMaterialization`,
 `MaterializationCoordinator.locality(of:)`, the grid's tile-detail read and the Info pane's
 locality read; ADR 0008; and tests that deliver each interleaving at its exact suspension.
-Nothing was run on the installed app or the owner's data.
+Nothing was run on the installed app or the reference data.
 
 ## What answers the question
 
@@ -83,7 +83,7 @@ for one `lstat` per command — and the command would still wait on it. Rejected
 (a), the one a blank-slate build would have: the question is a property of the targets, read
 when they change, as the Open With menu and the Info pane already are; the command decides in
 its own step from what was read; a command with nothing read for it waits as before. Listed as
-an owner decision: the question is answered from the targets' locality as read when the
+a product decision: the question is answered from the targets' locality as read when the
 targets last changed, not at the keypress.
 
 ## Verification
@@ -95,5 +95,5 @@ the reading moves without the question; a file downloaded since is still asked a
 
 ## Not established
 
-- The lane's read time at owner scale (a select-all of 166,000 items) was not measured.
+- The lane's read time at reference scale (a select-all of 166,000 items) was not measured.
 - Nothing was verified on the installed app.

@@ -6,6 +6,7 @@ import Testing
 /// equal paths are equal however and wherever they were made, IDs of different paths differ,
 /// and an ID gives back exactly the paths it was made from.
 struct MediaAssetIdentityTests {
+    // Validates: ARC-070
     @Test func idsMadeFromEqualPathsAreEqualAndGiveBackTheirPaths() {
         let root = LibraryRootPath(rawValue: "/Volumes/Photos/Library \(UUID().uuidString)")
         let otherRoot = LibraryRootPath(rawValue: root.rawValue + "-other")
@@ -31,6 +32,7 @@ struct MediaAssetIdentityTests {
         #expect(ids.count == paths.count)
     }
 
+    // Validates: ARC-070
     /// A path's two Unicode spellings are two paths, as `MediaRelativePath` compares them.
     @Test func twoSpellingsOfAPathAreTwoIdentities() {
         let root = LibraryRootPath(rawValue: "/Spellings/\(UUID().uuidString)")
@@ -40,6 +42,7 @@ struct MediaAssetIdentityTests {
         #expect(MediaAssetID(libraryRootPath: root, relativePath: composed) != MediaAssetID(libraryRootPath: root, relativePath: decomposed))
     }
 
+    // Validates: ARC-070
     /// Many tasks naming the same paths at once agree on every identity.
     @Test func concurrentReadsOfTheSamePathsMakeEqualIDs() async {
         let root = LibraryRootPath(rawValue: "/Concurrent/\(UUID().uuidString)")
@@ -63,6 +66,7 @@ struct MediaAssetIdentityTests {
         #expect(Set(made[0]).count == paths.count)
     }
 
+    // Validates: ARC-070
     /// A diagnostic or a test's message names the asset by its paths.
     @Test func anIDDescribesItsPaths() {
         let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Described"), relativePath: MediaRelativePath(rawValue: "x/y.jpg"))

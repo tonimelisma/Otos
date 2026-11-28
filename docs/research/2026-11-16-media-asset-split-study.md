@@ -3,12 +3,12 @@
 ## Question
 
 Plan 0116 bet 8: the reads that test rows outside a covering index read about 150k pages of
-`media_asset` on the owner's catalog. What makes the row wide, what can leave it, and what
+`media_asset` on the reference catalog. What makes the row wide, what can leave it, and what
 does a rebuilt table cost and buy?
 
 ## Method
 
-- **A read-only design study on the owner's catalog** (schema v68, 167,215 assets), opened
+- **A read-only design study on the reference catalog** (schema v68, 167,215 assets), opened
   `mode=ro` while no Otos ran: `dbstat` page counts, column byte sums, and page counts of the
   window's reads against an emulated narrow table built in a scratch file of generated rows.
 - **A read-only check of the product names**: every stored `thumbnail_path`, `preview_path`
@@ -16,14 +16,14 @@ does a rebuilt table cost and buy?
   identity (SHA-256 of the root path and the relative path), in a scratch script outside the
   repository that wrote nothing.
 - **Code reading** of every writer and reader of each column that could leave the row.
-- **The migration and the reads measured on a generated catalog of the owner's shape**
-  (`OwnerShapedCatalog`, scale 1): `CatalogMigrationCostTests`, which puts the generated
+- **The migration and the reads measured on a generated catalog of the reference catalog's shape**
+  (`ReferenceShapedCatalog`, scale 1): `CatalogMigrationCostTests`, which puts the generated
   catalog back to v70, counts each read's pages on a cold connection (no memory map, a cache
   that holds every page, `SQLITE_DBSTATUS_CACHE_MISS`), migrates it, and counts them again.
 
 No benchmark was run.
 
-## The owner's catalog (v68)
+## The reference catalog (v68)
 
 | | Value |
 | --- | --- |
@@ -107,7 +107,7 @@ made.
 
 ## Results on the generated catalog (scale 1)
 
-`CatalogMigrationCostTests`, one generated catalog of the owner's shape (166,990 assets): put
+`CatalogMigrationCostTests`, one generated catalog of the reference catalog's shape (166,990 assets): put
 back to v70, measured, migrated, measured again, then rebuilt once more without a row id
 (the layout v71 does not take) and measured a third time. Pages are those read on a cold
 connection; milliseconds are one run each, on a machine other agents' builds were loading, so
@@ -140,14 +140,14 @@ read them as orders of magnitude.
 
 The migration: **10.0–15.7 s and 642 MB of log** over three runs on the generated file
 (2.85 GB), slower while other agents' builds ran. v69's index migration took about twice its
-generated time on the owner's file, so 20–30 s there.
+generated time on the reference file, so 20–30 s there.
 
 The compaction after it (`compactIfOwed`): the file was 27 % free; VACUUM took **12.0 s on a
 quiet machine and 47.7 s under load**, and the file went from 2,846 MB to 2,081 MB. On the
-owner's file, 35 % free once v71 has run (386 MB free before and about 590 MB freed), expect
+reference file, 35 % free once v71 has run (386 MB free before and about 590 MB freed), expect
 twice that, once.
 
-The owner's choices, read-only: 21 Liked, 3 Disliked and 167,191 Not Rated rows. So a filter
+The reference catalog's choices, read-only: 21 Liked, 3 Disliked and 167,191 Not Rated rows. So a filter
 to Liked or Disliked seeks `idx_media_asset_chosen` (v71: the chosen rows, with the columns
 every order sorts by and the window tests) and sorts the few it finds: 82 pages for the
 generated catalog's 1,647 Liked rows, against 25,897 walking the table.

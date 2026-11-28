@@ -10,6 +10,7 @@ struct ScanLeaseControllerTests {
         { paths.contains($0) }
     }
 
+    // Validates: ARC-003
     @Test func enqueueSkipsActiveAndDuplicatePendingPaths() {
         var controller = ScanLeaseController()
         let active = controller.makeActiveScan(rootPath: pathA, rootRowID: 1)
@@ -74,6 +75,7 @@ struct ScanLeaseControllerTests {
         #expect(clearedAgain == nil)
     }
 
+    // Validates: APP-017
     /// A card is its own device: its scan starts while a library walk holds the fixed
     /// lane, and a second library waits behind the first.
     @Test func takeFirstPendingSkipsBusyLanesAndKeepsQueueOrder() {

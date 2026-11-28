@@ -39,7 +39,7 @@ usage:
       words, some skies, a few near-duplicates, some with GPS) and <n> short videos (default
       2) in <dir>/TourLibrary/Photos. Prints the environment the dev build needs.
       --media camera (the default): camera-size photos (48/12 MP HEIC, 24/12 MP JPEG) in one
-      folder, about 2 MB each. --media small: a library of the owner's size, 64 x 64 JPEGs of
+      folder, about 2 MB each. --media small: a library of the reference size, 64 x 64 JPEGs of
       a few KB in a year/month/ten-day folder tree, written in parallel (160,000 in a few
       minutes, a few hundred MB).
   script/sandbox-library.sh check-trash --home <dir>

@@ -1,7 +1,8 @@
 # People
 
-Status: approved by the owner in chat, 2026-11-12 (the redesign around auto-tagged faces,
-replacing the review of 2026-11-10); built (APP-072). Its rules are DES-109 to DES-111 and
+GOVERNS: `OtosKit/Views/PeopleView.swift`, `OtosKit/Views/PersonSheetView.swift`, `OtosKit/Views/FaceTileView.swift`
+
+Status: approved (the redesign around auto-tagged faces); built (APP-072). Its rules are DES-109 to DES-111 and
 DES-113.
 
 The surfaces for the people in the user's photos (ADR 0047): the **People gallery**, a
@@ -9,7 +10,7 @@ The surfaces for the people in the user's photos (ADR 0047): the **People galler
 and the **Info pane**'s People section. Cites `docs/design/design-system.md` by ID; rules
 are not restated.
 
-The owner's direction (2026-11-12): every face is found and goes to its most likely person,
+The direction: every face is found and goes to its most likely person,
 siblings included; named and unnamed people are one kind; a face whose name the user
 removes shows the people it most likely is but is never given one again by Otos; faces are
 compared with how a person looked at that time; moving photos between people must be
@@ -59,8 +60,8 @@ confidence, model.
 ## Sidebar
 
 - **The row:** `People`, SF Symbol `person.crop.square`, a top-level row under
-  `On This Day` and before `Places` — the ways to browse the whole library sit together
-  (owner decision, 2026-11-12). It exists whenever one fixed library exists (APP-057).
+  `On This Day` and before `Places` — the ways to browse the whole library sit together.
+  It exists whenever one fixed library exists (APP-057).
 - **No trailing count and no row per person.** The row stays highlighted while the gallery
   shows and while a person's photos under it are open.
 - **No progress indicator.** Face reading is background work with no status surface (DES-040).
@@ -75,8 +76,8 @@ L3 `1,820 photos not yet checked for faces` / `Every photo has been checked`, ta
 act.
 
 **The grid:** 128 pt cells, 8 pt gutters, 12 pt inset, on `content` (DES-022, DES-060).
-- **Order:** favourites, then every named person before every unnamed one (owner,
-  2026-11-20), each by most photos, then the name in the locale's order. Then, under a `Hidden` header
+- **Order:** favourites, then every named person before every unnamed one,
+  each by most photos, then the name in the locale's order. Then, under a `Hidden` header
   (`.headline`), the hidden people in the same order, dimmed to half.
 - **A cell:** the key photo's face tile (DES-110), else the newest face; under it the
   name (`.body`) or, for an unnamed person, a link-style `Add Name…`; a secondary
@@ -101,11 +102,11 @@ act.
 
 **Merging:** the person dragged (or named) is merged into the one dropped on (or holding
 the name), which keeps its name, birthday and key photo, taking the other's where it
-has none, and is a favourite if either was and hidden if either was. A hidden person merges as anyone does — dragged or dropped on, `Merge Into ▸` among the people selected with them, or a person named with their name — and the person they become is hidden (owner decision, 2026-11-21). A photo both are in never refuses it: merging
+has none, and is a favourite if either was and hidden if either was. A hidden person merges as anyone does — dragged or dropped on, `Merge Into ▸` among the people selected with them, or a person named with their name — and the person they become is hidden. A photo both are in never refuses it: merging
 says they are one person, so every face of the person merged away stays the merged
 person's, and Otos never groups those faces into someone new again; in each photo both are
 in, the face most like the merged person stays theirs and the other is no one Otos names,
-as after `This Is Not <name>` (owner decisions, 2026-11-19 and 2026-11-20). Refused, by a
+as after `This Is Not <name>`. Refused, by a
 disabled act with its reason (DES-038), only when a photo the user gave either predates the
 birthday kept. The question is judged when asked; the answer `Merge` is judged by the
 catalog when the merge is applied, after any act submitted before it (a birthday saved with
@@ -114,7 +115,7 @@ words, with `OK`, and nothing moves. Until the catalog answers, the person merge
 still the one shown and filtered, even when the People list without them arrives first; its
 confirmation names the person merged into, who takes their place, and the gallery scrolls
 to where their new photo count sorts them once it shows them there: otherwise both people seem
-to leave the gallery (owner, 2026-11-20). A redo of a merge is that
+to leave the gallery. A redo of a merge is that
 merge, and lands the same way.
 
 **Empty states:** one centered L3 sentence under the bar: `People appear here as Otos
@@ -131,7 +132,7 @@ different days.`, `Otos found no faces in your photos.`, or the shared `No Avail
   sidebar row leaves it.
 - **Title:** the person's name.
 - **Toolbar:** `Back to People` (`chevron.left`) at the leading edge; it keeps the filter,
-  and the gallery comes back scrolled where it was (owner, 2026-11-20), as it does after
+  and the gallery comes back scrolled where it was, as it does after
   any other sidebar row.
   It exists only in this leaf, so it never stands beside Back to Map. Beside it, a menu
   titled with the person's name and
@@ -150,18 +151,18 @@ different days.`, `Otos found no faces in your photos.`, or the shared `No Avail
 A section of the filter popover, under the file types:
 - **Rows:** a checkbox per visible person with a name, in the gallery's order; then
   `Unidentified Faces`. An unnamed person is not offered: every one reads `Unnamed Person`, so no
-  row could be told from another (owner, 2026-11-12). The first five people show;
+  row could be told from another. The first five people show;
   `Show All 23 People` lists the rest in place and `Show Less` folds it back, and the whole
   list gains `Search People` once there are more than eight. A checked person always shows,
   so the filter never holds a row the user cannot see.
 - **Several rows checked** narrow to photos with all of them together: Sam and Ian is
-  the photos of the two of them, and with `Unidentified Faces` a face of no one besides
-  (owner, 2026-11-12). There is no "any of them".
+  the photos of the two of them, and with `Unidentified Faces` a face of no one besides.
+  There is no "any of them".
 - **Hidden or merged people** leave the filter when People next publishes.
 
 ## The filter's reach
 
-A filter belongs to the sidebar row it was set in (owner decision, 2026-11-12). Choosing
+A filter belongs to the sidebar row it was set in. Choosing
 another row starts that row unfiltered; the leaves under a row (a person under People, an
 area or a stack under Places, a group under Duplicates) and Back from them keep it, so a
 stack's count is what it opens on. This is Lightroom Classic's Library filter with its
@@ -172,7 +173,7 @@ in force that the user did not just set.
 
 A face is one of three: a **named** person's, an **unnamed** person's (a person Otos found
 whom the user has not named), or **unidentified**. Every act answers one question, who is
-this, and says how many photos it changes (owner, 2026-11-12). An act is a verb phrase, and
+this, and says how many photos it changes. An act is a verb phrase, and
 a list of people sits under the words its items complete (HIG Menus: `Sort by ▸ Date`), so
 `Change to ▸ Sam` reads as the act it is. The same acts, names and rules on every surface
 (DES-113), each one undoable intent:
@@ -198,8 +199,8 @@ of, two faces of one photo, a photo from before their birthday. Under `Name This
 the rules of a merge apply instead (see Merging).
 
 **Counts** say how many photos an act changes, and name what they hold: `photos`, `videos`
-when all are videos, `photos and videos` once both are, `Photos & Videos` in a menu
-(owner decision, 2026-11-13). A library's and an Immich account's video faces are People's too, one face per
+when all are videos, `photos and videos` once both are, `Photos & Videos` in a menu.
+A library's and an Immich account's video faces are People's too, one face per
 person per video, its tile cut from the frame it was read in (ADR 0047):
 - **An unnamed person:** always every photo of them, since naming acts on all of them:
   `Unnamed Person · 14 Photos ▸`, and `14 photos` under the Info pane's `Add Name…`.
@@ -238,8 +239,8 @@ faces are outlined wherever their photos show large — the loupe and both compa
 whether or not the Info pane is open, in DES-061's 3 pt accent border, carried through the
 edit the picture shows (its crop and straighten). A thumbnail, in the grid or the filmstrip,
 never carries one: there the border reads as the tile's selection, and the photo is too
-small to point at a face (owner decision, 2026-11-19). A video's face is never outlined: its box belongs to the frame
-it was read in, not to what the video shows (owner decision, 2026-11-13). A face is outlined
+small to point at a face. A video's face is never outlined: its box belongs to the frame
+it was read in, not to what the video shows. A face is outlined
 only on the copy it was read from: a person listed from another copy of the photo (below) has
 no outline on this one, since its box is of that copy's pixels. Closing the menu clears them.
 
@@ -325,12 +326,12 @@ the act created returns as themselves and the acts after it redo too; undoing se
 and redoing one keeps the rest to redo. The guesses that followed are rebuilt by assignment
 (ADR 0047). Entries live for the session.
 
-## Owner decisions
+## Decisions
 
 - 2026-11-15 (copies): a named face belongs to the photo, not the copy; a face on any copy
   counts for the photo. How a copy lists another copy's people (its own faces first, then the
   people named only on another copy with that copy's face, no outline, no other copy's
-  unidentified faces) was decided by the agent under that rule and is the owner's to change.
+  unidentified faces) follows from that rule.
 - 2026-11-12 (face menus): every act says who and how many: `Change to ▸` / `Assign to ▸`
   with the five likeliest people and `Someone Else…`; an unnamed person is named as a whole
   (`Name This Person ▸`, `New Name…`, with every photo of them counted), is corrected only

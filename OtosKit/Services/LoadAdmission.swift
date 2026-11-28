@@ -19,11 +19,11 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
     case derivedFolder
     /// One request to the system language model for a photo's description
     /// (`PhotoDescriptionWriter`). A cold request makes the system load its 3B model and image
-    /// encoder into the model's service: on the owner's 16 GB Mac the machine's compressor grew
+    /// encoder into the model's service: on the 16 GB test Mac the machine's compressor grew
     /// 1.5 GB in those 3.6 s and the kernel went to warning, beside a People pass
     /// (`docs/research/2026-11-17-launch-pressure-dips.md`). It takes the turn, so no heavy
-    /// background load runs beside it, but its cost is accepted (the owner, 2026-11-18: "OS
-    /// will swap running apps"): the room holds it only for what it holds a description for
+    /// background load runs beside it, but its cost is accepted, since the OS
+    /// swaps running apps out: the room holds it only for what it holds a description for
     /// (`BackgroundWork.description`: critical memory, heat, Low Power Mode), a grant of it
     /// measures no cost, and the load the current view needs starts beside it.
     case description
@@ -53,7 +53,7 @@ nonisolated enum BackgroundLoad: String, CaseIterable, Sendable {
         self == .searchPrepare
     }
 
-    /// The kernel's available share (percent) below which the owner's Mac has gone to
+    /// The kernel's available share (percent) below which the test Mac has gone to
     /// memory-pressure warning: across the tours of `docs/research/2026-11-17-launch-pressure-dips.md`
     /// the kernel read warning at as much as 31 % available, never above, and returned to normal
     /// only at 33 % or more. A heavy load that raised the pressure is admitted against this line
@@ -120,8 +120,8 @@ nonisolated extension TaskPriority {
 /// above the share it was granted at — so a grant that raised the pressure is never repeated
 /// into the same room. The requirement never falls in the session. Such a load also waits
 /// behind every other waiting load, so the room reopens on the loads that did not raise the
-/// pressure and sees each alone. A description is never measured: its cost is the owner's to
-/// accept (2026-11-18), so its grant, and a grant beside it, leave no load to blame. Nor does
+/// pressure and sees each alone. A description is never measured: its cost is accepted
+/// (`BackgroundLoad.description`), so its grant, and a grant beside it, leave no load to blame. Nor does
 /// it ever wait for headroom. `headroomRequired` asks the room to read the kernel until the
 /// share reaches a waiting load's requirement. An unread share admits a load: an error is not
 /// a fact. `shutdown` refuses every waiting load and every later request, and grants nothing

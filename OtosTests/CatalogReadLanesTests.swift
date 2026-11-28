@@ -8,6 +8,7 @@ import Testing
 /// The machine is tested as a sequence of events; the Store with every competing
 /// event delivered while the background reads are held on their readers' queues.
 struct ReadAdmissionMachineTests {
+    // Validates: ARC-067
     @Test func readsBeyondTheCapacityWaitInTheOrderAsked() {
         var machine = ReadAdmissionMachine(capacity: 2)
         #expect(machine.handle(.request(1)) == [.grant(1)])
@@ -20,6 +21,7 @@ struct ReadAdmissionMachineTests {
         #expect(machine.running == [3, 4])
     }
 
+    // Validates: ARC-067
     @Test func aWithdrawnWaiterTakesNoTurnAndAReleaseNamesOnlyARunningRead() {
         var machine = ReadAdmissionMachine(capacity: 1)
         #expect(machine.handle(.request(1)) == [.grant(1)])
@@ -36,6 +38,7 @@ struct ReadAdmissionMachineTests {
 
 @Suite(.testScope)
 struct CatalogReadLanesTests {
+    // Validates: ARC-067
     /// With every background turn held on its reader, the next background read waits for a
     /// turn, a window read is answered, and the waiting read enters as soon as one ends.
     @Test func aWindowReadIsAnsweredWhileBackgroundReadsHoldEveryTurn() async throws {
@@ -62,6 +65,7 @@ struct CatalogReadLanesTests {
         #expect(store.backgroundReadTurns.running.isEmpty)
     }
 
+    // Validates: ARC-067
     /// A background read cancelled while it waits for a turn throws, leaves the queue and takes
     /// no turn: the turns stay with the reads that hold them, and none is left taken after.
     @Test func aCancelledWaiterLeavesTheQueueAndTakesNoTurn() async throws {

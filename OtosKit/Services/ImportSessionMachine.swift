@@ -596,8 +596,8 @@ nonisolated struct ImportSessionMachine {
         if advancing {
             nextAttachmentGeneration &+= 1
         }
-        // The destination is remembered per removable source (owner decision —
-        // `import-bar.md` "Destination control"): a source seen before resumes
+        // The destination is remembered per removable source (`import-bar.md`
+        // "Destination control"): a source seen before resumes
         // wherever it last landed, explicit pick or default-tracked alike.
         // `isDestinationExplicit: true` is what makes the memory stick — without it, the
         // very next reorder-tracking refresh would overwrite it back to

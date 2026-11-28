@@ -6,6 +6,7 @@ import Vision
 /// The Info pane's scene-label names (ADR 0050): the Mac's language where a name read back,
 /// English everywhere else.
 struct SceneLabelNamesTests {
+    // Validates: APP-041
     @Test func aLabelIsNamedInTheMacsLanguageOrElseInEnglish() throws {
         let table = try SceneLabelNames.Table(text: """
         # comment
@@ -30,6 +31,7 @@ struct SceneLabelNamesTests {
         }
     }
 
+    // Validates: APP-041
     /// The shipped table names every label Vision can report, in every language it holds, or
     /// leaves it to English; English is never a column.
     @Test func theShippedTableCoversEveryLabelVisionReports() async throws {
@@ -48,6 +50,7 @@ struct SceneLabelNamesTests {
         #expect(finnish.allSatisfy { !$0.isEmpty })
     }
 
+    // Validates: APP-041
     /// Every language names some of Vision's labels alike (Finnish "koira" for dog and canine):
     /// the chips show each name once, keeping the first label's identifier for the search.
     @Test func chipsNameEachNameOnce() async throws {
@@ -65,9 +68,10 @@ struct SceneLabelNamesTests {
         #expect(Set(chips.map(\.identifier)).count == chips.count)
     }
 
+    // Validates: APP-041
     /// A chip that only repeats a more specific one is left out, by the shipped hierarchy and
-    /// the confidences Vision gave (`SceneLabelHierarchy.tsv`). The owner's red SUV and a
-    /// family photo, as Vision scored them.
+    /// the confidences Vision gave (`SceneLabelHierarchy.tsv`). A red SUV and a
+    /// family photo of the reference library, as Vision scored them.
     @Test func aChipThatOnlyRepeatsAMoreSpecificOneIsLeftOut() async throws {
         let names = SceneLabelNames(bundle: Bundle(for: CatalogWindowViewModel.self))
         let english = Locale.Language(identifier: "en-US")

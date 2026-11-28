@@ -1,4 +1,4 @@
-# Same-photo calibration on the owner's library
+# Same-photo calibration on the reference library
 
 Date: 2026-10-31. Plan 0109 increment 0, item 2. A read-only measurement: the probes read
 the installed app's stored thumbnails and previews in Application Support plus a snapshot

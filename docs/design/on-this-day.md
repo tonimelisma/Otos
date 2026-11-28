@@ -1,5 +1,7 @@
 # On This Day — Spec
 
+GOVERNS: `OtosKit/Views/OnThisDayView.swift`, `OtosKit/Views/OnThisDayPresentation.swift`, `OtosKit/Views/StoryPlayerView.swift`
+
 The On This Day scope: a sidebar row whose detail is one photo card per earlier
 anniversary — a year, or a month when no earlier year holds the day — and the story
 player a card starts. Cites `docs/design/design-system.md` by ID; rules are
@@ -13,7 +15,7 @@ Owners: `OtosKit/Views/OnThisDayView.swift` (bar and cards), `OtosKit/Views/Stor
 
 ## Reference
 
-Immich (the owner's v3.3.0, and its memories page, PR #28675): landscape cards with the
+Immich (v3.3.0 on the test Immich server, and its memories page, PR #28675): landscape cards with the
 key photo, `N years ago` at the bottom left over a dark gradient, and a viewer with Close
 and the title leading, Play / Pause, a segment per item and `1/20` in the middle, and the
 date on the picture's top left. Otos takes these. It drops the viewer's Up Next and
@@ -31,7 +33,7 @@ was asked for.
 ## Sidebar
 
 `On This Day`, SF Symbol `calendar`, directly under `All Media`, a top-level row present
-whenever one fixed library exists (owner decision, 2026-11-11). No trailing count, as Places has none. The row is today's: when the
+whenever one fixed library exists. No trailing count, as Places has none. The row is today's: when the
 day changes it is the new day's.
 
 ## Toolbar

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # THE single entry point for verifying a change. Do not invoke script/verify.sh,
-# script/test.sh or script/build.sh directly — script/hooks/guard-long-checks.sh
-# denies that and points here.
+# script/test.sh or script/build.sh directly (CLAUDE.md, "Commands").
 #
 # Why one script: the pieces have to run in a particular order (seconds-long gates
 # before the multi-minute build, so a formatting nit never costs a full cycle), and
@@ -135,14 +134,14 @@ source "$ROOT_DIR/script/lib/build-folder.sh"
 MEASURED_TREE="$(otos_tree_identity "$ROOT_DIR")" || { echo "check: FAILED — could not read the tree identity" >&2; exit 1; }
 echo "op=check.tree phase=start tree=$MEASURED_TREE"
 # The cores the suite runs on: Swift's cooperative pool is that many threads wide, so a
-# test that blocks one costs a larger share of a small runner than of the owner's Mac.
+# test that blocks one costs a larger share of a small runner than of a developer's Mac.
 echo "op=check.host cpus=$(sysctl -n hw.activecpu 2> /dev/null || nproc 2> /dev/null || echo unknown) os=$(uname -s)-$(uname -m)"
 if [[ -n "$OTOS_ONLY_TESTING" ]]; then
   echo "op=check.scope tests=\"$OTOS_ONLY_TESTING\" evidence=no — a scoped run; the final tree needs script/check.sh with no arguments"
 fi
 # CI runs the suite as side-by-side shards (OTOS_TEST_SHARD=<k>/<n>, ADR 0044 item 17). One
 # shard is a part of the verification; the whole is every shard passing, which CI's
-# Required CI Gate reads.
+# CI gate reads.
 if [[ -n "${OTOS_TEST_SHARD:-}" ]]; then
   echo "op=check.scope shard=$OTOS_TEST_SHARD evidence=withEveryShard"
 fi
@@ -157,7 +156,7 @@ rm -rf "$snapshot_dir"
 snapshot="$(git -C "$ROOT_DIR" commit-tree "$snapshot_tree" -p HEAD -m "check snapshot")"
 
 # Every run says how long each stage took: a commit's whole check, here and on CI, has a
-# five-minute budget (AGENTS.md, ADR 0044), and only a measured stage can be held to it.
+# five-minute budget (CLAUDE.md, ADR 0044), and only a measured stage can be held to it.
 # time: measurement — the durations this run reports
 check_started_at="$(date +%s)"
 
@@ -250,6 +249,19 @@ if ! "$ROOT_DIR/script/release-test.sh"; then
   echo "op=check.stage phase=fail stage=fast-gates reason=releaseRules" >&2
   fast_failed=1
 fi
+# When a push to main may skip the shards its pull request already ran (ADR 0062).
+if ! "$ROOT_DIR/script/ci-tested-tree.sh" self-test; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=testedTreeRules" >&2
+  fast_failed=1
+fi
+# Requirements, Validates tags and doc links agree (CI's Process job), and the requirement
+# registry's own rules with their self-test (CI's Text Hygiene and repo-shape jobs).
+if ! "$ROOT_DIR/script/process-check" | tail -3 \
+  || ! "$ROOT_DIR/script/requirements-authority-check.sh" \
+  || ! "$ROOT_DIR/script/requirements-authority-check.sh" self-test > /dev/null; then
+  echo "op=check.stage phase=fail stage=fast-gates reason=traceability" >&2
+  fast_failed=1
+fi
 if [[ "$fast_failed" != "0" ]]; then
   echo "check: FAILED at fast-gates (cost you seconds, not a build)" >&2
   exit 1
@@ -298,7 +310,7 @@ else
 fi
 echo "op=check.tier tier=$CHECK_TIER"
 # A machine with no Xcode — a Claude Code cloud session's Linux VM — runs every gate but
-# can build and test nothing (AGENTS.md, "Cloud Sessions"). A full-tier tree there runs the
+# can build and test nothing (CLAUDE.md, "Where sessions run"). A full-tier tree there runs the
 # gates the way the static tier does, then fails as incomplete: its build and tests are CI's
 # run of this script on GitHub's Xcode 27 runner. A static-tier tree needs neither, so it is verified there in full.
 VERIFY_TIER="$CHECK_TIER"
@@ -623,12 +635,12 @@ if [[ "$verify_status" == "0" && "$final_tree" != "$MEASURED_TREE" ]]; then
 elif [[ "$verify_status" == "0" && -n "$OTOS_ONLY_TESTING" ]]; then
   echo "check: PASSED (scoped to $OTOS_ONLY_TESTING) — iteration feedback, NOT verification evidence"
 elif [[ "$verify_status" == "0" && "$VERIFY_TIER" != "$CHECK_TIER" ]]; then
-  echo "check: INCOMPLETE — every gate passed, but this machine has no Xcode, so nothing was built or tested; the pushed branch's Build And Test (Xcode 27) CI job builds and tests it (AGENTS.md, \"Cloud Sessions\")" >&2
+  echo "check: INCOMPLETE — every gate passed, but this machine has no Xcode, so nothing was built or tested; the pushed branch's Build And Test (Xcode 27) CI job builds and tests it (CLAUDE.md, \"Cloud Sessions\")" >&2
   verify_status=1
 elif [[ "$verify_status" == "0" && "$CHECK_TIER" == "static" ]]; then
   echo "check: PASSED (tier=static: every gate, no build or tests, because the diff reaches nothing they read) — evidence is valid only for the tree as it stands right now"
 elif [[ "$verify_status" == "0" && -n "${OTOS_TEST_SHARD:-}" ]]; then
-  echo "check: PASSED (shard $OTOS_TEST_SHARD) — the tree is verified when every shard passes (Required CI Gate)"
+  echo "check: PASSED (shard $OTOS_TEST_SHARD) — the tree is verified when every shard passes (CI gate)"
 elif [[ "$verify_status" == "0" ]]; then
   echo "check: PASSED — evidence is valid only for the tree as it stands right now"
 else

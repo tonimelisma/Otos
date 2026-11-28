@@ -154,6 +154,7 @@ struct ImmichAccountsTests {
         ).ids.map(\.relativePath.rawValue)
     }
 
+    // Validates: APP-064
     @Test func addingAnAccountSavesItsSessionAndSyncsIt() async throws {
         let server = FakeServer(host: "add.test")
         let store = try await makeStore()
@@ -180,6 +181,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     @Test func aRefusedAddLeavesNoAccount() async throws {
         let store = try await makeStore()
         let sessions = MemorySessions()
@@ -207,6 +209,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     /// Offline is learned from a request that reached no server and left on the next one
     /// that answers; a refused session is signed out.
     @Test func statusFollowsWhatTheServerLastAnswered() async throws {
@@ -239,6 +242,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     /// A new session's cursor is empty and its server sends it no reset, so its first pass
     /// is a resync read from zero: signing in again purges a row the server no longer
     /// lists, such as one deleted while the account was signed out.
@@ -280,6 +284,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     /// Only a request that reached no server makes an account offline. A server that
     /// answered with a failure, a stream cut short, a reset loop or the catalog's own failure
     /// leaves what the server last answered standing, and a stopped pass says nothing.
@@ -298,6 +303,7 @@ struct ImmichAccountsTests {
         }
     }
 
+    // Validates: APP-064
     /// A finished pass is kept as the account's last sync, so a launch whose server does not
     /// answer still says when it last synced. A pass is syncing between its server's answer
     /// and its end.
@@ -336,6 +342,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     /// Settings says when an account last synced rather than whether it is connected.
     @Test func anAccountsStatusSaysWhenItLastSynced() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -360,6 +367,7 @@ struct ImmichAccountsTests {
             .hasPrefix("Can’t reach photos.example.com. Last synced "))
     }
 
+    // Validates: APP-064
     /// At launch, an account with a saved session syncs, and one without is signed out.
     @Test func startResumesSavedSessionsAndSignsOutTheRest() async throws {
         let server = FakeServer(host: "resume.test")
@@ -385,6 +393,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-064
     /// Forgetting an account logs its session out and deletes its Keychain item.
     @Test func forgettingAnAccountEndsItsSession() async throws {
         let server = FakeServer(host: "forget.test")
@@ -413,6 +422,7 @@ struct ImmichAccountsTests {
 
     // MARK: - Originals (ADR 0046 §4, §7)
 
+    // Validates: APP-067
     /// The user's work downloads an original into the account's staging folder and offers
     /// it to enrichment for every product; background demand is refused, and a server that
     /// does not answer is reported as unavailable.
@@ -473,6 +483,7 @@ struct ImmichAccountsTests {
         await store.shutdown()
     }
 
+    // Validates: APP-067
     @Test func onlyMetadataIsReadInRanges() {
         #expect(EnrichmentScope.metadata.isReadableInRanges)
         #expect(EnrichmentScope([.metadata, .provisionalThumbnail]).isReadableInRanges)

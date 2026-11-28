@@ -6,7 +6,7 @@ import Foundation
 /// is measured with. A 64-bit difference hash proposes candidates; the mean absolute
 /// difference of two 32 × 32 grayscale renders confirms them. Both are deterministic and
 /// read only the stored thumbnail — never the original — and the thresholds are the ones
-/// calibrated on the owner's library (`docs/research/2026-10-31-duplicate-calibration.md`).
+/// calibrated on a reference library (`docs/research/2026-10-31-duplicate-calibration.md`).
 nonisolated struct RenderSignature: Equatable, Sendable {
     /// 9 × 8 grayscale, one bit per horizontal step: brighter to the right.
     let differenceHash: UInt64

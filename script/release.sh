@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Builds, signs and publishes the checked-out main commit as an update of the installed app
-# (ADR 0059): `.github/workflows/release.yml` runs it on GitHub's xcode-27 runner once that
-# commit's CI passed. It publishes to GitHub, so it is never run on the Mac.
+# (ADR 0059): `.github/workflows/release.yml` runs it on GitHub's xcode-27 runner for each push
+# to main, beside that commit's CI. It builds, signs and launch-checks while CI runs, then waits
+# for the commit's `CI gate` (script/ci-gate.sh) and publishes only once it passed (ADR 0062).
+# It publishes to GitHub, so it is never run on a Mac of its own.
 #
 # A release is made only when the app changed since the newest release: something under Otos/,
 # OtosKit/, Otos.xcodeproj/ or Config/. It is `v<x.y.z>`, the next version of the project's
@@ -14,12 +16,12 @@
 #
 # The environment the workflow gives it:
 #   OTOS_DEVELOPMENT_TEAM   the team ID; never in the repository
-#   OTOS_SIGNING_IDENTITY   the SHA-1 of the owner's Apple Development identity, in
+#   OTOS_SIGNING_IDENTITY   the SHA-1 of the maintainer's Apple Development identity, in
 #   OTOS_SIGNING_KEYCHAIN   the keychain the workflow imported it into for this run
 #   SPARKLE_PRIVATE_KEY     Otos's EdDSA update key, handed to sign_update on standard input
 #   GH_TOKEN, GITHUB_REPOSITORY
-# The certificate is the one the Mac's own installs sign with, so an update keeps the
-# installed app's privacy permissions and Keychain items.
+# Every release is signed with the same certificate, so an update keeps the installed app's
+# privacy permissions and Keychain items.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,6 +34,9 @@ source "$ROOT_DIR/script/lib/installed-build.sh"
 : "${SPARKLE_PRIVATE_KEY:?the update key is needed}"
 : "${GITHUB_REPOSITORY:?the repository is needed}"
 KEEP=3
+# time: measurement — each stage's seconds, so the merge-to-release time is attributable
+release_started_at="$(date +%s)"
+stage_done() { echo "op=release.stage stage=$1 seconds=$(( $(date +%s) - release_started_at ))"; }
 
 otos_require_full_xcode
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain)" ]]; then
@@ -83,6 +88,14 @@ To install by hand: download **Otos.dmg** below, open it, and drag Otos to Appli
 Otos is signed for development, not notarized by Apple. The first time you open it, macOS says it can’t check Otos: click **Done**, open **System Settings → Privacy & Security**, click **Open Anyway** next to Otos, and confirm. After that it opens like any app, and updates itself.
 NOTES
 }
+# The resolved packages the workflow restored (main's Build Cache saved them for these pins):
+# copied in, so the build resolves without fetching every package again.
+if [[ -d "$ROOT_DIR/build/DerivedData/SourcePackages/checkouts" && ! -d "$DERIVED/SourcePackages" ]]; then
+  mkdir -p "$DERIVED"
+  /usr/bin/ditto "$ROOT_DIR/build/DerivedData/SourcePackages" "$DERIVED/SourcePackages"
+  echo "op=release phase=packagesSeeded"
+fi
+stage_done prepare
 APP="$(otos_installed_build_app "$DERIVED")"
 otos_build_installed_app "$ROOT_DIR" "$DERIVED" \
   CODE_SIGN_STYLE=Manual \
@@ -99,6 +112,7 @@ key="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.pli
 }
 short="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
 [[ "$short" == "$VERSION" ]] || { echo "op=release phase=failed reason=versionNotStamped built=$short expected=$VERSION" >&2; exit 1; }
+stage_done build
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
@@ -116,16 +130,19 @@ symbols="$out/Otos-$VERSION.dSYM.zip"
 ditto -c -k --keepParent "$out/symbols" "$symbols"
 
 # The disk image a person installs from: Otos beside a link to Applications, to drag one onto
-# the other, compressed read-only and signed with the app's own certificate, as latchkey's is.
+# the other, compressed read-only with LZFSE (ULFO, which writes much faster than zlib at its highest
+# level did) and signed with the app's own certificate.
 # `releases/latest/download/Otos.dmg` is always the newest build's.
 mkdir "$out/image"
 ditto "$APP" "$out/image/Otos.app"
 ln -s /Applications "$out/image/Applications"
 image="$out/Otos.dmg"
-hdiutil create -quiet -volname "Otos" -srcfolder "$out/image" -fs HFS+ -format UDZO -imagekey zlib-level=9 "$image"
+hdiutil create -quiet -volname "Otos" -srcfolder "$out/image" -fs HFS+ -format ULFO "$image"
 /usr/bin/codesign --sign "$OTOS_SIGNING_IDENTITY" --keychain "$OTOS_SIGNING_KEYCHAIN" --timestamp=none "$image"
 /usr/bin/codesign --verify "$image"
 hdiutil verify -quiet "$image"
+echo "op=release phase=diskImage bytes=$(stat -f %z "$image")"
+stage_done package
 
 # The update key goes in on standard input, never to a file.
 sign_update="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update"
@@ -147,12 +164,24 @@ if ! "$ROOT_DIR/script/app-capture.sh" "$out/launch/Otos.app" "$ROOT_DIR/build/r
   echo "op=release phase=failed reason=launchCheck detail=\"the archive as it ships did not reach its first grid and draw its window\"" >&2
   exit 1
 fi
+stage_done launchCheck
+
+# Nothing is published before CI has passed on this very commit.
+gate_status=0
+"$ROOT_DIR/script/ci-gate.sh" "$SHA" || gate_status=$?
+case "$gate_status" in
+  0) ;;
+  3) echo "op=release phase=skipped commit=$SHA reason=ciCancelled"; exit 0 ;;
+  *) echo "op=release phase=failed commit=$SHA reason=ciGate" >&2; exit 1 ;;
+esac
+stage_done ciGate
 
 gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --latest \
   --title "Otos $VERSION" \
   --notes "$(release_notes)" \
   "$image" "$archive" "$symbols" "$out/appcast.xml"
 echo "op=release phase=published version=$VERSION build=$BUILD tag=$TAG commit=$SHA"
+stage_done publish
 
 # Older releases go, their tags with them: all but the newest three, by when they were made.
 gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \

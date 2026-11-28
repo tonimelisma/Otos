@@ -86,7 +86,7 @@ compares each of its sixteen parts with the last, and reading the whole state re
 access to each. On the main thread the republished apply is 0.38 M of the case's 0.40 M; the
 parts' comparison alone is 0.08 M, and one read of the whole state 0.024 M. That is the
 mechanism #867 added, on a sub-millisecond case; the same PR took the order-changed apply from
-0.80 M to 0.67 M. It is left for the owner to accept rather than contorted.
+0.80 M to 0.67 M. It is left to be accepted rather than contorted.
 
 ## Results
 

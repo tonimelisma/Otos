@@ -7,7 +7,7 @@ choices: the three things #784 reported and did not fix.
 
 1. Are two identical copies — a library file and its Immich mirror — read for faces from the
    same pixels, so that one reading could serve both?
-2. What do the new reads cost on an owner-shaped catalog: the copies People resolves a photo's
+2. What do the new reads cost on a reference-shaped catalog: the copies People resolves a photo's
    faces through, and the unchecked tally that counts a photo once?
 
 ## 1. Not the same pixels
@@ -33,12 +33,12 @@ elected copy changes with availability, and outlines drawn on pixels they were n
 Instead every surface resolves the photo's faces through the copies relation, and every count
 counts the photo once.
 
-Work this keeps: one preview reading per copy, stamped and never repeated, so on the owner's
-shape 16,000 readings more than photos (the mirrors' account copies), once.
+Work this keeps: one preview reading per copy, stamped and never repeated, so on the reference
+library's shape 16,000 readings more than photos (the mirrors' account copies), once.
 
 ## 2. Cost of the new reads
 
-Method as `2026-11-15-photo-level-copies.md`, and no owner data read: one generated catalog,
+Method as `2026-11-15-photo-level-copies.md`, and no reference data read: one generated catalog,
 built by a test that was not committed, migrated to v64 and `ANALYZE`d. 166,000 rows: 16,000
 library rows, 150,000 account rows of which the first 16,000 mirror the library (same SHA-1).
 Faces: one person on all 16,000 mirrored photos, on both copies (32,000 faces), one on 1,660
@@ -74,5 +74,5 @@ other sessions' checks.
 - Keep the tally's copy test inside its counts. Its cost falls on a sync that owes thousands of
   previews, off the main actor; a cheaper test by the shown copy alone would call a photo
   checked while one of its copies is still unread.
-- Benchmarks were not run for this change, by the owner's rule; the evidence is the page
+- Benchmarks were not run for this change, by rule; the evidence is the page
   counts above and the plan tests (`PhotoCopiesTests`, `CatalogStoreQueryPlanTests`).

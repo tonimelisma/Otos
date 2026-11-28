@@ -2,13 +2,12 @@ import Foundation
 import GRDB
 @testable import OtosKit
 
-/// A generated catalog file shaped like the owner's on 2026-11-16, for the tests that
-/// measure what his catalog's size and backlog make the Store do
-/// (`docs/research/2026-11-16-stall-reproduction-baseline.md`).
+/// A generated catalog file shaped like the catalog of a reference library of about 160,000
+/// items, for the tests that measure what a catalog of that size and backlog makes the Store
+/// do (`docs/research/2026-11-16-stall-reproduction-baseline.md`).
 ///
-/// Every number below is a read-only count of his catalog (`sqlite3 -readonly` on
-/// `net.melisma.Otos/Catalog/catalog.sqlite`, 2.56 GB), multiplied by `scale`. At scale 1 the
-/// file holds what his does: the same roots and their kinds, the same rows per root and
+/// Every number below is a count read read-only from the reference library's catalog
+/// (2.56 GB), multiplied by `scale`. At scale 1 the file holds what that catalog does: the same roots and their kinds, the same rows per root and
 /// kind, the same derived rows per root with the same widths, and the same kinds of
 /// backlog — most derived rows current for the row they were read from, a small or large
 /// owed remainder for each product, metadata records read by an older parser, rows that
@@ -20,11 +19,9 @@ import GRDB
 /// Whether a derived row is current is decided by the product's own SQL
 /// (`StoredThumbnailSQL`, `SearchEmbeddingStorage`, `SearchTextStorage`,
 /// `PhotoDescriptionStorage`, `AssetEnrichmentSQL.currentExtractionRevisionSQL`), so the generated
-/// backlog is what the candidate reads find, as they evolve. The earlier owner-shaped
-/// catalogs (#779, #793, #795) were temporary probes never committed; this is the one the
-/// tests keep. Generation is SQL inside one transaction; its time and size at each scale are
-/// in the research note.
-struct OwnerShapedCatalog {
+/// backlog is what the candidate reads find, as they evolve. Generation is SQL inside one
+/// transaction; its time and size at each scale are in the research note.
+struct ReferenceShapedCatalog {
     /// What the generator wrote, at the scale asked for.
     struct Shape: Equatable {
         var assets = 0
@@ -55,17 +52,17 @@ struct OwnerShapedCatalog {
     let fileBytes: Int64
     let generation: Duration
 
-    /// His roots: two OneDrive libraries (6 and 7), one Immich account (15) whose server
-    /// also holds library 7, and the cards and cameras he imported from. Row counts per kind
-    /// are his `media_asset` rows per root and kind; `hashedPermille` his share of rows with
-    /// a content hash (an account's are never hashed, most of a OneDrive library's are
+    /// The reference roots: two OneDrive libraries (6 and 7), one Immich account (15) whose
+    /// server also holds library 7, and the cards and cameras imported from. Row counts per
+    /// kind are the reference `media_asset` rows per root and kind; `hashedPermille` the share
+    /// of rows with a content hash (an account's are never hashed, most of a OneDrive library's are
     /// dataless).
     private struct RootSpec {
         let id: Int64
         let kind: LibraryRootKind
         let images: Int
         let raws: Int
-        /// His RAWs that pair with a processed still of their folder (ADR 0052): the first
+        /// The RAWs that pair with a processed still of their folder (ADR 0052): the first
         /// ones written take the names of the root's first images.
         var pairedRaws = 0
         let videos: Int
@@ -82,14 +79,14 @@ struct OwnerShapedCatalog {
         RootSpec(id: 15, kind: .immichAccount, images: 117_810, raws: 10906, videos: 18348, hashedPermille: 0),
     ]
 
-    /// His counts of the derived tables and the backlog, before `scale`.
-    private enum Owner {
-        /// Owed embeddings and render signatures: his were all current on 2026-11-16; a few
+    /// The reference counts of the derived tables and the backlog, before `scale`.
+    private enum Reference {
+        /// Owed embeddings and render signatures: all were current on 2026-11-16; a few
         /// dozen stand for the photos an import or an edit leaves owed, which a candidate read
         /// must walk the whole table to find.
         static let embeddingsOwed = 24
         static let renderSignaturesOwed = 24
-        /// Libraries' previews with no current text reading (his 21 in library 7).
+        /// Libraries' previews with no current text reading (21 in library 7).
         static let libraryTextsOwed = 21
         /// The account's previews read for text: 60,074 of 128,889 on 2026-11-16, 10,724 of
         /// them holding text; the rest is owed.
@@ -102,7 +99,7 @@ struct OwnerShapedCatalog {
         static let frameFacePhotos = [10343, 3687, 1025, 618]
         /// One face in ten is no one's.
         static let unassignedFacePermille = 102
-        /// His 745 people by their faces, largest first: eight people of a thousand faces or
+        /// The reference library's 745 people by their faces, largest first: eight people of a thousand faces or
         /// more, then 57 of about 300, 303 of about 28 and 377 of about 5. A person's faces
         /// are this share of the assigned faces, so a scope of the largest is 17 % of them.
         static let largestPeopleFaces = [17285, 16932, 8927, 8820, 6858, 3420, 1842, 1203]
@@ -115,18 +112,18 @@ struct OwnerShapedCatalog {
         static let staleMetadataPermille = 197
         static let videosOwingFaces = 896
         static let stillsAwaitingPreview = 43
-        /// Rows that will get no thumbnail (v77's index), his on 2026-11-17: 26 stills rendering
+        /// Rows that will get no thumbnail (v77's index), on 2026-11-17: 26 stills rendering
         /// found none in, and 152 account videos whose server holds none.
         static let stillsWithNoThumbnail = 26
         static let accountVideosWithNoThumbnail = 152
         /// Import batches in the libraries: 11,401 rows in 45 batches.
         static let importedRows = 11401
         static let importBatches = 45
-        /// Library 7's files his server mirrors (ADR 0054): 16,683 have an external asset of the
+        /// Library 7's files the server mirrors (ADR 0054): 16,683 have an external asset of the
         /// same name, size and whole-second modification time. Each is generated paired, so the
         /// copy-key reads meet the whole mirror.
         static let mirroredFiles = 16683
-        /// His server lists library 7 under two prefixes: 982 files (two of its folders) under
+        /// The server lists library 7 under two prefixes: 982 files (two of its folders) under
         /// the first, the rest under the second (2026-11-17). The prefixes are examples.
         static let firstPrefixFiles = 982
         static let serverPrefixes = ["/srv/a/Pictures/Camera Roll/", "/srv/b/Pictures/Camera Roll/"]
@@ -134,15 +131,16 @@ struct OwnerShapedCatalog {
 
     static let baseCaptureUnix: Int64 = 1_262_304_000
 
-    /// His `name_sort_key` width: 11.1 MB over 167,215 rows.
+    /// The reference `name_sort_key` width: 11.1 MB over 167,215 rows.
     private static let nameSortKeyLength = 66
 
     /// Writes the catalog under `directory`: the file in `db/`, the libraries' empty folders
-    /// in `Libraries/`. `scale` 1 is the owner's catalog; every count is rounded, and an owed
-    /// remainder is never rounded to nothing. `ownersPlaces` names his 1,435 cells at any
-    /// scale: a small catalog then holds more named cells than an import batch holds rows, as
-    /// his does, so a read of every named cell outweighs a small scope as it does on his.
-    static func make(in directory: URL, scale: Double, ownersPlaces: Bool = false) throws -> OwnerShapedCatalog {
+    /// in `Libraries/`. `scale` 1 is the reference catalog; every count is rounded, and an owed
+    /// remainder is never rounded to nothing. `referencePlaces` names all 1,435 reference cells
+    /// at any scale: a small catalog then holds more named cells than an import batch holds
+    /// rows, as the reference catalog does, so a read of every named cell outweighs a small
+    /// scope as it does there.
+    static func make(in directory: URL, scale: Double, referencePlaces: Bool = false) throws -> ReferenceShapedCatalog {
         let clock = ContinuousClock()
         let start = clock.now
         let databaseURL = directory.appending(path: "db/catalog.sqlite")
@@ -153,7 +151,7 @@ struct OwnerShapedCatalog {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         let staging = CatalogStore.stagingContainers(for: .databaseFile(databaseURL))
-        let accountIdentity = DeviceIdentity(rawValue: "immich:generated.invalid:owner")
+        let accountIdentity = DeviceIdentity(rawValue: "immich:generated.invalid:reference")
         let paths: [Int64: LibraryRootPath] = try [
             5: CatalogPath.normalizedDirectoryPath(for: staging.sessionRoot(in: .device, identity: DeviceIdentity(rawValue: "camera:generated-5"))),
             6: CatalogPath.normalizedExistingDirectoryPath(for: archiveURL),
@@ -215,7 +213,7 @@ struct OwnerShapedCatalog {
             shape.unhashable = try Int.fetchOne(db, sql: "SELECT count(*) FROM media_asset WHERE content_sha1 IS NULL") ?? 0
             try writeMirrorPairs(db, scale: scale, shape: &shape)
             try writeBacklog(db, scale: scale, shape: &shape)
-            try writeDerivedRows(db, scale: scale, placeCells: ownersPlaces ? Owner.placeCells : scaled(Owner.placeCells, scale), shape: &shape)
+            try writeDerivedRows(db, scale: scale, placeCells: referencePlaces ? Reference.placeCells : scaled(Reference.placeCells, scale), shape: &shape)
             shape.textIndexDirectoryRows = try Int.fetchOne(
                 db, sql: "SELECT (SELECT count(*) FROM search_text_word_idx) + (SELECT count(*) FROM search_text_word_config)"
             ) ?? 0
@@ -225,7 +223,7 @@ struct OwnerShapedCatalog {
         guard let pictures = paths[7], let archive = paths[6], let account = paths[15] else {
             throw CocoaError(.fileNoSuchFile)
         }
-        return OwnerShapedCatalog(
+        return ReferenceShapedCatalog(
             databaseURL: databaseURL,
             pictures: pictures,
             archive: archive,
@@ -247,7 +245,7 @@ struct OwnerShapedCatalog {
         let count: Int
     }
 
-    /// His bursts: 33 identifiers on 39 stills, of which one is a burst of seven frames (root
+    /// The reference bursts: 33 identifiers on 39 stills, of which one is a burst of seven frames (root
     /// 14) and 32 are carried by one still each, so they stack nothing — two in library 7, the
     /// first on a paired image, so a burst's still sits in a folder that can hold a pair; one
     /// on a camera; 29 on the account's stills, each alone in its asset's folder. Never
@@ -353,9 +351,9 @@ struct OwnerShapedCatalog {
     }
 
     /// The account's rows are an external library's assets, each with its path checksum, and
-    /// his mirrored files are paired with the account's first assets in row order (schema v79).
-    /// His server lists the library under two prefixes (v80): the first `Owner.firstPrefixFiles`
-    /// pairs are under `Owner.serverPrefixes[0]`, the rest under the second, and each paired
+    /// the mirrored files are paired with the account's first assets in row order (schema v79).
+    /// The server lists the library under two prefixes (v80): the first `Reference.firstPrefixFiles`
+    /// pairs are under `Reference.serverPrefixes[0]`, the rest under the second, and each paired
     /// asset's checksum is that of its prefix and its file's relative path, so the account's
     /// walk finds every pair standing. A paired asset is listed with its file's size and
     /// modification time, and its own products were read at those, so it stays current and the
@@ -375,7 +373,7 @@ struct OwnerShapedCatalog {
                   FROM media_asset WHERE library_root_id = 15) AS a ON a.n = f.n
             WHERE f.n <= ?
             """,
-            arguments: [scaled(Owner.mirroredFiles, scale)]
+            arguments: [scaled(Reference.mirroredFiles, scale)]
         )
         try db.execute(
             sql: """
@@ -387,7 +385,7 @@ struct OwnerShapedCatalog {
             FROM mirror_match AS m
             WHERE media_asset.library_root_id = 15 AND media_asset.relative_path = m.asset_path
             """,
-            arguments: [scaled(Owner.firstPrefixFiles, scale), Owner.serverPrefixes[0], Owner.serverPrefixes[1]]
+            arguments: [scaled(Reference.firstPrefixFiles, scale), Reference.serverPrefixes[0], Reference.serverPrefixes[1]]
         )
         try db.execute(sql: """
         INSERT INTO immich_mirror_pair (library_root_id, file_path, account_root_id, asset_path)
@@ -400,7 +398,7 @@ struct OwnerShapedCatalog {
     /// The backlog that is not a missing derived row: the account's stills whose preview is
     /// still to come, its videos whose faces are owed, the libraries' imports.
     private static func writeBacklog(_ db: Database, scale: Double, shape: inout Shape) throws {
-        shape.stillsAwaitingPreview = scaled(Owner.stillsAwaitingPreview, scale)
+        shape.stillsAwaitingPreview = scaled(Reference.stillsAwaitingPreview, scale)
         try db.execute(
             sql: """
             UPDATE media_asset SET thumbnail_path = NULL, preview_path = NULL,
@@ -414,7 +412,7 @@ struct OwnerShapedCatalog {
         )
         // The rows that will get no thumbnail: library stills rendering found none in, and
         // account videos whose server holds none.
-        let unrendered = scaled(Owner.stillsWithNoThumbnail, scale)
+        let unrendered = scaled(Reference.stillsWithNoThumbnail, scale)
         try db.execute(
             sql: """
             UPDATE media_asset SET thumbnail_path = NULL, preview_path = NULL
@@ -423,7 +421,7 @@ struct OwnerShapedCatalog {
             """,
             arguments: [unrendered]
         )
-        let sourceless = scaled(Owner.accountVideosWithNoThumbnail, scale)
+        let sourceless = scaled(Reference.accountVideosWithNoThumbnail, scale)
         try db.execute(
             sql: """
             UPDATE media_asset SET thumbnail_path = NULL, preview_path = NULL,
@@ -434,7 +432,7 @@ struct OwnerShapedCatalog {
             arguments: [sourceless]
         )
         shape.noThumbnailComing = unrendered + sourceless
-        shape.videosOwingFaces = scaled(Owner.videosOwingFaces, scale)
+        shape.videosOwingFaces = scaled(Reference.videosOwingFaces, scale)
         try db.execute(
             sql: """
             UPDATE media_asset SET faces_source_size = NULL, faces_source_mtime = NULL
@@ -448,7 +446,7 @@ struct OwnerShapedCatalog {
             UPDATE media_asset SET import_batch_unix_ms = 1600000000000 + (rowid % ?) * 86400000
             WHERE rowid IN (SELECT rowid FROM media_asset WHERE library_root_id IN (6, 7) ORDER BY rowid DESC LIMIT ?)
             """,
-            arguments: [max(2, scaled(Owner.importBatches, scale)), scaled(Owner.importedRows, scale)]
+            arguments: [max(2, scaled(Reference.importBatches, scale)), scaled(Reference.importedRows, scale)]
         )
     }
 
@@ -458,7 +456,7 @@ struct OwnerShapedCatalog {
     private static func writeDerivedRows(_ db: Database, scale: Double, placeCells cells: Int, shape: inout Shape) throws {
         let spread = "ORDER BY (rowid * 7919) % 100003"
         try db.execute(sql: "CREATE TEMP TABLE owed (product TEXT NOT NULL, row INTEGER NOT NULL)")
-        shape.renderSignaturesOwed = Owner.renderSignaturesOwed
+        shape.renderSignaturesOwed = Reference.renderSignaturesOwed
         try db.execute(
             sql: """
             INSERT INTO owed SELECT 'render', rowid FROM media_asset
@@ -466,7 +464,7 @@ struct OwnerShapedCatalog {
             """,
             arguments: [shape.renderSignaturesOwed]
         )
-        shape.embeddingsOwed = Owner.embeddingsOwed
+        shape.embeddingsOwed = Reference.embeddingsOwed
         try db.execute(
             sql: """
             INSERT INTO owed SELECT 'embedding', rowid FROM media_asset
@@ -485,7 +483,7 @@ struct OwnerShapedCatalog {
         SELECT library_root_id, relative_path, randomblob(1024) FROM media_asset WHERE render_dhash IS NOT NULL
         """)
         // Search embeddings: 3,072-byte vectors for every thumbnail of every root but the
-        // cards (his roots 6, 7, 14 and 15).
+        // cards (roots 6, 7, 14 and 15).
         try db.execute(sql: """
         INSERT INTO search_embedding (library_root_id, relative_path, source, embedding, labels, confident_labels)
         SELECT a.library_root_id, a.relative_path, \(SearchEmbeddingStorage.currentSource("a")), zeroblob(3072),
@@ -499,11 +497,11 @@ struct OwnerShapedCatalog {
         """)
         shape.embeddings = db.changesCount
         // Text readings: every library preview but a few, under half of the account's; most
-        // read no text. One in six holds text, as his 13,545 of 75,823 do: eleven lines of
-        // about 14 characters (his 10.9 lines a reading), each with its box, in a reading of the
-        // preview's size, as reading revision 3 stores them (`TextReading`), words
-        // that vary from row to row, numbers, and a line of Japanese in one reading of 18 (his
-        // 757 readings with Chinese or Japanese).
+        // read no text. One in six holds text, as 13,545 of the reference 75,823 do: eleven
+        // lines of about 14 characters (10.9 lines a reading in the reference library), each
+        // with its box, in a reading of the preview's size, as reading revision 3 stores them
+        // (`TextReading`), words that vary from row to row, numbers, and a line of Japanese in
+        // one reading of 18 (the reference library has 757 readings with Chinese or Japanese).
         let textRow = """
         SELECT a.library_root_id, a.relative_path, \(SearchTextStorage.currentSource("a")),
                json_object('width', 2560, 'height', 1920, 'lines', CASE WHEN a.rowid % 6 = 0 THEN (
@@ -526,7 +524,7 @@ struct OwnerShapedCatalog {
             \(textRow) WHERE a.library_root_id IN (6, 7) AND a.preview_path IS NOT NULL
               AND a.rowid NOT IN (SELECT rowid FROM media_asset WHERE library_root_id = 7 AND preview_path IS NOT NULL \(spread) LIMIT ?)
             """,
-            arguments: [scaled(Owner.libraryTextsOwed, scale)]
+            arguments: [scaled(Reference.libraryTextsOwed, scale)]
         )
         shape.texts = db.changesCount
         try db.execute(
@@ -534,7 +532,7 @@ struct OwnerShapedCatalog {
             INSERT INTO search_text (library_root_id, relative_path, source, lines)
             \(textRow) WHERE a.library_root_id = 15 AND a.preview_path IS NOT NULL ORDER BY a.rowid LIMIT ?
             """,
-            arguments: [scaled(Owner.accountTexts, scale)]
+            arguments: [scaled(Reference.accountTexts, scale)]
         )
         shape.texts += db.changesCount
         // Their words in the text index, as the Store writes them with each reading.
@@ -555,7 +553,7 @@ struct OwnerShapedCatalog {
         SELECT library_root_id, relative_path, face_index, zeroblob(2048) FROM face
         ORDER BY library_root_id, relative_path, face_index
         """)
-        // Metadata records of about 1.1 KB, three in four located in one of his 1,435 named
+        // Metadata records of about 1.1 KB, three in four located in one of the 1,435 named
         // cells; a fifth read by an older parser.
         let language = PlaceNameLanguage(Locale.current).identifier
         try db.execute(
@@ -592,12 +590,12 @@ struct OwnerShapedCatalog {
                                         metadata_extra_json)
             \(record) WHERE a.library_root_id = 15 ORDER BY a.rowid LIMIT ?
             """,
-            arguments: [cells, cells, scaled(Owner.accountMetadataRecords, scale)]
+            arguments: [cells, cells, scaled(Reference.accountMetadataRecords, scale)]
         )
         shape.metadataRecords += db.changesCount
         try db.execute(sql: """
         UPDATE asset_metadata AS m SET extraction_revision = \(AssetEnrichmentSQL.currentExtractionRevisionSQL)
-        WHERE m.rowid % 1000 >= \(Owner.staleMetadataPermille)
+        WHERE m.rowid % 1000 >= \(Reference.staleMetadataPermille)
         """)
         shape.metadataStaleInLibraries = try Int.fetchOne(
             db, sql: """
@@ -616,23 +614,23 @@ struct OwnerShapedCatalog {
             FROM media_asset AS a WHERE a.library_root_id IN (7, 15) AND \(PhotoDescriptionStorage.describableStill)
             ORDER BY a.rowid LIMIT ?
             """,
-            arguments: [scaled(Owner.descriptions, scale)]
+            arguments: [scaled(Reference.descriptions, scale)]
         )
         shape.descriptions = db.changesCount
         // The account's server holds library 7, under two prefixes, not library 6.
-        for prefix in Owner.serverPrefixes {
+        for prefix in Reference.serverPrefixes {
             try db.execute(sql: "INSERT INTO immich_mirror (account_root_id, library_root_id, server_prefix) VALUES (15, 7, ?)", arguments: [prefix])
         }
     }
 
-    /// People and faces: his people, largest first, each holding his share of the assigned
-    /// faces, and his photos' faces — one on most, several on some — with 2 KB embeddings. A
+    /// People and faces: the reference people, largest first, each holding its share of the
+    /// assigned faces, and the reference photos' faces — one on most, several on some — with 2 KB embeddings. A
     /// face's place in the faces of all people is spread from its photo's row, and a photo's
     /// later faces are a quarter of the way on, past the largest person's share, so no photo
-    /// holds two faces of one person (none of his does).
+    /// holds two faces of one person (none of the reference photos does).
     private static func writePeopleAndFaces(_ db: Database, scale: Double, spread: String, shape: inout Shape) throws {
-        var shares = Owner.largestPeopleFaces
-        for tier in Owner.smallerPeople {
+        var shares = Reference.largestPeopleFaces
+        for tier in Reference.smallerPeople {
             shares += Array(repeating: tier.faces, count: scaled(tier.people, scale))
         }
         try db.execute(
@@ -640,7 +638,7 @@ struct OwnerShapedCatalog {
             WITH RECURSIVE n(k) AS (SELECT 1 UNION ALL SELECT k + 1 FROM n WHERE k < ?)
             INSERT INTO person (id, name) SELECT k, CASE WHEN k <= ? THEN 'Person ' || k END FROM n
             """,
-            arguments: [shares.count, scaled(Owner.namedPeople, scale)]
+            arguments: [shares.count, scaled(Reference.namedPeople, scale)]
         )
         try db.execute(sql: "CREATE TEMP TABLE person_share (start INTEGER PRIMARY KEY, person_id INTEGER NOT NULL)")
         var start = 0
@@ -652,7 +650,7 @@ struct OwnerShapedCatalog {
         func faces(_ k: Int) -> String {
             let place = "(media_asset.rowid * 7919 + \(k * (total / 4))) % \(total)"
             // An unassigned face is open (0) and names no one; an assigned one is Otos's guess (1).
-            let unassigned = "(media_asset.rowid * 31 + \(k * 389)) % 1000 < \(Owner.unassignedFacePermille)"
+            let unassigned = "(media_asset.rowid * 31 + \(k * 389)) % 1000 < \(Reference.unassignedFacePermille)"
             return """
             SELECT library_root_id, relative_path, \(k), 0.3, 0.3, 0.2, 0.2, zeroblob(40), 0.47, \(FaceAnalyzer.revision),
                    CASE WHEN \(unassigned) THEN NULL
@@ -661,7 +659,7 @@ struct OwnerShapedCatalog {
             """
         }
         shape.faces = 0
-        for (k, photos) in Owner.stillFacePhotos.enumerated() {
+        for (k, photos) in Reference.stillFacePhotos.enumerated() {
             try db.execute(
                 sql: """
                 INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,
@@ -673,7 +671,7 @@ struct OwnerShapedCatalog {
             )
             shape.faces += db.changesCount
         }
-        for (k, photos) in Owner.frameFacePhotos.enumerated() {
+        for (k, photos) in Reference.frameFacePhotos.enumerated() {
             try db.execute(
                 sql: """
                 INSERT INTO face (library_root_id, relative_path, face_index, box_x, box_y, box_width, box_height,

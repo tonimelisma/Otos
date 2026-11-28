@@ -12,6 +12,7 @@ struct LoupeZoomScrollViewTests {
         DisplayImage.fixture(width: edge)
     }
 
+    // Validates: APP-040
     @Test func aSmallImageAfterALargeOneFitsWithoutCrossingTheBounds() throws {
         let view = LoupeZoomScrollView(frame: NSRect(x: 0, y: 0, width: 1600, height: 1200))
         let large = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "large.jpg"))

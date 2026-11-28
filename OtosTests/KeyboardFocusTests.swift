@@ -8,13 +8,15 @@ import Testing
 @MainActor
 @Suite(.testScope)
 struct KeyboardFocusTests {
+    // Validates: APP-012
     @Test func textHoldsTheKeyboardOnlyWhileTheFirstResponderIsText() {
         #expect(KeyboardFocus.of(firstResponderIsText: true) == .text)
         #expect(KeyboardFocus.of(firstResponderIsText: false) == .photos)
     }
 
-    /// The failure on the owner's Mac (2026-11-26): a record of which window held the
-    /// keyboard read "another window" while he worked in the catalog window, Copy was
+    // Validates: APP-012
+    /// The failure on the test Mac (2026-11-26): a record of which window held the
+    /// keyboard read "another window" while the user worked in the catalog window, Copy was
     /// disabled, and ⌘C beeped. Copy is available whenever photos are targeted, and the
     /// command acts on them when no text holds the keyboard.
     @Test func copyIsAvailableWheneverPhotosAreTargetedAndCopiesThem() async throws {
@@ -56,6 +58,7 @@ struct KeyboardFocusTests {
         #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] == [ids[1].fileURL])
     }
 
+    // Validates: APP-012
     /// A Select All with no text holding the keyboard selects every photo shown.
     @Test func selectAllWithPhotosHoldingTheKeyboardSelectsEveryPhoto() throws {
         let model = CatalogWindowViewModel(

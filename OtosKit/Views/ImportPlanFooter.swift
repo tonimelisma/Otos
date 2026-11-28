@@ -6,7 +6,7 @@ import SwiftUI
 /// (at most one prominent button — empty in the Done states that have no act
 /// left, DES-052/DES-053). The view is passive: `ImportBarPresentation.map`
 /// computes every string and the middle zone's shape; this file renders that
-/// value and calls intents (`AGENTS.md` → Architecture Standards). One fixed
+/// value and calls intents (`CLAUDE.md` → Architecture standards). One fixed
 /// height across every state (DES-018, DES-053) — a state with nothing to show
 /// in the middle zone holds blank space rather than resizing the surface.
 struct ImportPlanFooter: View {

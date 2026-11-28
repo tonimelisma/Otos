@@ -180,7 +180,7 @@ catalog persistence and scan leases to ADR 0002 and ADR 0008, and enrichment pac
   as a hang.
 - **Walk again on every wake and skip what is paced.** Each skip is cheap, but the walk reads
   every paced row to find it (86,243 rows over 2,696 pages for the preview face reader on a
-  catalog of the owner's shape), and the owner already holds the deadline that would end it.
+  catalog of the reference shape), and the owner already holds the deadline that would end it.
 
 ## Consequences
 

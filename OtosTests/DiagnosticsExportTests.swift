@@ -61,6 +61,7 @@ struct DiagnosticsExportTests {
         try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)).sorted()
     }
 
+    // Validates: APP-098
     @Test func anExportWritesOneNewFolderOfLogsReportsPayloadsAndSizes() throws {
         let fixture = try makeFixture()
         let export = DiagnosticsExport(sources: fixture.sources)
@@ -103,6 +104,7 @@ struct DiagnosticsExportTests {
         #expect(storage.first { $0.name == "Diagnostics" }?.files == 1)
     }
 
+    // Validates: APP-098
     @Test func aSecondExportInTheSameSecondIsANewFolderAndTheFirstIsUntouched() throws {
         let fixture = try makeFixture()
         let export = DiagnosticsExport(sources: fixture.sources)
@@ -117,6 +119,7 @@ struct DiagnosticsExportTests {
         #expect(try names(in: first) == ["about.json", "crash-reports", "log.ndjson", "metrickit", "storage.json"])
     }
 
+    // Validates: APP-098
     @Test func aLogThatCannotBeReadIsNamedAndTheRestIsWritten() throws {
         let fixture = try makeFixture(readLog: { _ in throw LogRefused.notAllowed })
         guard case let .written(folder) = DiagnosticsExport(sources: fixture.sources)
@@ -136,6 +139,7 @@ struct DiagnosticsExportTests {
         #expect(about.logLines == 0)
     }
 
+    // Validates: APP-098
     @Test func aFolderThatNoLongerExistsIsReportedAndNothingIsWritten() throws {
         let fixture = try makeFixture()
         let gone = fixture.destination.appending(path: "Gone", directoryHint: .isDirectory)
@@ -144,6 +148,7 @@ struct DiagnosticsExportTests {
         #expect(try names(in: fixture.destination).isEmpty)
     }
 
+    // Validates: APP-098
     @Test func keptPayloadsAreWrittenAsNewFilesNeverReplacingOne() throws {
         let folder = try makeTestDirectory().appending(path: "MetricKit", directoryHint: .isDirectory)
         MetricKitRecorder.keep([Data("{}".utf8), Data("{\"a\":1}".utf8)], in: folder)

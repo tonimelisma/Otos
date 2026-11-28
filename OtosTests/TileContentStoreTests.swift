@@ -4,6 +4,7 @@ import Testing
 
 @MainActor
 struct TileContentStoreTests {
+    // Validates: ENR-002, ENR-010
     @Test func mergeDetailInsertsAndRequestsDecodeWhenThumbnailExists() throws {
         let store = TileContentStore()
         let detail = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg")
@@ -17,6 +18,7 @@ struct TileContentStoreTests {
         #expect(content.image == nil)
     }
 
+    // Validates: APP-015
     @Test func mergeDetailNeverClearsExistingImageWhenKeyAdvances() throws {
         let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t1.jpg", size: 10, mtime: 1)
@@ -35,9 +37,10 @@ struct TileContentStoreTests {
         #expect(content.detail.thumbnailPath == "t2.jpg")
     }
 
+    // Validates: APP-093
     /// The grid tile keeps painting its older thumbnail until the new one decodes, but no
     /// other surface is handed that older one as the photo's picture: an edited photo's
-    /// pre-edit thumbnail showed in the loupe until its full decode landed (owner, 2026-11-19).
+    /// pre-edit thumbnail showed in the loupe until its full decode landed.
     @Test func anOlderThumbnailIsNeverHandedOutAsTheCurrentOne() throws {
         let store = TileContentStore()
         let unedited = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", size: 10, mtime: 1)
@@ -83,6 +86,7 @@ struct TileContentStoreTests {
         #expect(content.image === image)
     }
 
+    // Validates: APP-015, ENR-010
     @Test func applyDecodedRejectsStaleKey() {
         let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t1.jpg", size: 1, mtime: 1)
@@ -155,6 +159,7 @@ struct TileContentStoreTests {
         #expect(store.imageBytes == cost * 2)
     }
 
+    // Validates: APP-015
     /// Off screen the store keeps `offscreenLimit` tiles, the most recently used, entry and
     /// image: tiles scrolled further away are dropped, the visible ones never.
     @Test func offScreenTilesBeyondTheLimitAreDroppedLeastRecentFirst() {

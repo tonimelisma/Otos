@@ -5,12 +5,11 @@
 
 ## Context
 
-The installed app (ADR 0030) was brought up to date by building `main` on the owner's Mac.
+The installed app (ADR 0030) was brought up to date by building `main` on the test Mac.
 Work merged from a cloud session, which cannot reach the Mac, reached the installed app only
-when something on the Mac built and installed it. The owner asked for Sparkle (2026-11-26:
-"Set up sparkle for otos so it autoupdates from now on"), and settled how it is signed:
-"Sparkle does not need notarization", as another project of his updates itself with
-Sparkle, its own update key and his development certificate.
+when something on the Mac built and installed it. The installed app now updates itself with
+Sparkle (2026-11-26), signed with its own update key and the maintainer's Apple Development
+certificate; Sparkle does not need notarization.
 
 ## MECE Decision Scope
 
@@ -24,7 +23,7 @@ prove a commit to `.github/workflows/ci.yml`.
 1. **Sparkle 2, pinned.** Sparkle 2.10.1 (`exactVersion`, resolved by commit in
    `Package.resolved`) is linked into OtosKit, where the app's code lives, and embedded by
    the app. A newer Sparkle is taken by a deliberate bump.
-2. **Signed by Otos's own update key and the owner's development certificate; not
+2. **Signed by Otos's own update key and the maintainer's Apple Development certificate; not
    notarized.** Sparkle accepts an update only when its archive's EdDSA signature matches
    the public key the installed app carries (`SUPublicEDKey`, the build setting
    `OTOS_SPARKLE_PUBLIC_ED_KEY`) and its code signature matches the installed app's. The key
@@ -49,8 +48,7 @@ prove a commit to `.github/workflows/ci.yml`.
    holds one, the item says which version waits and why (`Otos 1.0.9 Is Ready to Install`:
    it installs when the import or library reorganization in progress finishes, or at once if
    the user quits); while Sparkle's own check or download runs, the item is disabled, following
-   Sparkle's `canCheckForUpdates` (owner, 2026-11-27: "when I click for check updates, nothing
-   happens in the app").
+   Sparkle's `canCheckForUpdates`, so choosing it never appears to do nothing.
 5. **Installing never interrupts work.** Sparkle hands the downloaded update's install to
    `UpdateInstallGate`, which holds it while an import or a reorganization is in flight and
    runs it once none is: Sparkle quits Otos, replaces it and opens it again. The Store owns
@@ -62,18 +60,18 @@ prove a commit to `.github/workflows/ci.yml`.
 6. **CI builds and publishes every `main` commit CI passed that changes the app.**
    `.github/workflows/release.yml` runs after CI, only for a push to `main` that passed, in the
    environment `release`. Its first step fetches the certificate, its password, the team ID and
-   the update key from Azure Key Vault `<vault>` with no stored credential: the job's
+   the update key from an Azure Key Vault with no stored credential: the job's
    GitHub OIDC token signs in as the Entra app `gh-otos-release`, which trusts only
-   `repo:tonimelisma/Otos:environment:release` and reads only those four secrets. The owner
-   manages them from his private repository `<secrets-repo>`. `script/release.sh` publishes only when something under `Otos/`, `OtosKit/`,
-   `Otos.xcodeproj/` or `Config/` changed since the newest release (owner, 2026-11-26: "no need
-   to release a new release with only a new versioning scheme"); a commit of docs or scripts
+   `repo:tonimelisma/Otos:environment:release` and reads only those four secrets.
+   `script/release.sh` publishes only when something under `Otos/`, `OtosKit/`,
+   `Otos.xcodeproj/` or `Config/` changed since the newest release (a new versioning scheme
+   alone is no reason for a release); a commit of docs or scripts
    alone ships nothing. It builds by the recipe `script/install.sh` uses
    (`script/lib/installed-build.sh`) with the certificate imported into a keychain of the run's
    own, signs the zipped app with the update key (on standard input), and publishes the release
    `v<x.y.z>` with the archive, its dSYMs, the feed (`script/appcast.sh`) and a disk image for
    installing by hand (`Otos.dmg`, signed with the app's certificate: the app beside a link to
-   Applications, as latchkey's is; the release notes say how to open an app that is not
+   Applications; the release notes say how to open an app that is not
    notarized). It is marked latest, so `releases/latest/download/appcast.xml` and
    `…/Otos.dmg` always name the newest build. A commit no newer than the newest release is
    skipped; the newest three releases are kept.
@@ -81,11 +79,11 @@ prove a commit to `.github/workflows/ci.yml`.
    database about the Sparkle version `Package.resolved` pins (`script/sparkle-advisories.sh`)
    and stops on any advisory, or when OSV does not answer. A fix is a deliberate Sparkle bump.
 8. **Semantic versions for people, the commit count for Sparkle.** Each release is the next
-   patch of the project's `MARKETING_VERSION` series, `x.y` (owner, 2026-11-26: "can we adopt
-   semver? bump on every commit"): `script/release-version.sh` takes the newest published
+   patch of the project's `MARKETING_VERSION` series, `x.y` (semantic versions, bumped on every
+   release, 2026-11-26): `script/release-version.sh` takes the newest published
    `v<x.y.z>` and adds one to its patch, or starts a newer series at `x.y.0`, and the build
    carries it as `CFBundleShortVersionString`. A new major or minor version is a commit that
-   changes `MARKETING_VERSION`, the owner's decision. Sparkle compares `CFBundleVersion`, the
+   changes `MARKETING_VERSION`, a maintainer's decision. Sparkle compares `CFBundleVersion`, the
    commit count: `main` takes only squash merges, so it grows with every merge, and builds
    published before semantic versions (`build-1598`, `build-1599`) compare below every later
    one. The version is taken from the published releases, not committed to a file, so a release
@@ -104,19 +102,19 @@ prove a commit to `.github/workflows/ci.yml`.
 - **The Mac's own updater: a launchd agent that pulls `main` and builds it.** It needed the
   Mac's checkout kept clean and on `main`, built on the Mac for every merge, and was replaced
   before it was set up.
-- **Developer ID signing and notarization.** Gatekeeper's path for apps others download; the
-  owner's installs and updates need neither, and notarization refuses `get-task-allow`, which
+- **Developer ID signing and notarization.** Gatekeeper's path for apps others download; these
+  installs and updates need neither, and notarization refuses `get-task-allow`, which
   ADR 0030 keeps.
 - **A Release build.** Drops `get-task-allow` and `#if DEBUG` diagnostics (ADR 0030).
 - **A self-hosted Actions runner on the Mac.** The repository is public and takes pull
-  requests from anyone; their workflows would run on the owner's Mac.
+  requests from anyone; their workflows would run on the test Mac.
 - **Hand-written update code (download, verify, swap).** Sparkle does each step, signature
   checks and the replace-and-relaunch included, and is maintained for exactly this.
 - **Installing on Sparkle's schedule.** It would quit Otos in the middle of an import.
 - **A version file bumped by each release.** It needs a commit on `main` per release, which the
   release would then build again; the published tags already say which version is newest.
 - **The version from commit messages (feat → minor, fix → patch).** It makes every merge's title
-  decide what users see; the owner decides a new series by changing `MARKETING_VERSION`.
+  decide what users see; a maintainer decides a new series by changing `MARKETING_VERSION`.
 - **GitHub Pages for the feed.** A release already holds the archive; its latest-release URL
   serves the feed with no second place to publish to.
 

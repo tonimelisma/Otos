@@ -18,6 +18,7 @@ struct MapMouseDownTests {
         ))
     }
 
+    // Validates: APP-058
     /// A single and a double click inside the map reach it with AppKit's count.
     @Test func aPressInsideTheMapCarriesItsClickCount() throws {
         let inside = NSPoint(x: 300, y: 200)
@@ -27,6 +28,7 @@ struct MapMouseDownTests {
         #expect(double.clickCount(inWindow: Self.window, frame: Self.frame) == 2)
     }
 
+    // Validates: APP-058
     /// A press outside the map's frame, or in another window, is not the map's: the event
     /// goes on to whatever is under it.
     @Test func aPressElsewhereIsNotTheMaps() throws {
@@ -40,6 +42,7 @@ struct MapMouseDownTests {
         }
     }
 
+    // Validates: APP-058
     /// An event that is not a left mouse-down is no press here, and its click count, which
     /// raises on a non-mouse event, is never read.
     @Test func anyOtherEventIsNoPress() throws {

@@ -2,7 +2,7 @@
 
 ## Question
 
-After the scroll hold stopped parking acts (`2026-11-17-acts-at-the-owners-library-size.md`),
+After the scroll hold stopped parking acts (`2026-11-17-acts-at-the-reference-library-size.md`),
 three of 48 Move to Trash and Put Back acts on a seeded 160,002-file library still passed
 100 ms (101, 113, 116 ms). Their grid apply logged `followsEdit=false`. What made them
 compare, and what removes it?

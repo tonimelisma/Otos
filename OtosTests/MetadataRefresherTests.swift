@@ -10,6 +10,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct MetadataRefresherTests {
+    // Validates: ENR-005
     @Test func aStaleRecordIsReReadWhenItsOriginalIsLocalAndLeftWhenItIsNot() async throws {
         // HEIF: its family's reading has changed since revisions began, so a record with no
         // revision is stale (a JPEG's has not: it is current at 0).
@@ -45,6 +46,7 @@ struct MetadataRefresherTests {
         }
     }
 
+    // Validates: ENR-005
     /// MediaMetadata 0.8.0 reads PNG as a family of its own. A PNG that 0.7.1 cataloged
     /// as `unknown` at revision 1 is older than `unknown`'s revision 2, so it is re-read
     /// from local bytes and becomes a `png` record at that family's revision.
@@ -77,6 +79,7 @@ struct MetadataRefresherTests {
         }
     }
 
+    // Validates: ENR-005
     /// Only library rows with a current enrichment and a record older than its family's
     /// current reading are candidates: a card row, a row already current, a row whose file
     /// changed (which enrichment re-reads anyway), and a family the library has not changed
@@ -172,6 +175,7 @@ struct MetadataRefresherTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-020
     /// ADR 0041: a cloud-only, Apple-made record that predates the content identifier may be
     /// half of a Live Photo, so it is handed to enrichment, which downloads it once and
     /// writes every product from that one read — metadata, checksum and thumbnail. A

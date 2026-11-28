@@ -1,118 +1,88 @@
 ---
 name: mac-session
-description: What a Claude Code session started on the owner's Mac adds — read-only work on his production data, the installed app's logs and symbols, profiling, the weekly performance run and owner-library tours, the look at the installed app, git over SSH. Use only in a session running on the Mac; a cloud session never reaches the Mac.
+description: What a local Claude Code session on a Mac adds to the cloud workflow — native dev builds and tests, the look at the dev app and (read-only) at the installed app, logs, symbols, lldb and profiling, and the weekly performance run on a generated reference library. Use only in a session running on a Mac with Xcode.
 ---
 
-# A session on the owner's Mac
+# A session on a Mac
 
-The owner starts such a session from Claude Code on the Mac itself; a cloud session never
-reaches the Mac.
+The cloud session is the default and CI is the verification. A local session on any Mac with
+Xcode 27 (and possibly Otos installed) may also build and test natively, run the visual and
+end-to-end checks, and inspect the installed app read-only. Its verification is still the
+PR's `CI gate`.
 
-- It develops in a dedicated git worktree, never in the primary checkout's `main`.
-- Its builds are dev builds (`net.melisma.Otos.dev`, with their own Application Support)
-  against generated catalogs.
-- It never installs: Sparkle is the only installer (ADR 0059).
-- Its verification is the same CI run as a cloud session's. A local `script/check.sh` is
-  for iterating, run in the background and watched (`long-checks` skill).
+- It develops in its own git worktree, never in the primary checkout's `main`.
+- Its builds are dev builds (bundle id `net.melisma.Otos.dev`, their own Application Support),
+  run against generated catalogs and libraries (`script/sandbox-library.sh`,
+  `script/smoke-run.sh`, `script/scorecard.sh --dev --seed <photos>`).
+- It never installs: Sparkle is the only installer (ADR 0059), so the installed app is always
+  a build CI published.
+- `script/check.sh` builds and tests locally; run it in the background and watch it
+  (`long-checks` skill). It is for iterating; CI on the final commit is the evidence.
 
-## The owner's production data is read, never changed
+## The user's data
 
-He asked for read-only testing on his real data (2026-11-15: "you are supposed to use my
-production data for all read-only testing!"; 2026-11-18: "…including immich key"). This
-is expected, and nobody asks first:
+Otos tooling never writes to a user's library, catalog, Immich server or the installed app's
+settings (ADR 0020). Experiments that write use generated catalogs and libraries.
 
-- launching the installed app and looking at it, and visiting its views;
-- reading its unified log and crash reports;
-- opening its catalog read-only (`sqlite3 -readonly … ?mode=ro`) for schema, counts,
-  plans and timings;
-- `stat` and `du` of his libraries and app folders;
-- read-only GET requests to his Immich server with the session token Otos stored in the
-  Keychain. The token is never printed or logged, and goes only to his own server.
+- Read-only inspection of the installed app is fine: launching it and looking at its window,
+  its unified log and crash reports.
+- A live check on real data (reading the installed app's catalog, touring its library,
+  querying a real Immich server) happens only when the person running the session asks for
+  it, and stays read-only: `sqlite3 -readonly … ?mode=ro`, no Like, Trash, rename, import,
+  erase, edit, reorganize or setting, no copy of the catalog launched as a library, and no
+  read of a cloud-only file's bytes (it would download).
+- An Otos the session launched is quit when the look is done, and the quit is confirmed
+  (`pgrep -x Otos`).
 
-These are never done there, because they change his data or leave state behind:
+## The look
 
-- Move to Trash, Like or Dislike, naming or merging people;
-- import, erase, edit, reorganize, or any settings change;
-- any write to the catalog or to his Immich server;
-- a copy or backup of it, or a build launched on a copy (a copy's roots are his real
-  folders and devices);
-- reading a cloud-only file's bytes, which downloads it.
+Use the screen tools the session has (computer use), looking at Otos's own window.
 
-An Otos the session launched is quit when the look is done, and the quit is confirmed
-(`pgrep -x Otos`).
-
-## The look at the installed app
-
-Use the screen tools the session has (computer use), looking at Otos's own window without
-moving the owner's pointer where the tool allows.
-
-- Sparkle installs each published release within the hour. To look at a specific
-  release, wait for it (`gh release view v<x.y.z>`), choose App ▸ Check for Updates…, and
-  confirm the installed `CFBundleShortVersionString`.
-- Take a screenshot of each surface the increment changed, and of All Media's grid after
-  any app change.
-- Read the window's accessibility tree where the tool offers it. Its labels name every
-  tile, so a blank tile, a duplicate, or a wrong badge or count is read rather than
-  guessed.
-- Allowed: navigation that changes no data, such as selecting a sidebar row, scrolling,
-  opening a photo, or switching view mode.
-- Never: a Like, Trash, rename, import, edit or setting.
-- Put the window back where the owner left it.
-- When the Mac is locked or the session has no screen tools, the look is a non-blocking
-  note.
+- The dev app: build it (`script/build_and_run.sh`) and look at each surface the increment
+  changed on a generated library, light and dark.
+- The installed app, read-only: Sparkle installs each published release within the hour; to
+  look at a specific release, wait for it (`gh release view v<x.y.z>`), choose App ▸ Check for
+  Updates…, and confirm the installed `CFBundleShortVersionString`.
+- Read the window's accessibility tree where the tool offers it: its labels name every tile,
+  so a blank tile, a duplicate, or a wrong badge or count is read rather than guessed.
+- Allowed on the installed app: navigation that changes no data (selecting a sidebar row,
+  scrolling, opening a photo, switching view mode). Put the window back as it was.
+- When the Mac is locked or the session has no screen tools, the look is a non-blocking note.
 
 ## Logs, symbols, profiling
 
-- **Logs:**
-  - `script/logs.sh stream [Category]` streams live.
-  - `script/logs.sh show --last 10m` prints post-hoc ndjson.
-  - The installed app persists `.info` and `.debug`.
-- **Debugging and profiling:**
-  - The installed app is a Debug build compiled with `-O` that keeps `get-task-allow`
-    (ADR 0030). Attach with `lldb -p` or `xcrun xctrace record --attach <pid>`.
-  - `script/installed-symbols.sh` first fetches the installed build's dSYMs.
-  - Profile with `script/profile.sh "<Template>" 10s` and `script/profile-export.sh
-    <trace>` (ADR 0015).
-- **Diagnosis tools:** `script/scorecard.sh` (ADR 0015) and `script/bench.sh history`.
+- **Logs:** `script/logs.sh stream [Category]` streams live (`--pid <pid>` scopes it to one instance);
+  `script/logs.sh show --last 10m` prints post-hoc ndjson. Otos persists `.info` and `.debug`.
+- **Debugging:** dev builds and the installed app are Debug builds that keep `get-task-allow`
+  (the installed one compiled with `-O`, ADR 0030). Attach with `lldb -p <pid>` or
+  `xcrun xctrace record --attach <pid>`. `script/installed-symbols.sh` fetches the installed
+  build's dSYMs from its release first.
+- **Profiling:** `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`
+  (ADR 0015) profile the dev build.
+- **Diagnosis:** `script/scorecard.sh` (ADR 0015) and `script/bench.sh history`. A user's
+  problem reaches a session as a Help ▸ Export Diagnostics… folder (ADR 0060).
 
 ## The weekly performance run (ADR 0043)
 
-`script/check.sh` prints one `op=perf.status` line:
+The felt targets in `docs/scorecard-targets.json` hold for a reference library of 160,000
+items (`docs/research/2026-11-16-performance-baseline.md`). `script/perf.sh run` tours an
+optimized dev build on a generated library of that size (`scorecard.sh --tour --dev
+--optimized --seed 160000 --seed-media small`), then counts the benchmark cases on
+`origin/main`, and writes one verdict. It reads no user data. `script/check.sh` prints one
+`op=perf.status` line:
 
-- **`verdict=due`:** start `script/perf.sh run` in the background, watch it, and keep
-  working.
-  - It tours the installed app on the owner's library, read-only, then counts the
-    benchmark cases on `origin/main`, and writes one verdict.
-  - Another session's start gets `phase=skipped`.
-  - `phase=pending` (an import in flight) leaves it due.
-- **`verdict=fail`:** a target in `docs/scorecard-targets.json` was missed on his library
-  (`felt=`). Fixing it is the next work.
-  - Start with one tour that reproduces it (`script/scorecard.sh --tour`).
-  - A miss that does not reproduce is recorded with `script/perf.sh not-reproduced
-    <scorecard>`. A `fail` carrying `notReproduced=` asks for nothing.
-  - A target changes only by the owner's decision.
-- **Instruction rises (`cpu=`)** decide nothing; the owner says whether one is work.
-- **No other tour or benchmark** belongs to a PR, unless the owner asks or a fix is
-  reproducing a `fail`.
+- **`verdict=due`:** start `script/perf.sh run` in the background and keep working; another
+  session's start gets `phase=skipped`.
+- **`verdict=fail`:** a felt target was missed (`felt=`). Fixing it is the next work: start
+  with one tour that reproduces it (`script/scorecard.sh --tour --dev --optimized --seed
+  160000 --seed-media small`). A miss that does not reproduce is recorded with
+  `script/perf.sh not-reproduced <scorecard>`.
+- **Instruction rises (`cpu=`)** decide nothing by themselves; they are listed in the report.
+- A target changes only with the decision that sets it, recorded in the same PR.
 
-## Owner-only tooling
+## Other Mac-only work
 
-These run only on the Mac, on his data:
-- `script/face-accuracy.sh`, `script/description-eval.sh`,
-  `script/scene-label-hierarchy.sh`;
-- Core ML conversion and validation of the `.mlpackage` files in `OtosKit/Resources/`.
-  They come from his research repositories, which hold private family data and are out
-  of scope.
-- Apple Translation's language resources.
-
-## Git over SSH
-
-On the Mac, git reaches GitHub over SSH the moment HTTPS fails or stalls: a TLS handshake
-timeout, `early EOF`, a fetch killed by a signal, or no progress. Switch at once, with no
-HTTPS retry, to the deploy key's alias:
-
-- fetch: `git fetch git@github.com:tonimelisma/Otos.git main:refs/remotes/origin/main`
-- push: `git push git@github.com:tonimelisma/Otos.git <branch>`
-
-Use the alias for the rest of the session. `gh` uses HTTPS only; when a `gh pr` command
-times out, issue the same request once through `gh api` before reporting it failed.
+- Core ML conversion and validation of the `.mlpackage` files in `OtosKit/Resources/`
+  (ADR 0045, ADR 0047) and Apple Translation's language resources need a Mac.
+- `gh` uses HTTPS; when a `gh pr` command times out, issue the same request once through
+  `gh api` before reporting it failed.

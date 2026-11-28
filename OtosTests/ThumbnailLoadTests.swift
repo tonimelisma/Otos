@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct ThumbnailLoadTests {
+    // Validates: APP-095
     @Test func aStoredThumbnailThatDoesNotDecodeIsUnavailableAndDrawsTheSlashGlyph() async throws {
         let directory = try makeTestDirectory()
         try Data("not an image".utf8).write(to: ThumbnailStore.url(for: "broken.jpg", in: directory))
@@ -39,6 +40,7 @@ struct ThumbnailLoadTests {
         #expect(load.placeholderSystemName(for: .raw) == "r.square")
     }
 
+    // Validates: APP-095
     @Test func aPaintedPictureIsReplacedOnlyByANewerPicture() {
         let painted = DisplayImage.fixture(width: 8)
         let newer = DisplayImage.fixture(width: 12)

@@ -13,6 +13,7 @@ import Testing
 /// which is the failure exactly: under the old conformance the check fired at method
 /// entry, before any body ran, so an empty method trapped just as hard as a busy one.
 struct ImageCaptureDelegateIsolationTests {
+    // Validates: APP-018
     @Test func browserCallbackDeliveredOffTheMainThreadDoesNotTrap() async {
         let monitor = await CameraSourceMonitor(
             stagingContainers: StagingContainers(base: URL.temporaryDirectory), onAttach: { _ in }, onDetach: { _ in }

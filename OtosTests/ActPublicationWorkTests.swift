@@ -5,7 +5,7 @@ import Testing
 
 /// An act's publication costs in what the act changes, never in the scope it changes
 /// (ADR 0005, "An act's publication is its edit"): a Move to Trash of one photo and its Put
-/// Back, at the owner's library size, visit and index a few positions, the same few as in a
+/// Back, at the reference library's size, visit and index a few positions, the same few as in a
 /// tenth of it. Counted work (`CatalogGridContent.Work`), never time.
 @Suite(.testScope)
 struct ActPublicationWorkTests {
@@ -88,18 +88,20 @@ struct ActPublicationWorkTests {
         return (hidden.mediaGrid.content.work, back.mediaGrid.content.work)
     }
 
+    // Validates: ARC-064
     /// At 160,000 photos a one-photo Move to Trash and its Put Back each visit and index a
     /// few positions, and the same few at 16,000: the work is the edit's, not the scope's.
     /// Copying the order's storage in runs is the one part in proportion to the scope.
     @Test func aOnePhotoActsPublicationCostsItsEditNotItsScope() async throws {
-        let owner = try await Self.actWork(photos: 160_000)
+        let reference = try await Self.actWork(photos: 160_000)
         let tenth = try await Self.actWork(photos: 16000)
-        #expect(owner.hide.visited <= 4 && owner.hide.indexed <= 4, "Move to Trash at 160,000: \(owner.hide)")
-        #expect(owner.putBack.visited <= 8 && owner.putBack.indexed <= 4, "Put Back at 160,000: \(owner.putBack)")
-        #expect(owner.hide.visited == tenth.hide.visited && owner.hide.indexed == tenth.hide.indexed)
-        #expect(owner.putBack.visited == tenth.putBack.visited && owner.putBack.indexed == tenth.putBack.indexed)
+        #expect(reference.hide.visited <= 4 && reference.hide.indexed <= 4, "Move to Trash at 160,000: \(reference.hide)")
+        #expect(reference.putBack.visited <= 8 && reference.putBack.indexed <= 4, "Put Back at 160,000: \(reference.putBack)")
+        #expect(reference.hide.visited == tenth.hide.visited && reference.hide.indexed == tenth.hide.indexed)
+        #expect(reference.putBack.visited == tenth.putBack.visited && reference.putBack.indexed == tenth.putBack.indexed)
     }
 
+    // Validates: ARC-064
     /// A Move to Trash delivered while a background pass's publication of a read is being
     /// made off the actor is published at once, before that publication; when the read's
     /// publication follows, it keeps the trashed photo off, is an edit of the act's order of

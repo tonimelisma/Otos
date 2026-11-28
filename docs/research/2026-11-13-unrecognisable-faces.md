@@ -10,7 +10,7 @@ direction is the mean embedding of face crops blurred until no identity is left.
 cosine with it reaches 0.2 is unrecognisable. Otos never guesses it, groups it, or compares
 another face with it, and a bare person's unrecognisable seeds lapse. Decision: ADR 0047.
 
-The research material is in `~/Development/Otos-face-research` (owner photos, never
+The research material is in `~/Development/Otos-face-research` (private photos, never
 committed). The tools named below are in its `tools/`, and the numbers come from its `run3/`.
 
 ## 1. What the new person was

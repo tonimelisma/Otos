@@ -10,7 +10,7 @@ target: 700 MB); its second launch at 534 MB, and a first launch of 2,000 smalle
 ## Method
 
 Generated sandbox libraries only (`script/sandbox-library.sh`, its home on a volume of its
-own); the owner's library was not used. The optimized dev build (`--optimized`, the
+own); the reference library was not used. The optimized dev build (`--optimized`, the
 installed app's compiler settings), launched with `OTOS_SANDBOX_LIBRARY` so its first launch
 registers the library through the window's Add Library intent and enriches it at once.
 `script/survey.sh --launch` around each first launch (footprint, kernel lifetime maximum,

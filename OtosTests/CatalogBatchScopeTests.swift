@@ -14,6 +14,7 @@ import Testing
 struct CatalogBatchScopeTests {
     private static let batch = ImportBatchID(unixMilliseconds: 1_785_908_514_176)
 
+    // Validates: ARC-022, ARC-044, APP-025
     /// Every scoped read agrees about the batch: ordering, both counts and the filter's
     /// choices, so a batch of videos offers no stills it does not hold (APP-025).
     @Test func everyScopedReadAppliesBatchMembership() async throws {
@@ -68,6 +69,7 @@ struct CatalogBatchScopeTests {
 
     private static let heifOnly = MediaFilter(fileTypes: [FilterFileType(kind: .image, format: MediaFormatToken(rawValue: "HEIF"))])
 
+    // Validates: ARC-022, ARC-044
     /// The reported case: an active HEIC-only filter hides both imported clips. The
     /// batch is not empty, so the window must offer Clear Filters instead of telling
     /// the user to add a library.
@@ -88,6 +90,7 @@ struct CatalogBatchScopeTests {
         #expect(emptyState == .noFilterMatches)
     }
 
+    // Validates: ARC-044
     /// A batch spans the fixed libraries, so when they are unreachable its rows are
     /// unreachable rather than absent — the same distinction All Media draws.
     @Test func batchWithUnreachableLibrariesReportsUnavailableNotEmpty() {

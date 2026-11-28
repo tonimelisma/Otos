@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct KnownMaterializationSuppressionTests {
+    // Validates: ARC-036
     @Test func beginKeepsEntryActiveThroughMaterializationTimeoutWindow() {
         var state = KnownMaterializationSuppressionState()
         let id = MediaAssetID(

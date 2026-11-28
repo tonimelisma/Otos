@@ -17,6 +17,7 @@ struct ScopeReachPlanTests {
     /// catalog under the global order indexes.
     static let rows = 300
 
+    // Validates: ARC-022
     /// A person's order reads their own rows of `person_photo` at every size (v78), and the
     /// person's other reads — the filter's options and the count — seek the person's photos
     /// from their faces until they are too many, and then walk.
@@ -47,6 +48,7 @@ struct ScopeReachPlanTests {
         }
     }
 
+    // Validates: ARC-022
     @Test func onThisDaySeeksItsDayUntilTheDayIsTooLargeAndThenWalksTheOrder() async throws {
         let seeking = (Self.rows - 1) / SeekSize.dayRatio
         let dbQueue = try await Self.catalog { db, _ in
@@ -75,6 +77,7 @@ struct ScopeReachPlanTests {
         #expect(walked.isEmpty, "\(walked)")
     }
 
+    // Validates: ARC-022
     @Test func aMapAreaSeeksItsCellsUntilTheyHoldTooManyRowsAndThenWalksTheOrder() async throws {
         let seeking = (Self.rows - 1) / SeekSize.areaRatio
         let dbQueue = try await Self.catalog { db, rootID in

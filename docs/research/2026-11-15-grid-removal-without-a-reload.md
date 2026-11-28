@@ -135,7 +135,7 @@ So a removal of N items costs the main thread, optimized,
              + about 0.35 M for each tile on screen the batch removes or brings into view
              + a removed item off screen: too little to separate in these runs
 
-about 1.9 ms for one and 4 ms for 200 at the owner's size, and the whole apply under one
+about 1.9 ms for one and 4 ms for 200 at the reference library's size, and the whole apply under one
 60 Hz frame of CPU spread over the animation's frames. The term in the grid's items is
 AppKit's own and small (about 10 M instructions, a millisecond, at 158,000); nothing of
 Otos's walks the items or the days on the main thread except the layout's one pass over the
@@ -190,7 +190,7 @@ its constraints, and AppKit no longer walks 5,000 sections after either.
 
 ## Conclusions
 
-- A Move to Trash of a few hundred items at the owner's size is a batch: every surviving
+- A Move to Trash of a few hundred items at the reference library's size is a batch: every surviving
   tile keeps its view and its painted thumbnail, the removed ones shrink and fade, and the
   main thread's synchronous share is 2–4 ms optimized.
 - The grid's AppKit section is one; days are the layout's. Headers are keyed by day.

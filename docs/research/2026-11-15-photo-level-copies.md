@@ -1,6 +1,6 @@
 # A photo's copies: choices, faces, the next reachable copy and mirrors (2026-11-15)
 
-Supports the ADR 0054 and ADR 0042 sections the owner's three decisions of 2026-11-15 added
+Supports the ADR 0054 and ADR 0042 sections that three product decisions added
 (review #775: a mirror is never a duplicate; a choice and a face are the photo's; only the next
 best reachable copy shows).
 
@@ -12,7 +12,7 @@ external assets — and what does migration v64 cost?
 
 ## Method
 
-No owner data was read (owner's rule, 2026-11-15). One owner-shaped catalog, built by a test that
+No data from the reference library was read (by rule). One reference-shaped catalog, built by a test that
 was never committed and deleted afterwards, after `CatalogStore.migrator` to v62:
 
 - 166,000 rows: 16,000 in a library of month folders (one in twenty a RAW) and 150,000 in an

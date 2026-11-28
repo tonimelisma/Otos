@@ -9,6 +9,7 @@ import Testing
 /// different question and must not inherit that permanent answer.
 @Suite(.testScope)
 struct ImportPlanningNamingFactsTests {
+    // Validates: ARC-057
     @Test func aKnownCaptureWallIsTerminalEvenWhenEnrichmentCanNeverSettle() async throws {
         let temp = try makeTestDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -102,6 +103,7 @@ struct ImportPlanningNamingFactsTests {
         #expect(afterEnrichment.namingFactState == .terminal)
     }
 
+    // Validates: ARC-057
     /// ARC-057: a durable mtime is not a naming fact *before* enrichment has read the
     /// file. "No capture wall" on an unread row means "we have not looked", not "there
     /// is none" — and naming from mtime there fabricates

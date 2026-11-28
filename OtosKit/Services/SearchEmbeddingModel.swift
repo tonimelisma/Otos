@@ -19,7 +19,7 @@ import Foundation
 ///   (`value = int8 × scale`), so no file reaches GitHub's 100 MB limit;
 ///   they are memory-mapped, and a query touches only its own rows.
 ///
-/// Chosen and measured on the owner's library
+/// Chosen and measured on the reference library
 /// (`docs/research/2026-11-09-keyword-search.md`). CPU only, as every Otos model runs
 /// (ADR 0045). Neither type is `Sendable`: each lives inside the one actor that owns it.
 nonisolated enum SearchEmbedding {
@@ -86,7 +86,7 @@ nonisolated struct SearchImageModel {
 /// The resize SigLIP 2 was trained and measured with: open_clip hands a PIL image to
 /// torchvision, which resizes it with PIL's bicubic filter (a = −0.5), widened by the scale
 /// when shrinking, horizontally then vertically, rounding to 8 bits between the passes.
-/// Core Graphics' high-quality interpolation is a different filter: on the owner's thumbnails
+/// Core Graphics' high-quality interpolation is a different filter: on the reference library's thumbnails
 /// its squares moved embeddings to a median cosine of 0.973 against the reference, and this
 /// filter's to 0.999 (`docs/research/2026-11-09-keyword-search.md` §8). Each pass is one
 /// matrix product per channel (Accelerate), fast enough in a Debug build.

@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 @Suite(.testScope)
 struct ThumbnailStoreTests {
+    // Validates: ENR-016
     /// ADR 0035: the preview is an 8-bit Display P3 HEIC under the asset's `.heic` name, and
     /// `scaled` never enlarges.
     @Test func previewStagesAsDisplayP3HEICAndScalingNeverEnlarges() throws {
@@ -123,6 +124,7 @@ struct ThumbnailStoreTests {
         #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
     }
 
+    // Validates: ENR-004
     /// Staging has its own subdirectory, so the startup sweep lists only what was staged —
     /// never the finished images beside it, which number in the tens of thousands.
     @Test func startupClearsOnlyTheStagingSubdirectory() throws {

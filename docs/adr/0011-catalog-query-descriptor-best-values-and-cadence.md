@@ -119,7 +119,7 @@ and Videos parent toggles directly above their child file types. Partial child
 selection gives the parent a mixed state; selecting every kind or clearing every
 selection canonicalizes back to the empty, all-items descriptor.
 
-The filter's options are the sidebar row's (owner order, 2026-11-13). The descriptor's
+The filter's options are the sidebar row's. The descriptor's
 filter belongs to the sidebar row it was set in: choosing another row starts it
 unfiltered, but the filter survives into that row's leaves and back (a map area or
 stack, a person, a duplicate group) and into a restored place (APP-042,
@@ -159,8 +159,8 @@ every order × scope × filter are in
 Rejected: order indexes led by the kind, so a kind filter reads pages in proportion to the
 rows it returns. Two kinds are two ranges SQLite can only merge by sorting, and an
 unfiltered order reads every kind's range out of order, so each of the twelve would need a
-kind-led twin — about 230 MB more index on the owner's catalog, written on every row — to
-save the walk of an index the owner's All Media reads in 82 ms cold.
+kind-led twin — about 230 MB more index on the reference catalog, written on every row — to
+save the walk of an index the reference library's All Media reads in 82 ms cold.
 
 `best_format` tokens are MediaMetadata's file-type names (ADR 0039): HEIC, HEIF and
 HIF are one `HEIF`, JPG/JPE one `JPEG`, TIF one `TIFF`, so every token is one filter
@@ -252,7 +252,7 @@ definition, and keeps the UI passive.
   scope's order walks its index, sorts nothing and reads no table row
   (`CatalogStoreQueryPlanTests.everyOrderOfAWideScopeWalksItsIndexAndReadsNoTableRow`).
 - A choice or a format written on a row moves its entry in all twelve order indexes (about
-  50 KB more write-ahead log for a Like on the owner-shaped catalog).
+  50 KB more write-ahead log for a Like on the reference-shaped catalog).
 
 ## Retirement Proof
 

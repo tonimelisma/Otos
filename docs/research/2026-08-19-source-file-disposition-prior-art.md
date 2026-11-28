@@ -103,7 +103,7 @@ the source tree.
 | path-validated deletion | ❓ unverified for Otos's `removeItem` path |
 | deletion reported | ❌ error-only logging |
 
-## Owner decisions, 2026-08-19
+## Decisions, 2026-08-19
 
 Recorded from a live decision session, and **simpler than gomediaimport's
 model** — the per-extension action table collapses to one preference:

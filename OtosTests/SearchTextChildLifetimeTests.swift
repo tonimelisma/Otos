@@ -15,6 +15,7 @@ struct SearchTextChildLifetimeTests {
     /// blocks it in a reading, while its input thread reads the rest of the requests.
     private static let flood = String(repeating: #"{"path":"/nonexistent/otos-test.jpg"}"# + "\n", count: 20000)
 
+    // Validates: ENR-028
     /// The input closes while the child's reading thread is blocked: the child exits, and
     /// cleanly. Before the input had a thread of its own, the child read it only between
     /// readings and outlived its parent by as long as the reading took.
@@ -40,6 +41,7 @@ struct SearchTextChildLifetimeTests {
         try output.fileHandleForReading.close()
     }
 
+    // Validates: ENR-028
     /// The child's parent is killed while the child's reading thread is blocked: the child
     /// exits. A shell stands in for Otos: it starts the child on two pipes it holds alone,
     /// floods its input as above, and is killed.
@@ -78,6 +80,7 @@ struct SearchTextChildLifetimeTests {
         try parentInput.fileHandleForWriting.close()
     }
 
+    // Validates: ENR-028
     /// The reader's shutdown ends the session whose reading is in flight and returns once its
     /// process is gone; the reading comes back with no result, the page's next still is not
     /// read, and no session starts after. `cat` stands in for a child mid-reading: it keeps

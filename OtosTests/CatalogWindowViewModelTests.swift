@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogWindowViewModelTests {
+    // Validates: ARC-028
     @MainActor
     @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
         let store = makeTestStore(location: .inMemory)
@@ -109,6 +110,7 @@ struct CatalogWindowViewModelTests {
         #expect(state.resolvedSidebarSelection == .library(picturesPath))
     }
 
+    // Validates: ARC-005
     @MainActor
     @Test func removedSelectedLibraryResetsSidebarSelectionToAllMedia() async throws {
         let temp = try makeTestDirectory()
@@ -145,6 +147,7 @@ struct CatalogWindowViewModelTests {
         #expect(state.title == "All Media")
     }
 
+    // Validates: ARC-016
     @MainActor
     @Test func startIsIdempotentAndAddRemoveIntentsRouteToStore() async throws {
         let temp = try makeTestDirectory()
@@ -183,6 +186,7 @@ struct CatalogWindowViewModelTests {
         #expect(removed.mediaGrid.orderedAssetIDs.isEmpty)
     }
 
+    // Validates: APP-007
     /// APP-007, DES-091: removing a library an import holds tells the user it will be
     /// removed when the import finishes, keeps it listed meanwhile, and removes it when
     /// the import releases it.
@@ -230,6 +234,7 @@ struct CatalogWindowViewModelTests {
         _ = try await waitForWindowState(model) { $0.libraries.isEmpty }
     }
 
+    // Validates: ARC-029
     @MainActor
     @Test func addRemoveCommandsExecuteInSubmissionOrder() async throws {
         let temp = try makeTestDirectory()

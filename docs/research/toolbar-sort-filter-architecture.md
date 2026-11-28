@@ -547,7 +547,7 @@ APP-001. (Landed as ADR 0011 + APP-013/014.)
 ## Local Evidence: Filesystem Date Quality (OneDrive Library)
 
 Checked 2026-07-01 in the user's OneDrive camera roll
-(`~/Library/CloudStorage/OneDrive-Personal/Pictures/Camera Roll/2026/06/`),
+(`~/Library/CloudStorage/OneDrive/Pictures/Camera Roll/2026/06/`),
 per the user's request, to assess the quality of the `createdAt` fallback for
 the pre-enrichment window:
 

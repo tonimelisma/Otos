@@ -332,7 +332,7 @@ struct PeopleReferenceModelTests {
                 found.append("\(face): given to \(person), whom the user said it is not")
             }
             // A photo whose date moved keeps the user's word; Otos's own face there loses its
-            // person at the next pass (owner decision, 2026-11-21).
+            // person at the next pass.
             if let person = row.person, row.column != FaceAssignmentColumn.user.rawValue, !dateMoved,
                state.isBefore(face, birthday: state.people[person]?.birthdaySeconds)
             {
@@ -738,6 +738,7 @@ struct PeopleReferenceModelTests {
         return found.isEmpty ? ["states differ (\(act))"] : found
     }
 
+    // Validates: ENR-024
     @Test(arguments: [1, 2, 3, 4, 5, 6] as [UInt64])
     func theCatalogFollowsTheModel(seed: UInt64) async throws {
         let walk = try await walk(seed: seed, steps: 60)

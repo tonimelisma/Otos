@@ -1,7 +1,7 @@
 # Every order the window asks for (plan 0116)
 
 Date: 2026-11-17. The tour's "sort by name" step (All Media, Video filter, 20,325 items) took
-1,075 ms on the owner's library against a 1,000 ms target, and 239–1,154 ms in other tours:
+1,075 ms on the reference library against a 1,000 ms target, and 239–1,154 ms in other tours:
 fast with the file's pages in the OS cache, slow without. The Store's read counter rose 88 MB
 across that one order read. This note lists every order the window can ask for, what each
 read, why, and what v76 changed. No benchmark was run.
@@ -9,7 +9,7 @@ read, why, and what v76 changed. No benchmark was run.
 ## Method
 
 - **Generated catalog.** `OrderReadSurveyTests` (`OTOS_SCALE_TEST=1 script/check.sh --only
-  OrderReadSurveyTests`) makes the owner-shaped catalog (`OwnerShapedCatalog`, scale 1:
+  OrderReadSurveyTests`) makes the reference-shaped catalog (`ReferenceShapedCatalog`, scale 1:
   166,990 assets, 2.3 GB) and reads, for each sort (date newest and oldest, name A–Z and
   Z–A, size largest and smallest, likeness both ways under a person) × each scope kind (All
   Media; All Media with a library offline; one library, the account and library 7; Places; a
@@ -20,19 +20,19 @@ read, why, and what v76 changed. No benchmark was run.
   larger than its working set, so `SQLITE_DBSTATUS_CACHE_MISS` is the distinct pages it read
   from the file; the plan is `EXPLAIN QUERY PLAN`, the rows each loop visited
   `SQLITE_SCANSTAT_NVISIT`. Its SQL, arguments written in, goes to `build/order-survey/sql/`.
-- **The owner's catalog** (schema v75, 167,268 assets), opened only while Otos was not
+- **The reference catalog** (schema v75, 167,268 assets), opened only while Otos was not
   running, with `sqlite3 -readonly "file:…?mode=ro"`, the same pages count (`.stats`, cache
-  1 GB, `mmap_size=0`) for the wide scopes' 270 reads that take no owner-specific argument.
+  1 GB, `mmap_size=0`) for the wide scopes' 270 reads that take no library-specific argument.
   "Cold" is the file's pages dropped from the buffer cache first (`msync(MS_INVALIDATE)` on
-  a read-only mapping; `mincore` then reported 0 of 132,225 pages resident). The owner's
+  a read-only mapping; `mincore` then reported 0 of 132,225 pages resident). The reference
   catalog was read, never written, copied or migrated; the "after" reads there are the new
-  SQL against his v75 indexes, which is the whole change for the name, size and date orders
+  SQL against its v75 indexes, which is the whole change for the name, size and date orders
   under no filter or a kind filter. A file-type, Not Rated or place filter needs v76's indexes,
   so its "after" is the generated catalog's.
 
 ## 1. What every order read, before
 
-On the owner's catalog, All Media (roots 6, 7, 15), pages read; warm time in ms:
+On the reference catalog, All Media (roots 6, 7, 15), pages read; warm time in ms:
 
 | Filter | Date, newest | Name, A–Z | Size, largest |
 | --- | --- | --- | --- |
@@ -95,13 +95,13 @@ After, on the generated catalog, All Media (pages):
 | Liked | 74 → 74 | 74 → 74 | 74 → 74 |
 
 (The generated catalog's descending indexes are written row by row as the generator inserts, so
-they are less full than the owner's, which `CREATE INDEX` built: the ascending date index reads
-3,547 → 4,210 pages, and the owner's v75 date index 3,610.) Every wide read's pages are now the
+they are less full than the reference catalog's, which `CREATE INDEX` built: the ascending date index reads
+3,547 → 4,210 pages, and the reference catalog's v75 date index 3,610.) Every wide read's pages are now the
 pages of its order index, plus the location index for Places and a country, plus the face index
 for a person or Unidentified Faces. The date order reads more than before by the width of the
 two columns.
 
-On the owner's catalog, the change the new SQL makes on his v75 indexes, cold (two runs):
+On the reference catalog, the change the new SQL makes on its v75 indexes, cold (two runs):
 
 | Read | Before | After |
 | --- | --- | --- |
@@ -112,7 +112,7 @@ On the owner's catalog, the change the new SQL makes on his v75 indexes, cold (t
 | All Media, Not Rated, name A–Z | 31,929 pages, 1,243 / 1,215 ms | v76: the name index's pages (generated: 29,237 → 6,952) |
 | People, Not Rated, name A–Z | 33,460 pages, 1,298 / 1,984 ms | v76: the name index's pages and the face index's |
 
-v76 widens each order index by about 2.4–2.6 MB, so on the owner's catalog the name walk will
+v76 widens each order index by about 2.4–2.6 MB, so on the reference catalog the name walk will
 read about 10 % more than the 6,271 pages above.
 
 ## 3. The index set, as a blank slate would build it
@@ -140,8 +140,8 @@ Rejected:
   proportion to the rows it returns rather than to the scope: a filter of two kinds is then two
   ranges SQLite can only merge by sorting, and no filter at all reads every kind's range out of
   order, so the twelve indexes would each need a kind-led twin — 24 indexes, about 230 MB more
-  on the owner's catalog, and twelve more index entries written with every row — to save the
-  walk of an index that the owner's catalog reads in 82 ms cold.
+  on the reference catalog, and twelve more index entries written with every row — to save the
+  walk of an index that the reference catalog reads in 82 ms cold.
 - **A shorter name key** (a digit run's length as one character instead of zero padding, about
   10 MB less over four indexes): its order would differ from the padded key's wherever a run is
   19 digits or longer or holds non-ASCII digits, so it could not keep the visible order byte for
@@ -152,11 +152,11 @@ Rejected:
 ## 4. The migration and what it costs
 
 v76 drops each of the twelve order indexes and makes it again with the two columns after the
-ones it held. On the generated owner-shaped catalog (`CatalogMigrationCostTests`): 3,593–3,805
+ones it held. On the generated reference-shaped catalog (`CatalogMigrationCostTests`): 3,593–3,805
 ms over three runs, 229,175,032 bytes of write-ahead log (the twelve indexes, 227.8 MB, written
 once), the file's size unchanged (2,317,328,384 bytes: the old indexes' pages are reused) and no
 compaction owed. The time is the twelve index builds, each a scan and sort of the 166,990 rows;
-the log is the twelve indexes written once. The owner's file is fragmented on disk, so his will
+the log is the twelve indexes written once. The reference catalog's file is fragmented on disk, so its migration will
 be slower.
 
 | Index | Before | After |

@@ -13,7 +13,7 @@ import Foundation
 /// - **`<id>.vectors`:** a 4,096-byte header (`SearchVectorFormat`: magic, format, dimensions,
 ///   binary16, `SearchEmbedding.revision`, the file's id, a checksum), then one slot of
 ///   `dimensions` little-endian Float16 values per embedding, in the order they were appended.
-///   Float16 keeps every cosine within 5.1e-5 of Float32 on the owner's 165,653 embeddings
+///   Float16 keeps every cosine within 5.1e-5 of Float32 on the reference library's 165,653 embeddings
 ///   (`docs/research/2026-11-16-search-vector-file.md`).
 /// - **`<id>.keys`:** a 64-byte header, then records: a root's path or a label's name the first
 ///   time a slot names it, and each slot's asset and loose scene labels, numbered names with the
@@ -865,7 +865,7 @@ nonisolated struct SearchVectorKeys: Sendable {
                 let labels = Int(SearchVectorFormat.uint16(base, offset))
                 offset += 2
                 // A label's number is checked where it is read (`confidence`, `labels`), not
-                // here: 18 a slot, 3 million on the owner's library, were most of an open.
+                // here: 18 a slot, 3 million on the reference library, were most of an open.
                 try need(labels * SearchVectorFormat.labelEntryBytes)
                 offset += labels * SearchVectorFormat.labelEntryBytes
                 slotIDs.append(MediaAssetID(libraryRootPath: roots[Int(number)], relativePath: path))

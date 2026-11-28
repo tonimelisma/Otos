@@ -11,6 +11,7 @@ struct SearchModelTests {
     private static let bundle = Bundle(for: CatalogWindowViewModel.self)
     private static let fixtures = SourceTree.root.appending(path: "OtosTests/Fixtures/Search")
 
+    // Validates: ENR-027
     /// 2,682 strings — the bake-off's queries in 17 languages, their translations, dictionary
     /// words and edge cases — tokenize to exactly open_clip's ids.
     @Test func theTokenizerMatchesTheTrainedOne() throws {
@@ -37,6 +38,7 @@ struct SearchModelTests {
         #expect(SearchTextTokenizer.canonical("ＡＢＣ") == "abc")
     }
 
+    // Validates: ENR-027
     /// The shipped text path — int8 weights and the int8 token table — gives the
     /// full-precision model's embeddings, in four scripts.
     @Test func theTextPathReproducesFullPrecision() throws {
@@ -52,6 +54,7 @@ struct SearchModelTests {
         }
     }
 
+    // Validates: ENR-027
     /// A red picture is nearer "red" than "blue", and a blue one the other way: the towers
     /// share one space. The same picture embeds the same twice, at unit length.
     @Test func theTowersAgreeAboutColour() throws {

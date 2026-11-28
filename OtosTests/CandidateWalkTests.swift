@@ -26,6 +26,7 @@ struct CandidateWalkTests {
         return dbQueue
     }
 
+    // Validates: ENR-032
     @Test(arguments: [1, 2, 3, 4, 7, 50])
     func aCaptureWalkReadsTheNewestFirstOrderOnceAtAnyPageSize(limit: Int) async throws {
         let dbQueue = try Self.table()
@@ -53,6 +54,7 @@ struct CandidateWalkTests {
         }
     }
 
+    // Validates: ENR-032
     @Test(arguments: [1, 2, 3, 10])
     func aKeyWalkReadsEachRootInPathOrderOnce(limit: Int) async throws {
         let dbQueue = try Self.table()
@@ -71,6 +73,7 @@ struct CandidateWalkTests {
         }
     }
 
+    // Validates: ENR-032
     /// A root that left between pages: the walk goes on with the next root.
     @Test func aKeyWalkWhoseRootLeftGoesOnWithTheNext() async throws {
         let dbQueue = try Self.table()

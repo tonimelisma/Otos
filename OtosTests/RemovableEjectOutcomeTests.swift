@@ -26,6 +26,7 @@ struct RemovableEjectOutcomeTests {
         #expect(model.ejectAlertMessage?.contains("device identity") == true)
     }
 
+    // Validates: APP-008
     /// Measured on macOS 27.0.1 against a held file on a scratch volume:
     /// DiskArbitration refuses with `unix_err(EBUSY)`, `0xC010`, and no status string.
     @Test func aBusyVolumeIsTheMeasuredUnixEBUSYStatus() {
@@ -37,6 +38,7 @@ struct RemovableEjectOutcomeTests {
         #expect(DiskEjector.bsdError(in: DAReturn(truncatingIfNeeded: kDAReturnNotPermitted)) == nil)
     }
 
+    // Validates: APP-008
     /// The alert names the BSD error in the system's words when the status carries one,
     /// and invents no cause when it does not.
     @Test func aRefusalDescribesOnlyTheCauseItCarries() {
@@ -52,6 +54,7 @@ struct RemovableEjectOutcomeTests {
         #expect(withoutCause == "The disk \u{201C}CARD\u{201D} couldn\u{2019}t be ejected.")
     }
 
+    // Validates: APP-008
     /// A busy volume is retried on a bounded schedule; the first attempt that
     /// succeeds ends it.
     @Test func ejectRetriesWhileTheVolumeIsBusyAndStopsOnceItIsNot() async throws {
@@ -69,6 +72,7 @@ struct RemovableEjectOutcomeTests {
         #expect(await attempts.count == 3)
     }
 
+    // Validates: APP-008
     /// Past the last delay a still-busy volume is reported busy — the alert's
     /// wording, not silence.
     @Test func ejectReportsBusyOnceRetriesAreExhausted() async throws {
@@ -89,6 +93,7 @@ struct RemovableEjectOutcomeTests {
         #expect(await attempts.count == 3, "the first attempt and one per delay")
     }
 
+    // Validates: APP-008
     /// A refusal that is not "busy" is not retried.
     @Test func ejectDoesNotRetryANonBusyRefusal() async throws {
         let (store, root) = try await Self.attachedCard(identity: .volume(uuid: "eject-failed"))
@@ -111,6 +116,7 @@ struct RemovableEjectOutcomeTests {
         #expect(await attempts.count == 1)
     }
 
+    // Validates: APP-008
     /// An import copying from the card holds its files open, and it is Otos's own work:
     /// the eject is refused at once, before any unmount attempt or retry.
     @Test func anEjectDuringAnImportIsRefusedAtOnce() async throws {
@@ -132,6 +138,7 @@ struct RemovableEjectOutcomeTests {
         #expect(await attempts.isUntouched)
     }
 
+    // Validates: APP-008
     /// The preview loader has finished its reads on the card before the first unmount
     /// attempt, and is released again once the eject has its outcome.
     @Test func previewReadsAreReleasedBeforeTheUnmountAndResumedAfterIt() async throws {
@@ -224,6 +231,7 @@ struct RemovableEjectOutcomeTests {
 /// (`DiskEjector.attempts(ofVolumeAt:)`), whose busy refusal is asked again after its backoff,
 /// which nothing can replace — no client reports when it stops dissenting.
 struct DiskEjectorLiveDiskImageTests {
+    // Validates: APP-008
     @Test func aHeldVolumeIsBusyAndAReleasedOneEjects() async throws {
         let image = try MountedTestDiskImage.attach(filesystem: "ExFAT")
         defer { image.detach() }

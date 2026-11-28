@@ -24,6 +24,7 @@ struct PhotoDescriptionTests {
         }
     }
 
+    // Validates: APP-077, ENR-032
     /// A still is described only once its faces, text and labels are read for its preview;
     /// a description names the facts it was written from, so naming a face's person or giving
     /// them a birthday owes a new one, and an answer for facts since changed is not written.
@@ -67,6 +68,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-032
     /// What the model is told of a still's text and scene labels is only what was read from
     /// the preview and thumbnail it has now: rows read from earlier ones tell it nothing.
     @Test func theModelIsToldOnlyTheReadingsOfTheStillsCurrentPictures() async throws {
@@ -98,6 +100,7 @@ struct PhotoDescriptionTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-032
     /// The writer reads the stored preview, tells the model who is where, and stores its
     /// answer; a renamed person is described again.
     @Test func theWriterDescribesAndDescribesAgainOnARename() async throws {
@@ -142,9 +145,10 @@ struct PhotoDescriptionTests {
         return (library, library.id("a.jpg"), directory)
     }
 
+    // Validates: ENR-033
     /// ADR 0055, ADR 0057: a request is made at memory-pressure warning with little memory
     /// available, on the live kernel's reading, in one turn, and the writer names no hold.
-    /// Whether Otos is the active app is no condition (the owner, 2026-11-18).
+    /// Whether Otos is the active app is no condition.
     @Test func aRequestIsMadeAtWarningWithLittleMemoryAvailable() async throws {
         let (library, still, directory) = try await Self.owedStill()
         let store = library.store
@@ -167,6 +171,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-033
     /// ADR 0057: at critical memory pressure no request is made and the writer's status names
     /// the hold; the step that delivers warning starts the request.
     @Test func noRequestIsMadeAtCriticalPressure() async throws {
@@ -193,6 +198,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-033
     /// ADR 0032 rule 3, ADR 0057: a request in flight when the level rises to critical is not
     /// cancelled, and its answer is written.
     @Test func aRequestInFlightIsWrittenWhenTheLevelRises() async throws {
@@ -220,6 +226,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-032
     /// One drain is one newest-first walk (ADR 0009), and a fact change during it restarts the
     /// walk from the newest still at its next page: a still made owed while an older one is
     /// described comes next, before the rest of the backlog.
@@ -276,6 +283,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-032
     /// A change that names its rows owes those stills alone: the writer reads them by key and
     /// walks nothing, so a backlog's described stills are never visited again for each reading
     /// written (ADR 0009). A change that names none still walks.
@@ -316,6 +324,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: APP-096, ENR-032
     /// A model that is not available writes nothing and stops the drain; the still stays owed.
     @Test func anUnavailableModelWritesNothing() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
@@ -355,12 +364,13 @@ struct PhotoDescriptionTests {
     }
 
     /// A request that failed in the model's service, not over the photo — the shape the system
-    /// model returned on the owner's Mac when its asset lock could not be taken (2026-11-20): a
+    /// model returned on the test Mac when its asset lock could not be taken (2026-11-20): a
     /// `LanguageModelError` of no public case, carrying a `ModelManagerError` 1026.
     private static let serviceFailure = NSError(domain: "FoundationModels.LanguageModelError", code: -1, userInfo: [
         NSMultipleUnderlyingErrorsKey: [NSError(domain: "ModelManagerServices.ModelManagerError", code: 1026)],
     ])
 
+    // Validates: APP-096, ENR-032
     /// ENR-032: a request that failed in the model's service holds the whole writer, so one
     /// request is made and the other owed stills are not asked until the hold's wake; every
     /// still stays owed.
@@ -383,6 +393,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-032
     /// ENR-032: a request that failed over its photo passes that still over and asks the next:
     /// each owed still is asked once, and each stays owed.
     @Test func aPhotoFailurePassesThatStillOverAndAsksTheNext() async throws {
@@ -402,6 +413,7 @@ struct PhotoDescriptionTests {
         await store.shutdown()
     }
 
+    // Validates: APP-078
     /// On This Day's title is written from the descriptions of the anniversary's photos, and
     /// an anniversary with none described has none.
     @Test func anAnniversaryIsTitledFromItsDescriptions() async throws {
@@ -443,6 +455,7 @@ struct PhotoDescriptionTests {
 
     // MARK: - The prompt
 
+    // Validates: ENR-032
     @Test func anAgeIsWordedFromTheBirthdayOnTheDayTaken() throws {
         let taken = try #require(CaptureLocalTime(startOf: CalendarDay(year: 2026, month: 7, day: 18)))
         #expect(PhotoDescriptionPrompt.age(birthday: PersonBirthday("1988-03-02"), at: taken) == "38 years old")
@@ -457,6 +470,7 @@ struct PhotoDescriptionTests {
         #expect(PhotoDescriptionPrompt.age(birthday: nil, at: taken) == nil)
     }
 
+    // Validates: ENR-032
     /// The model is told when and where, who is where left to right, the text and the labels.
     @Test func thePromptTellsWhoIsWhere() throws {
         let taken = try #require(CaptureLocalTime(startOf: CalendarDay(year: 2026, month: 7, day: 18)))
@@ -478,6 +492,7 @@ struct PhotoDescriptionTests {
         """)
     }
 
+    // Validates: APP-077, ENR-032
     /// A photo naming no one is described with instructions that never mention names or ages;
     /// one whose faces are all named asks for each by name and no other; only one with unnamed
     /// faces too says how many others are not named and that they stay unnamed.
@@ -510,6 +525,7 @@ struct PhotoDescriptionTests {
         #expect(mixed.instructions.contains("Everyone else stays unnamed"))
     }
 
+    // Validates: ENR-032
     /// A face the crop leaves out is not told; one inside it is placed on the cropped preview.
     @Test func facesArePlacedOnTheEditedPreview() throws {
         let leftHalf = EditRecipe(crop: EditCrop(left: 0, top: 0, width: 0.5, height: 1))

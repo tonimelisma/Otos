@@ -5,6 +5,7 @@ import Testing
 /// End-to-end reorganization runs over a real catalog and a real library folder.
 @Suite(.testScope)
 struct LibraryReorganizationRunnerTests {
+    // Validates: ARC-051
     /// A run that stops partway keeps every component that settled before the failure,
     /// rolls the failing one back, and leaves the settled remaps for the window to apply
     /// through the catalog — the same path a complete run takes.
@@ -55,6 +56,7 @@ struct LibraryReorganizationRunnerTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-051
     /// Confirming runs the plan the user saw. When the library is no longer at the
     /// confirmed revision, the run moves nothing and reports the plan as it is now.
     @Test func aRunAgainstAnotherRevisionAsksAgainAndMovesNothing() async throws {
@@ -75,6 +77,7 @@ struct LibraryReorganizationRunnerTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-051
     /// A component journaled as moving when the process ended resumes at the next
     /// launch: the move that happened is recorded, the rest runs, and the catalog
     /// settles — the library is neither frozen nor left half-moved.
@@ -115,6 +118,7 @@ struct LibraryReorganizationRunnerTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-051
     /// A component the last process left journaled holds its root from the moment the
     /// next process loads its catalog, before anyone runs recovery: a half-moved library is
     /// never scanned, reconciled or imported into first. Recovery adopts that hold,
@@ -149,6 +153,7 @@ struct LibraryReorganizationRunnerTests {
         await relaunched.shutdown()
     }
 
+    // Validates: ARC-056
     /// A reorganized photo's name key follows it to its new path (ARC-056): a new file that
     /// later appears at the path it left is a new photo, and what the user said about the
     /// moved one stays on it.

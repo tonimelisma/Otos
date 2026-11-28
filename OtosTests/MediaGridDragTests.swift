@@ -6,6 +6,7 @@ import Testing
 /// Drag-out rules (ADR 0028, APP-038): what a drag carries, what it writes, and how a
 /// mouse-down decides between selecting now and waiting for a possible drag.
 struct MediaGridDragTests {
+    // Validates: APP-038
     @Test func dragFromSelectedTileCarriesWholeSelectionInDisplayOrder() {
         let ids = makeIDs(count: 5)
         let selection: Set<MediaAssetID> = [ids[4], ids[1], ids[2]]
@@ -15,6 +16,7 @@ struct MediaGridDragTests {
         #expect(dragged == [ids[1], ids[2], ids[4]])
     }
 
+    // Validates: APP-038
     @Test func dragFromUnselectedTileCarriesOnlyThatTile() {
         let ids = makeIDs(count: 3)
 
@@ -23,6 +25,7 @@ struct MediaGridDragTests {
         #expect(dragged == [ids[0]])
     }
 
+    // Validates: APP-038
     @Test func plainClickOnSelectedTileWaitsForMouseUp() {
         #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 1)
             == .deferUntilMouseUp)
@@ -38,6 +41,7 @@ struct MediaGridDragTests {
             == .doubleClick)
     }
 
+    // Validates: APP-038
     @Test func sourceCopiesOutsideAndRefusesInside() {
         #expect(MediaGridDragSource.operationMask(for: .outsideApplication) == .copy)
         #expect(MediaGridDragSource.operationMask(for: .withinApplication) == [])

@@ -10,6 +10,7 @@ import Testing
 struct GridSelectionTests {
     // MARK: - plainClick
 
+    // Validates: APP-010, APP-011
     @Test func plainClickSelectsOnlyTheClickedItemAndSetsAnchorAndBase() {
         let sel = GridSelection.empty.plainClick(itemC)
 
@@ -51,6 +52,7 @@ struct GridSelectionTests {
 
     // MARK: - shiftClick
 
+    // Validates: APP-010, APP-011
     @Test func shiftClickExtendsAForwardRangeFromTheAnchor() {
         // Row 2: click C, ⇧-click F → C D E F.
         let sel = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
@@ -161,6 +163,7 @@ struct GridSelectionTests {
         #expect(after.base == live)
     }
 
+    // Validates: APP-011
     @Test func reconcilingSelectionMovesTheAnchorForASingleItemKeyboardMove() {
         // An unmodified arrow key lands here as a live selection of exactly one item.
         // The anchor is also the "active item" loupe entry focuses, so it must follow
@@ -196,6 +199,7 @@ struct GridSelectionTests {
 
     // MARK: - clipboard
 
+    // Validates: APP-012
     /// One item per file, in order, each carrying only `public.file-url`: no string a
     /// receiver could paste instead of the file (ADR 0012).
     @Test func writePutsOneFileURLItemPerFileInOrder() {
@@ -215,6 +219,7 @@ struct GridSelectionTests {
         #expect(pasteboard.string(forType: .string) == nil)
     }
 
+    // Validates: APP-012
     /// A Copy writes only while the pasteboard is still its claim's: whatever wrote it
     /// since — another app, or a newer Copy — is left alone.
     @Test func aWriteAfterSomeoneElseWroteThePasteboardLeavesItAlone() {

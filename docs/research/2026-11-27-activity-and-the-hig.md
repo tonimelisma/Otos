@@ -2,10 +2,9 @@
 
 ## Question
 
-The owner, looking at the installed app's Activity popover on his library (2026-11-27):
-"explain the status for making thumbnails, it doesn't make any sense. also, why does its
-progress bar disappear and reappear all the time", then "why are we showing these to the
-user? what does the user care about?". The row read:
+The installed app's Activity popover on the reference library raised three questions: what
+the thumbnail status meant, why its progress bar kept disappearing and reappearing, and why
+these details were shown to the user at all. The row read:
 
 ```
 Making thumbnails
@@ -16,7 +15,7 @@ Making thumbnails
 
 ## What the code said the row meant
 
-Read from the code, not the owner's logs (a cloud session never reaches his Mac).
+Read from the code, not the test Mac's logs (a cloud session never reaches that Mac).
 
 - **20,715** was the stretch's total (`ActivityBoard.record`): what enrichment finished
   since the stretch began plus what was left. It named nothing the user knew.
@@ -31,7 +30,7 @@ Read from the code, not the owner's logs (a cloud session never reaches his Mac)
   the stream's `fileSizeInByte` (`ImmichClient`, `AssetExifV1`); a row without one falls back to
   the local file, finds none, and paces as `sentOnlyWhenOpened`. A retry cannot succeed then,
   so "Otos will try again" was a promise no retry could keep. That a missing size is the cause
-  for these 934 is a hypothesis: the owner's diagnostics export would confirm it.
+  for these 934 is a hypothesis: the test Mac's diagnostics export would confirm it.
 - **The flicker.** The board read a kind as working whenever an owner of it was not quiescent.
   Each of ~1,048 paced rows had its own 15-minute pacing (`ledgerPacing`), set at different
   moments, so the ledger's wakes were staggered: each made enrichment busy for a moment —
@@ -89,16 +88,15 @@ Not: retries, ranged reads, rows owed details, a stretch's total.
 
 Left out, with the reason: a Cancel or Pause control for background work (HIG: "When it's
 feasible, let people halt processing"). Halting loses nothing, and Otos already holds its
-work for memory, heat and Low Power Mode (ADR 0057); no owner asked for one. A System Settings
+work for memory, heat and Low Power Mode (ADR 0057); nobody asked for one. A System Settings
 button for Apple Intelligence: no deep link into its pane could be verified from a cloud
 session, so the row says where to go in words.
 
 ## Second pass: the names (same day)
 
-The owner, reading the first pass's names: "So showing photos is not showing photos is it? And
-Finding people, is it actually finding people? Or detecting faces or what? And naming places?
-… Reading details is also incredibly obscure. Read apple hig and come up with new
-suggestions." Each name was checked against what its code does:
+The first pass's names were questioned: whether each said what its work does (showing photos,
+finding people versus detecting faces, naming places, reading details), with a request for new
+names grounded in Apple's HIG. Each name was checked against what its code does:
 
 - `Showing photos` made thumbnails; `Reading details` was three jobs — Info's details, the
   digests duplicates are told by, thumbnails remade.

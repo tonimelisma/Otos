@@ -7,8 +7,8 @@ narrower: does anything report the moment the kernel clears the flag?
 
 ## Probe
 
-A command-line probe, run against three dataless files in the owner's OneDrive
-(`~/Library/CloudStorage/OneDrive-Personal`; two PNG QR codes and a 93,527-byte JPEG),
+A command-line probe, run against three dataless files in a OneDrive library
+(`~/Library/CloudStorage/OneDrive`; two PNG QR codes and a 93,527-byte JPEG),
 did four things at once:
 
 1. `open(path, O_EVTONLY)` and a `DispatchSource` file-system-object source on that

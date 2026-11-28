@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct InThisPhotoRefreshTests {
+    // Validates: APP-041
     @Test func inThisPhotoReadsTheShownItemAgainWhenItsDoorbellRings() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -41,6 +42,7 @@ struct InThisPhotoRefreshTests {
         }
     }
 
+    // Validates: APP-041
     /// The File section's `Original` follows where the original is: each ring, which the
     /// download coordinator sends as an original it fetched lands, reads it again. Here the
     /// original goes away, the one move a test can make on a real file, and the ring finds it.

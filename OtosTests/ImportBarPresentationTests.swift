@@ -4,7 +4,7 @@ import Testing
 
 /// The mapper is the oracle for `docs/design/import-bar.md`'s state inventory
 /// table: one test per row (plus its variants), asserting the exact drawn
-/// state and strings — not the view's layout (`AGENTS.md` forbids
+/// state and strings — not the view's layout (`CLAUDE.md` forbids
 /// source-as-text assertions; this asserts the pure function's output).
 struct ImportBarPresentationTests {
     private static let source = LibraryRootPath(rawValue: "/Volumes/CAMERA")
@@ -94,6 +94,7 @@ struct ImportBarPresentationTests {
         ))
     }
 
+    // Validates: APP-029
     /// `import-bar.md` state A: "the destination and checkboxes stay visible and
     /// usable; choosing while we check costs nothing." The choices are the same
     /// zone Ready draws, with the track above them, so no control appears or
@@ -120,6 +121,7 @@ struct ImportBarPresentationTests {
         #expect(ImportPlanFooter.renderedPrimary(for: ready).isEnabled)
     }
 
+    // Validates: APP-029
     /// `import-bar.md` row 7: a click the coordinator is holding until the plan
     /// is ready is not a state of its own. The bar keeps every string and zone
     /// it would otherwise draw — the determinate count included — and only the
@@ -150,6 +152,7 @@ struct ImportBarPresentationTests {
         #expect(!drawnReady.primaryEnabled)
     }
 
+    // Validates: APP-032
     @Test func eraseOnlyCompletionReportsDeletedFilesAndDoesNotRevealBatchItems() {
         let drawn = Self.map(Self.presentation(
             state: .completed(summary: Self.totals(skipCount: 4)),
@@ -164,6 +167,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .ejectCard)
     }
 
+    // Validates: ARC-047
     @Test func preparingWordingIsCameraForDeviceMTPAndCardForRemovableVolume() {
         let camera = Self.map(Self.presentation(state: .inventory, sourceKind: .deviceMTP))
         #expect(camera.primaryLine == "Checking the camera…")
@@ -218,6 +222,7 @@ struct ImportBarPresentationTests {
         }
     }
 
+    // Validates: APP-029
     /// State C says before the click that not everything will fit: the plan's
     /// bytes plus the floor exceed what the volume reported available. The act
     /// stays the whole plan — the run copies what fits and stops (ADR 0027).
@@ -237,6 +242,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryEnabled)
     }
 
+    // Validates: APP-029
     @Test func readyStaysQuietWhenEverythingFitsOrTheVolumeDidNotAnswer() {
         let fits = Self.map(Self.presentation(
             state: .ready(summary: Self.totals(copyCount: 3, copyBytes: 3000), generation: 1, skippedPackageCount: 0),
@@ -256,6 +262,7 @@ struct ImportBarPresentationTests {
         #expect(unknown.secondaryLine == .none)
     }
 
+    // Validates: APP-029
     /// One clause on L3 (DES-034): room outranks "already in the library"
     /// because it changes what the click will do.
     @Test func theSpaceAdvisoryOutranksTheAlreadyInLibraryClause() {
@@ -298,6 +305,7 @@ struct ImportBarPresentationTests {
         #expect(!all.eraseConfirmationProvenClean)
     }
 
+    // Validates: APP-029
     @Test func readyNothingNewVariant() {
         let drawn = Self.map(Self.presentation(
             state: .ready(summary: Self.totals(skipCount: 181), generation: 1, skippedPackageCount: 0)
@@ -312,6 +320,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
+    // Validates: APP-029
     /// APP-029: a destination path with no resolved display name yet
     /// (`destinationDisplayName == nil` while `destinationPath` is still set)
     /// takes a true generic term, never `""`, which would build a broken
@@ -357,6 +366,7 @@ struct ImportBarPresentationTests {
 
     // MARK: - D · Ready, needs attention (row 6)
 
+    // Validates: APP-029
     @Test func needsAttentionNamesSingleCauseAndDisablesErase() {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let item = MediaAttentionItem(id: itemID, reason: .noUsableDate)
@@ -385,6 +395,7 @@ struct ImportBarPresentationTests {
         }
     }
 
+    // Validates: APP-029
     @Test func needsAttentionNamesTheNoFreeNameCause() {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let item = MediaAttentionItem(
@@ -406,6 +417,7 @@ struct ImportBarPresentationTests {
         ))
     }
 
+    // Validates: APP-029
     /// 2026-09-13: every item blocked, and the bar offered `Import 0 Items`,
     /// enabled. A control whose subject does not exist is omitted (DES-053).
     @Test func needsAttentionWithNothingImportableOffersNoAct() {
@@ -501,6 +513,7 @@ struct ImportBarPresentationTests {
         #expect(text.hasSuffix("left"))
     }
 
+    // Validates: APP-029
     /// Same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
     /// exercised at state E's own `destinationDisplayName ?? ""` site.
     @Test func workingCaptionWithUnresolvedDestinationNameFallsBackHonestly() {
@@ -537,6 +550,7 @@ struct ImportBarPresentationTests {
 
     // MARK: - E · Cancelling (row 9)
 
+    // Validates: APP-029
     @Test func cancellingShowsStoppingWithDisabledButtonAndMovingIndicator() {
         let progress = MediaOperationProgress(
             completedCount: 12,
@@ -583,6 +597,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
+    // Validates: APP-029
     /// Same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
     /// exercised at state F's own `destinationDisplayName ?? ""` site.
     @Test func doneWithUnresolvedDestinationNameFallsBackHonestly() {
@@ -600,6 +615,7 @@ struct ImportBarPresentationTests {
 
     // MARK: - F · Incomplete (row 11, mockup "F incomplete")
 
+    // Validates: APP-029
     @Test func doneAttachedIncompleteVariantNamesCouldNotBeCopiedWithReveal() {
         let failedID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let foreignID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "b.jpg"))
@@ -676,6 +692,7 @@ struct ImportBarPresentationTests {
 
     // MARK: - F · Stopped (APP-029, J8)
 
+    // Validates: APP-029
     @Test func stoppedAfterCancelOffersTheRemainderWhileTheCardIsAttached() {
         // J8 step 3–4: the run's own facts at L1, the cause at L3, and the
         // re-plan's remainder as the act — on either row.
@@ -694,6 +711,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryEnabled)
     }
 
+    // Validates: APP-029
     @Test func stoppedBeforeTheRePlanLandsHoldsTheActAsPending() {
         // The coordinator drops the pre-run plan on a stop, so until the
         // rebuild lands there is no honest remainder to put in the title.
@@ -720,6 +738,7 @@ struct ImportBarPresentationTests {
         #expect(!held.primaryEnabled)
     }
 
+    // Validates: APP-029
     @Test func stoppedWithNothingCopiedStatesTheCountAndNoDestinationClause() {
         let drawn = Self.map(Self.presentation(
             state: .ready(summary: Self.totals(copyCount: 42), generation: 2, skippedPackageCount: 0),
@@ -733,6 +752,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .importNewItems)
     }
 
+    // Validates: APP-029
     @Test func stoppedWithNothingLeftOffersEjectOrErase() {
         // Cancel landed after the last copy: the remainder is empty, so the act
         // is the card's, exactly as F-attached offers it.
@@ -749,6 +769,7 @@ struct ImportBarPresentationTests {
         #expect(Self.map(base, preferences: erase).primaryAction == .eraseItems(count: 42))
     }
 
+    // Validates: APP-029
     @Test func stoppedKeepsEraseDisabledWhileAttentionRemains() {
         let item = MediaAttentionItem(
             id: MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "IMG_0001.JPG")),
@@ -775,6 +796,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .importNewItems)
     }
 
+    // Validates: APP-029
     @Test func aNewRunOutranksTheStopItFollows() {
         // `lastCompletion` still carries the stop while the retry executes;
         // Working (and a retry's Failed) are the newer fact.
@@ -812,6 +834,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .tryAgain)
     }
 
+    // Validates: APP-029
     /// A failure before any run — the destination folder stayed unreadable, a
     /// root vanished, the builder threw — draws G with the stage named: nothing
     /// started, so the headline must not say "finish". Same zones, same act.
@@ -830,6 +853,7 @@ struct ImportBarPresentationTests {
         #expect(unexpected.secondaryLine == .none)
     }
 
+    // Validates: APP-029
     /// A weight is stated only when every size is known; a partial sum would read as the
     /// whole, and the capacity at a floor stop is stated only when the volume reported it.
     @Test func aFigureThatIsNotKnownIsNotStated() {
@@ -851,6 +875,7 @@ struct ImportBarPresentationTests {
         #expect(stopped.secondaryLine == .plain("Not enough room on the disk"))
     }
 
+    // Validates: APP-029
     /// ADR 0027: running out of room is a Stopped outcome, not a failure. The
     /// clause states the capacity read at the stop, in the spec's byte units.
     @Test func stoppedAtTheDiskFloorNamesTheRoomLeftAndOffersTheRemainder() {
@@ -887,6 +912,7 @@ struct ImportBarPresentationTests {
         }
     }
 
+    // Validates: APP-029
     /// The systemic `.sourceNotReady` classification must still land on a true,
     /// wording-appropriate state G rather than "Done" — camera vs. card wording
     /// follows `sourceKind`, matching the other `[deviation]`-free A-state wording.
@@ -908,6 +934,7 @@ struct ImportBarPresentationTests {
 
     // MARK: - Byte formatting (Number formatting table)
 
+    // Validates: APP-029
     /// `0` renders as `0 KB` — a `max(1, …)` clamp would fabricate `1 KB`, a
     /// non-zero value for a genuinely-zero fact — and every threshold the formatter switches units at is
     /// pinned so a future edit can't reintroduce a silent off-by-one.
@@ -922,6 +949,7 @@ struct ImportBarPresentationTests {
         #expect(ImportBarByteFormat.string(bytes: 100_000_000_000) == "100 GB")
     }
 
+    // Validates: APP-034
     /// DES-032 permits exactly one estimate and requires it be hedged. It says nothing about
     /// units, and the code rendered raw seconds — a 38 GB card opened at `about 221 seconds
     /// left`. Precision degrades with magnitude so the estimate never states more than a
@@ -935,6 +963,7 @@ struct ImportBarPresentationTests {
         #expect(ImportBarPresentation.remainingClause(seconds: 309) == "5 minutes")
     }
 
+    // Validates: APP-034
     /// Above an hour the estimate keeps the minutes, because "1 hour" alone would round away
     /// most of the wait on a long card.
     @Test func aLongRunKeepsItsMinutesAlongsideTheHours() {

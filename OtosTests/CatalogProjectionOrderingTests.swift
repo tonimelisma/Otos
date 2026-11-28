@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogProjectionOrderingTests {
+    // Validates: ARC-022
     @Test func detailOnlyStoreChangePublishesRefreshAndChecksOrder() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

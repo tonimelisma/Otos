@@ -7,7 +7,7 @@ Day, and is that the day it was taken?
 
 ## Method
 
-A read-only look at the owner's installed catalog
+A read-only look at the test Mac's installed catalog
 (`~/Library/Application Support/net.melisma.Otos/Catalog/catalog.sqlite`, opened with
 `sqlite3 -readonly`), with the Mac on AEDT (UTC+11) that day. For each row with a stored
 wall clock (`capture_wall_compact`, the library's `captureWallClock`), compare the wall

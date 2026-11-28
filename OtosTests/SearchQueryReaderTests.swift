@@ -50,6 +50,7 @@ struct SearchQueryReaderTests {
         )
     }
 
+    // Validates: APP-068
     /// A query typed while another is read waits for it and is read next; the one typed between
     /// is never read, and an answer is reported only for the query it read.
     @Test func theNewestQueryWinsAndAReadingInFlightIsNeverCancelled() async throws {
@@ -69,6 +70,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A reading that fails is not a fact: the query is reported failed, and it is read again
     /// after the backoff, not by the window's asking.
     @Test func aFailedReadingIsReportedAndRetriedOnItsBackoff() async throws {
@@ -85,6 +87,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A reading that has not ended (a wedged Translation) is being read for as long as it
     /// lasts: no timer reports it as anything else, and its answer is reported when it ends.
     @Test func aQueryIsBeingReadUntilItsReadingEnds() async throws {
@@ -106,6 +109,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A query whose full reading waits on Translation is first reported as typed and then
     /// as read, in that order; one with no first reading (English) is reported once, read.
     @Test func aQueryWithAFirstReadingIsReportedTwiceInOrderAndOneWithoutOnce() async throws {
@@ -150,6 +154,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// Once nothing is searched, a query typed again is read again: a language pack installed
     /// meanwhile counts.
     @Test func aForgottenQueryIsReadAgain() async throws {
@@ -188,6 +193,7 @@ struct SearchQueryReaderTests {
         }
     }
 
+    // Validates: APP-068
     /// ADR 0048, "The first query": the intent to search loads the encoder before a query is
     /// typed. A query typed while that load is in flight — held at its suspension — waits for it
     /// and is read with the encoder it loaded: one load, never a second, and the load
@@ -220,6 +226,7 @@ struct SearchQueryReaderTests {
         )
     }
 
+    // Validates: APP-068
     /// ADR 0048: a query issued while the text tower's load is in flight — the first grid's
     /// readying, held at its suspension — publishes its words reading without awaiting the
     /// load, and so does a query typed after it while the load still runs; neither is read
@@ -273,6 +280,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// "Prepared" means the tower has answered once: preparing loads it and makes exactly one
     /// warm-up prediction, preparing again makes none, and a query's embedding is the next.
     @Test func preparingTheTowerMakesExactlyOneWarmUpPrediction() async throws {
@@ -287,6 +295,7 @@ struct SearchQueryReaderTests {
         #expect(await encoder.towerPredictions == 2)
     }
 
+    // Validates: APP-068
     /// The intent's warm prediction predicts once on a prepared tower and never loads one that
     /// is not: a tower let go under memory pressure is loaded by the next query instead.
     @Test func aWarmPredictionPredictsOnlyOnAPreparedTower() async throws {
@@ -303,6 +312,7 @@ struct SearchQueryReaderTests {
         #expect(await encoder.towerPredictions == 2)
     }
 
+    // Validates: APP-068
     /// A prepared tower that answers before the words reading is ready is the one answer
     /// published: the words reading that lands after it is dropped, so the grid changes once.
     @Test func aTowerThatAnswersBeforeTheWordsIsPublishedOnce() async {
@@ -335,6 +345,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A prepared tower whose embedding is held (pages read in again after an idle) does not
     /// hold the first results: the words answer is published with its matches, still
     /// searching, then the tower's full answer once.
@@ -361,6 +372,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A load that fails is not a fact: the query whose words are shown is reported failed and
     /// read again on its backoff, which loads again.
     @Test func aLoadThatFailsReportsTheQueryFailedAndRetries() async throws {
@@ -386,6 +398,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: ARC-065
     /// ADR 0055: the first query, typed while a People pass runs and a duplicates build and
     /// the first grid's readying wait their turn, is served without waiting for them. Its
     /// encoder load is admitted for the user at once, beside the running pass, and nothing
@@ -442,6 +455,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A query with no intent to search before it is read as it always was: it loads what it
     /// needs itself.
     @Test func aQueryWithoutAnIntentFirstIsStillRead() async throws {
@@ -503,6 +517,7 @@ struct SearchQueryReaderTests {
         ) { await tower.encode($0) }
     }
 
+    // Validates: APP-068
     /// ADR 0048, "The intent to search": the field's focus on a prepared tower starts exactly
     /// one warm prediction, and the intent is readied when it ends. A later focus, after it
     /// ended, starts one more: once per focus.
@@ -524,6 +539,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A second focus while the warm prediction runs starts none: the one in flight answers
     /// both.
     @Test func aSecondFocusWhileTheWarmPredictionRunsStartsNone() async {
@@ -540,6 +556,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A query typed while the warm prediction is held publishes its words answer without
     /// waiting on it, and its tower answer after exactly one further prediction: it joined the
     /// tower's queue behind the warm-up rather than starting a load or a second warm-up.
@@ -569,6 +586,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// A focus while the tower is still loading starts no prediction of its own: the load's
     /// warm-up is the one it asked for, and the intent is readied when the load ends.
     @Test func aFocusWhileTheTowerLoadsStartsNoWarmPrediction() async {
@@ -597,6 +615,7 @@ struct SearchQueryReaderTests {
         await reader.shutdown()
     }
 
+    // Validates: APP-068
     /// ADR 0057: a background room that holds heavy loads does not hold the warm prediction,
     /// which is no load the admission grants: it runs while a held background load still waits,
     /// and the admission grants nothing for it.

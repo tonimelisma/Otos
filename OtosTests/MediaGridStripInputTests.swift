@@ -16,6 +16,7 @@ extension AppKitWindowTests {
     /// other window-hosting test.
     @MainActor
     struct MediaGridStripInputTests {
+        // Validates: APP-022
         /// The detail query covers exactly the tiles on screen — a contiguous run of the
         /// strip that starts at the first tile, then, after a scroll, a later run.
         @Test func stripScrollTriggersDetailQueries() throws {
@@ -342,6 +343,7 @@ extension AppKitWindowTests {
     /// Its tests host real windows, so it is nested in `AppKitWindowTests`.
     @MainActor
     struct MediaGridAtRestTests {
+        // Validates: ARC-023
         /// The blank-import-grid bug, at its actual condition: the scroll view is
         /// laid out and the layout knows the items, but AppKit has attached no item
         /// views. `indexPathsForVisibleItems()` reports only attached items, so the
@@ -366,6 +368,7 @@ extension AppKitWindowTests {
             #expect(harness.controller.requestVisibleDetails(reason: "test") > 0)
         }
 
+        // Validates: ARC-023
         /// The hover-overlay leak. A tile that scrolls *under* a stationary cursor
         /// gets `mouseEntered`, but the one scrolling away never gets `mouseExited`,
         /// so with per-tile tracking areas every tile the pointer passed kept its
@@ -395,6 +398,7 @@ extension AppKitWindowTests {
             #expect(harness.tilesShowingChoiceControl() == 0)
         }
 
+        // Validates: ARC-023
         /// The other half: a pointer that *is* over a tile after the scroll lights
         /// exactly that tile, so the recompute is a real reassignment rather than a
         /// blanket clear.
@@ -411,6 +415,7 @@ extension AppKitWindowTests {
             #expect(harness.hoveredItemIndexes() == [2])
         }
 
+        // Validates: ARC-023
         /// The invariant the leak violated, stated directly: hover is a single
         /// assignment, so no two tiles can ever show the control at once.
         @Test func atMostOneTileEverShowsTheChoiceControl() throws {
@@ -428,6 +433,7 @@ extension AppKitWindowTests {
             #expect(harness.tilesShowingChoiceControl() == 0)
         }
 
+        // Validates: ARC-023
         /// The flicker regression: a tile clears its own control whenever its content
         /// resets, and while the pointer holds on one thumbnail neither the asset-id
         /// guard in `setHoveredAssetID` nor the index-path guard in the collection

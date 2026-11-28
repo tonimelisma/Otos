@@ -29,6 +29,7 @@ struct MediaGridDayBarPolicyTests {
         )
     }
 
+    // Validates: APP-030
     @Test func noDaySectionAtTheTopShowsNoBar() {
         // `.ungrouped` — Filename or Size sort — reaches the policy as a nil top edge.
         #expect(
@@ -41,6 +42,7 @@ struct MediaGridDayBarPolicyTests {
         )
     }
 
+    // Validates: APP-030
     @Test func headerAboveTheViewportNamesThatDay() {
         // Deep inside a run: the header is long gone and the bar carries the date.
         let result = Self.barText(headerMinY: nil, viewportMinY: 4200)
@@ -48,6 +50,7 @@ struct MediaGridDayBarPolicyTests {
         #expect(result?.countText == "4 items")
     }
 
+    // Validates: APP-030
     @Test func restingAtTheTopOfTheGridStillNamesTheFirstDay() {
         // The bar is on continuously under Date sort. At the top it rests exactly on
         // section 0's header, drawing the same label in the same rect, so leaving it
@@ -55,6 +58,7 @@ struct MediaGridDayBarPolicyTests {
         #expect(Self.barText(headerMinY: 0, viewportMinY: 0)?.dateText == "Today")
     }
 
+    // Validates: APP-030
     @Test func theScrollEdgeIsDrawnOnlyOnceTheGridLeavesItsTop() {
         // The hairline means "content passes under this bar". At the top nothing does.
         #expect(!MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: 0))
@@ -63,6 +67,7 @@ struct MediaGridDayBarPolicyTests {
         #expect(MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: 40))
     }
 
+    // Validates: APP-030
     @Test func topEdgeInTheGapAboveAHeaderKeepsNamingThePrecedingDay() {
         // The edge sits in the section inset above the next header. That gap still
         // belongs to the day being left — naming the incoming day instead would print
@@ -76,6 +81,7 @@ struct MediaGridDayBarPolicyTests {
         #expect(result?.countText == "9 items")
     }
 
+    // Validates: APP-030
     @Test func undatedSectionNamesItselfInTheBar() {
         let result = Self.barText(headerMinY: nil, viewportMinY: 900, date: nil, itemCount: 1)
         #expect(result?.dateText == "No Date")

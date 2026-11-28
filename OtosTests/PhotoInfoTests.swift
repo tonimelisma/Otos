@@ -12,6 +12,7 @@ struct PhotoInfoTests {
         relativePath: MediaRelativePath(rawValue: "Trip/Day 1/IMG_0001.ARW")
     )
 
+    // Validates: APP-041
     @Test func unknownFactsReadUnknown() {
         let info = PhotoInfo.make(PhotoInfo.Source(id: still))
 
@@ -26,6 +27,7 @@ struct PhotoInfoTests {
         #expect(info.coordinate == nil)
     }
 
+    // Validates: APP-041
     /// A download that made the original local changes the `Original` row it is shown in,
     /// and nothing else; with no single item there is nothing to change.
     @Test func anOriginalThatLandedReadsOnThisMac() {
@@ -45,6 +47,7 @@ struct PhotoInfoTests {
         #expect(none.locality == nil)
     }
 
+    // Validates: APP-041
     @Test func aStillShowsEverythingOtosHolds() {
         let asset = MediaAsset(
             libraryRootPath: still.libraryRootPath,
@@ -123,6 +126,7 @@ struct PhotoInfoTests {
         #expect(info.value("Place") == "Helsinki, Finland")
     }
 
+    // Validates: APP-041
     @Test func aVideoShowsVideoInsteadOfExposure() {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
@@ -142,6 +146,7 @@ struct PhotoInfoTests {
         #expect(info.value("Original") == "On This Mac")
     }
 
+    // Validates: APP-041
     /// With no face listed, People says `No Faces` only for a photo the catalog read and
     /// holds no face of, `Not Checked Yet` for one not read; anything it cannot know — several
     /// photos, a read not landed or of another photo, faces People does not list — is `—`.
@@ -157,6 +162,7 @@ struct PhotoInfoTests {
         #expect(PhotoFacesRead.line(for: [], read: none) == PhotoInfo.notApplicable)
     }
 
+    // Validates: APP-041
     @Test func noSingleItemReadsDashesInTheStillLayout() {
         let none = PhotoInfo.none(itemCount: 0)
         let several = PhotoInfo.none(itemCount: 3)
@@ -167,6 +173,7 @@ struct PhotoInfoTests {
         #expect(none.captured == PhotoInfo.notApplicable)
     }
 
+    // Validates: APP-077
     /// A still's Description says what the model wrote, that it declined, or — while owed —
     /// whether one can be written here; a movie has none, and no single item none either.
     @Test func descriptionSaysWhatTheModelWrote() {
@@ -187,6 +194,7 @@ struct PhotoInfoTests {
         #expect(PhotoInfo.none(itemCount: 0).photoDescription == nil)
     }
 
+    // Validates: APP-041
     /// In This Photo holds the named labels and the certain text; a reading still owed stays
     /// unknown rather than empty, and with no single item there is nothing to show.
     /// Long text shows its first lines and Show More; a sign or a label shows in full.
@@ -200,6 +208,7 @@ struct PhotoInfoTests {
         #expect(PhotoInfo.Recognized.shownText(sign, expanded: false) == (sign, 0))
     }
 
+    // Validates: APP-041
     @Test func inThisPhotoShowsWhatSearchRecognised() {
         let overlay = PhotoInfoOverlay(
             companionFileNames: [], importedAt: nil, isEdited: false,
@@ -232,6 +241,7 @@ struct PhotoInfoTests {
         #expect(PhotoInfo.Recognized.chipTitle("iltapäivä", locale: Locale(identifier: "fi_FI")) == "Iltapäivä")
     }
 
+    // Validates: APP-041
     @Test func valuesAreWrittenAsPhotographersWriteThem() {
         #expect(PhotoInfo.shutterSpeed(ExposureTime(numerator: 10, denominator: 2500)) == "1/250 s")
         #expect(PhotoInfo.shutterSpeed(ExposureTime(numerator: 5, denominator: 2)) == "2.5 s")

@@ -6,16 +6,21 @@ description: Read, watch and reproduce Otos's GitHub Actions CI from a cloud ses
 # CI from a session
 
 Every push runs `CI`:
-- the Ubuntu jobs: Checkout Sanity, Workflow YAML And Script Shape, Text Hygiene, and
-  SwiftFormat And SwiftLint;
+- the Ubuntu jobs: Checkout Sanity, Workflow YAML And Script Shape, Text Hygiene, Process
+  (`script/process-check`, and `script/pr-check` on a PR), SwiftFormat And SwiftLint, and
+  Already Tested (`script/ci-tested-tree.sh`);
 - `Build And Test (Xcode 27) 1/3`, `2/3` and `3/3` on GitHub's `xcode-27` runners, each
   running `script/check.sh` with its shard of the suite (`OTOS_TEST_SHARD`, ADR 0044
   item 17);
-- `Required CI Gate`, which `main` requires.
+- `CI gate`, which needs every other job and is the one check `main`'s ruleset requires.
 
-The three shards passing on a PR's final commit, read as `Required CI Gate`, is that PR's
-verification. A merge to `main`
-that changes the app is then published by `Release` (`release` skill).
+`CI gate` green on a PR's final commit is that PR's verification. The ruleset also requires
+the PR to be up to date with `main`: when `main` moved, update the branch with
+`gh api -X PUT repos/tonimelisma/Otos/pulls/<N>/update-branch` (`script/stage pre-merge`
+does it) and wait for the new head's `CI gate`. Because of that, a push to `main` is the
+exact tree its PR tested, and `Already Tested` skips the shards there (ADR 0062); the
+weekly run (Tuesday) and any push whose tree differs run them. `Release` starts on the
+same push and publishes once that `CI gate` passed (`release` skill).
 
 ## Reading it
 
@@ -32,7 +37,7 @@ Job step timings, for the five-minute budget (ADR 0044, item 13):
 ## Watching it
 
 Arm a `Monitor` that reads the check runs every 60 s. It must exit on every terminal fact:
-- all eight runs completed (`Required CI Gate` among them);
+- every run completed (`CI gate` among them);
 - any run failed, was cancelled or timed out;
 - a job GitHub did not start (its annotation says why, for example a billing limit).
 
@@ -47,10 +52,11 @@ wait for a CI notification: a green run may never send one.
   the artifact `check-logs-<run>-<attempt>`, which holds the hang dumps and every check's
   own log under `logs/check/`.
 - Each push is a full run. To reproduce, read the failure, fix it, and push once.
-- A failure that shows only sometimes is reproduced with the workflow Repeat A Suite: start
-  it with the GitHub MCP tool `actions_run_trigger` (`run_workflow`, `workflow_id`
-  `repeat.yml`, the branch as `ref`, inputs `suite` and `iterations`). It runs that suite up
-  to that many times and stops at the first failure (ADR 0044, item 19).
+- A failure that shows only sometimes is reproduced with the workflow Repeat A Suite:
+  `gh api -X POST repos/tonimelisma/Otos/actions/workflows/repeat.yml/dispatches -f ref=<branch>
+  -f inputs[suite]=<Suite> -f inputs[iterations]=20`. It runs that suite up to that many
+  times and stops at the first failure (ADR 0044, item 19). Every Wednesday it repeats the
+  suites that have flaked before (`docs/lessons.md`); a red weekly repeat is fixed first.
 - A job gets at most one re-run. "Flake" is not a root cause.
 
 ## The captures
@@ -73,8 +79,9 @@ them into the scratchpad and read the PNGs:
 the window as the screen composes it (`screencapture`); `<view>-<appearance>-rendering.png`
 is the app's own `cacheDisplay` rendering, which leaves out layer-backed content (the
 grid's tiles, the map) and the toolbar. For a branch whose CI built no app (the
-static tier), start the workflow Capture The App on it (`actions_run_trigger`,
-`workflow_id` `capture.yml`, the branch as `ref`). Name what each should show before
+static tier), start the workflow Capture The App on it
+(`gh api -X POST repos/tonimelisma/Otos/actions/workflows/capture.yml/dispatches -f ref=<branch>`).
+It also runs every Wednesday on `main`, capturing every view on a larger generated library. Name what each should show before
 reading it (`dod` skill).
 
 ## A red `main`

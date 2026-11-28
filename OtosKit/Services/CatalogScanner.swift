@@ -285,8 +285,8 @@ private nonisolated enum LiveCatalogScanner {
             // The walk's first files go out as soon as there are `firstBatchCount` of them,
             // then a batch a cadence: a batch's write costs each of its rows, so a first batch
             // of a cadence's files kept a new library's first rows off the window for the
-            // whole write (8,729 rows, 2.6 s at the owner's library size,
-            // `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+            // whole write (8,729 rows, 2.6 s at the reference library's size,
+            // `docs/research/2026-11-17-a-new-library-at-the-reference-size.md`).
             let firstBatchFull = !flushedAny && scanState.pending.count >= CatalogScanner.firstBatchCount
             if firstBatchFull || lastFlush.duration(to: clock.now) >= cadence {
                 flushedAny = flushedAny || !scanState.pending.isEmpty

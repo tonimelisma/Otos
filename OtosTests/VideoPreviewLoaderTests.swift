@@ -73,6 +73,7 @@ struct VideoPreviewLoaderTests {
         #expect(result == .unavailable(.downloadFailed))
     }
 
+    // Validates: APP-020
     /// Each answer the request for the original's bytes can give names its own reason, so
     /// the pane says what is wrong rather than only that something is.
     @Test(arguments: [
@@ -91,6 +92,7 @@ struct VideoPreviewLoaderTests {
         #expect(result == .unavailable(reason))
     }
 
+    // Validates: APP-020
     @Test func loupeVideoStateCleanupReplacesPlayer() async throws {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },

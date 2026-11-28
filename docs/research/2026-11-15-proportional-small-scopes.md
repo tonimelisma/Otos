@@ -16,10 +16,10 @@ did not apply. What is the smallest correct read for each?
 - **Digests:** v60 clears every digest, so the copy had no Duplicates groups. Every row of the
   three roots was given a random current SHA-1 (as an account's rows all carry one), then 63
   pairs were made to share one: 40 within the account, 15 within library 7, 8 across a library
-  and the account — 126 copies, the count the owner's app showed.
+  and the account — 126 copies, the count the installed app showed on the reference library.
 - **Measures:** as #765: for each read, the pages a fresh read-only connection with no memory
   map reads (`SQLITE_DBSTATUS_CACHE_MISS`, what a read costs once the cache is paged out, as
-  the owner's was), the best of three warm times, and `EXPLAIN QUERY PLAN`. The order is
+  the test Mac's was), the best of three warm times, and `EXPLAIN QUERY PLAN`. The order is
   measured twice: with every stack of the roots held (`heldStacks`, the projection's usual
   case) and as the Store reads it with none held (`noHeldStacks`: rows plus the stacks the
   read builds, `CatalogQueryGateway.readOrder`). For On This Day the pages include the

@@ -3,7 +3,7 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// ADR 0054 (owner, 2026-11-15): a face on any copy of a photo is the photo's. A person's
+/// ADR 0054: a face on any copy of a photo is the photo's. A person's
 /// photos, People and the People filter find a photo by a face on a copy the scope does not
 /// show, whether the person's photos are sought or the order is walked, and a person's photo
 /// count counts the photo once.
@@ -14,6 +14,7 @@ struct PhotoCopiesTests {
     static let rows = 300
     static let copied = 10
 
+    // Validates: APP-089
     @Test func aFaceOnACopyTheScopeDoesNotShowFindsThePhoto() async throws {
         let dbQueue = try await Self.catalog { db in
             // Person 1, one photo: few enough to seek. Person 2, every copied photo: enough to
@@ -52,6 +53,7 @@ struct PhotoCopiesTests {
         }
     }
 
+    // Validates: APP-089
     /// The faces on both copies of one photo, of one person, are one photo of theirs.
     @Test func aPersonsPhotoIsCountedOnceOverItsCopies() {
         let library = LibraryRootPath(rawValue: "/Pictures/")
@@ -71,6 +73,7 @@ struct PhotoCopiesTests {
         #expect(MediaCount(items: [raw, jpeg, accountJPEG].map { (photoOf[$0] ?? $0, false) }).total == 1)
     }
 
+    // Validates: APP-089
     /// The copies' questions are seeks of the digest index, never a scan, and a wide order still
     /// walks its index with no sort: whether a better copy is reachable (the library away),
     /// whether a copy holds a person's face (People, the People filter), and which copies of a
@@ -123,7 +126,8 @@ struct PhotoCopiesTests {
         }
     }
 
-    /// What a photo shows of its copies' faces (owner, 2026-11-15: a named face on any copy is
+    // Validates: APP-089
+    /// What a photo shows of its copies' faces (a named face on any copy is
     /// the photo's). The shown copy lists its own faces, then each person named only on another
     /// copy, with that copy's face: its box is of that copy's pixels, so it is outlined only
     /// where that copy shows, and an act on it acts on that copy. Another copy's unidentified
@@ -163,6 +167,7 @@ struct PhotoCopiesTests {
         #expect(held.faces(of: account).first?.person == nil)
     }
 
+    // Validates: APP-089
     /// The likeness that orders a person's photos (`Most Like First`) compares a face with the
     /// person's faces in other photos only: a copy's face, read from another preview of the
     /// same photo, is not evidence of how like the person the photo is.
@@ -181,6 +186,7 @@ struct PhotoCopiesTests {
         #expect(onePhoto.likeness[other.id].map { abs($0 - toOther) < 1e-4 } == true)
     }
 
+    // Validates: APP-089
     /// A face named on one copy is the photo's on every copy, and stays the user's when the
     /// other copy is read for its own faces (each copy is read from its own preview: a
     /// library's Otos rendering, an account's Immich preview). The other copy shows the name
@@ -232,6 +238,7 @@ struct PhotoCopiesTests {
         await store.shutdown()
     }
 
+    // Validates: APP-089
     /// The copies People resolves a photo's faces through are read from the copy key's index,
     /// by the key of a file with a face and a present copy: every present copy of the photo,
     /// the copy with no face of its own included. A photo with no copy is not asked for.

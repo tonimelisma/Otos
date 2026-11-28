@@ -15,6 +15,7 @@ struct FaceVectorsTests {
         }
     }
 
+    // Validates: ENR-025
     /// The guard: what the vectors hold on the heap is each slot's number and state, a few bytes
     /// a face, whatever the faces; the vectors are the file's.
     @Test func theVectorsAreTheFilesAndTheHeapHoldsAFewBytesAFace() throws {
@@ -34,6 +35,7 @@ struct FaceVectorsTests {
     /// spare capacity. Held as Float16 on the heap, a vector cost 1,024 bytes and more.
     static let heapBytesPerVector = 24
 
+    // Validates: ENR-025
     /// A vector reads back as its embedding rounded to half precision, bit for bit, wherever it
     /// was written; a malformed row is held as such; a row at or below `owed` is passed over.
     @Test func aVectorReadsBackAsItsRoundedEmbedding() throws {
@@ -54,6 +56,7 @@ struct FaceVectorsTests {
         #expect(vectors.vector(0) == nil && vectors.vector(352) == nil)
     }
 
+    // Validates: ENR-025
     /// Forgetting drops the vectors no face names; a compaction writes the kept ones into a new
     /// file, and a copy made before it, as a pass running meanwhile holds, still reads its own.
     @Test func aCompactionKeepsWhatIsNamedAndACopyKeepsItsMapping() throws {
@@ -78,6 +81,7 @@ struct FaceVectorsTests {
         #expect(store.vectors.vector(1) == nil && store.vectors.vector(4) != nil)
     }
 
+    // Validates: ENR-025
     /// A reader's copy is made after a page and the owner appends past it: the copy reads
     /// exactly what it was made with, and the owner every vector, so a copy never sees a slot
     /// rewritten. Only the owner writes; a copy holds no file to write with.
@@ -100,6 +104,7 @@ struct FaceVectorsTests {
         }
     }
 
+    // Validates: ENR-025
     /// At the free-space floor a page is refused before anything is written, and what is held
     /// stays as it was; a compaction the floor refuses is not run, and the vectors kept still
     /// read back. With room again the same page is written.
@@ -126,6 +131,7 @@ struct FaceVectorsTests {
         #expect(!FaceVectorFile.Failure.write(errno: EIO).isNoSpace)
     }
 
+    // Validates: ENR-025
     /// The differential: assignment over vectors read back from the file gives exactly what it
     /// gives over the same vectors held in bytes of their own.
     @Test func theFilesVectorsAssignAsVectorsOfTheirOwn() throws {

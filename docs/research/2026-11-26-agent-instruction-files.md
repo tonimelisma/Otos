@@ -8,7 +8,7 @@ third party.
 `AGENTS.md` (which `CLAUDE.md` links to) had grown to 728 lines and 48,834 characters. What
 do current sources say about the size, structure and wording of such a file, what belongs
 in it rather than in skills, path-scoped rules, hooks or the docs it points at, and how
-should one rule set serve both a cloud session and a session on the owner's Mac?
+should one rule set serve both a cloud session and a session on the maintainer's Mac?
 
 ## Findings
 
@@ -78,7 +78,7 @@ should one rule set serve both a cloud session and a session on the owner's Mac?
 ## Audit of AGENTS.md as of 960d000
 
 Measured: 728 lines, 48,834 characters, 65 lines containing "never", 47 bold spans,
-eight dated owner quotes and "Done on" entries.
+eight dated quotes of the maintainer and "Done on" entries.
 
 1. **Size.** 3.6× the recommended length. Large parts restate what has a home already:
    the catalog ownership split (`docs/architecture.md`, ADR 0004), migration cost rules
@@ -86,16 +86,16 @@ eight dated owner quotes and "Done on" entries.
    performance verdicts (ADR 0043), Sparkle release mechanics (ADR 0059), and rules
    enforced by lints and guards (`time-guard.sh`, `error_becomes_value`,
    `unordered_main_actor_hop`, `guard-*.sh`).
-2. **History in instructions.** "Owner setup" is a changelog ("Done on 2026-11-25", "Done
-   on 2026-11-26"), and owner quotes with dates are scattered through rules. The reasons
+2. **History in instructions.** A setup checklist section is a changelog ("Done on 2026-11-25", "Done
+   on 2026-11-26"), and dated quotes of the maintainer are scattered through rules. The reasons
    they carry belong in the ADR each rule points at.
 3. **Contradictions.**
-   - The copied standing rule "Live tests may write to Taylor's real apps" against Otos's
-     "The owner's production data is read, never changed".
+   - A copied personal standing rule that live tests may write to the maintainer's real apps,
+     against Otos's rule that production data is read, never changed.
    - "Never ask whether to do it" against "Restate non-trivial captured requirements to the
      user for confirmation before relying on them".
    - "Branch with a conventional prefix" against the cloud harness, which names the branch.
-   - "A session never builds, installs or develops on the owner's Mac" against the
+   - A rule that a session never builds, installs or develops on the maintainer's Mac, against the
      Definition Of Done's look, the weekly performance run and the toolchain section, which
      all assume a session on the Mac.
 4. **Mac-only material in the always-loaded file.** Worktrees, the SSH deploy-key fallback,
@@ -105,7 +105,7 @@ eight dated owner quotes and "Done on" entries.
    follow-up deferred to save work" and 65 "never" lines are the pattern the current
    guidance says causes over-application and over-work. The substance (blank-slate design,
    no shims, the smallest correct design) survives a plainer wording with its reason.
-6. **Personal rules in a public project file.** "Taylor's Standing Rules" are copied in
+6. **Personal rules in a public project file.** A personal standing-rules section is copied in
    because a cloud session never reads `~/.claude/CLAUDE.md`; a personal environment's setup
    script can write that file instead.
 

@@ -57,7 +57,7 @@ sessions' parallel checks: load average 30–68 on 8 cores. Nothing extra was ad
   the number of stills owed.
 - **Installed app, last 48 hours:** six `op=search.text phase=read` passes, including one of
   15,600 readings in 15,403 s, 2,071 of them with text, and no `phase=failed` line. The
-  failure has not shown up in the owner's app.
+  failure has not shown up in the installed app on the test Mac.
 
 ## Not changed
 

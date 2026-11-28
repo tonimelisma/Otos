@@ -6,6 +6,7 @@ import Testing
 /// leaves a card alone exactly while it is copied, however the run ends.
 @Suite(.testScope)
 struct MediaOperationCoordinatorSourceReadTests {
+    // Validates: ENR-017
     @Test func aCardIsNotEnrichedWhileItsImportRunsAndIsAfterItFails() async throws {
         let temp = try makeTestDirectory()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

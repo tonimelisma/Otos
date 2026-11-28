@@ -6,7 +6,7 @@ of it costs?
 
 ## Evidence
 
-**The owner's installed app, two hours of logs** (`script/logs.sh show --last 2h Catalog`,
+**The installed app on the test Mac, two hours of logs** (`script/logs.sh show --last 2h Catalog`,
 `op=people.state phase=built`), 21:44–23:39 on 2026-11-10, while about 1,600 stills were
 read for faces (807 → 1,482 faces; 14,027 → 12,446 stills unchecked):
 

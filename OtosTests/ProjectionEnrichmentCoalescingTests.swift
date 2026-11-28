@@ -106,6 +106,7 @@ struct ProjectionEnrichmentCoalescingTests {
         return Window(store: store, projection: projection, recorder: recorder, recording: recording, ids: ids, assets: assets)
     }
 
+    // Validates: ARC-018, APP-081
     /// Store-level oracle: a batch that changes no capture date, kind, format, grouping
     /// identifier or location names its detail and what it wrote — its record and its
     /// rendering — and none of those; a digest no other file holds makes no file a copy, so it
@@ -136,6 +137,7 @@ struct ProjectionEnrichmentCoalescingTests {
         #expect(dated.last == .changed([.detail, .mediaRecord, .images, .captureDate], rows: .rows([asset.id])))
     }
 
+    // Validates: ARC-018
     /// The stacks are held while no stack candidate's fact moves (ADR 0052): the JPEG of the
     /// seeded library has no RAW beside it, so its new capture date names no `.stacks` (the
     /// test above), while the same write to the JPEG of a RAW+JPEG pair does, and so does one
@@ -180,6 +182,7 @@ struct ProjectionEnrichmentCoalescingTests {
         }
     }
 
+    // Validates: ARC-018
     /// End-to-end: detail-only enrichment batches read neither the order nor the options; a
     /// capture date read from bytes reads that one row again, keyed, and reorders, and leaves
     /// the options standing, since a date offers no other type or place.
@@ -220,9 +223,10 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-022
     /// N capture-date writes cost reads in proportion to N, never N times the library (ADR 0005,
     /// "Keyed re-reads"): each re-reads only the rows its change named and merges them into the
-    /// order held, which is then exactly what a full read gives. On the owner's catalog, while
+    /// order held, which is then exactly what a full read gives. On the reference catalog, while
     /// a sync brought metadata for 152 rows, the order was read whole 125 times.
     @Test func captureDateWritesReadOnlyTheirRowsAndKeepTheOrderAFullReadGives() async throws {
         let window = try await settledWindow()
@@ -254,10 +258,11 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-022
     /// N location writes cost options reads in proportion to N, never N times the row's scope
     /// (ADR 0005, "Keyed re-reads"): each re-reads only the rows its change named
     /// and patches the options' tally, and a renamed cell re-reads only the names; the options
-    /// shown are then exactly what a full read gives. On the owner's library a sync re-read
+    /// shown are then exactly what a full read gives. On the reference library a sync re-read
     /// the options whole 92 times for location changes.
     @Test func locationWritesReadOnlyTheirRowsAndKeepTheOptionsAFullReadGives() async throws {
         let window = try await settledWindow()
@@ -313,6 +318,7 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-018
     /// Copies kept together change what the Duplicates rows hold, never the library's order
     /// or its options: the change is published as a refresh with neither read again.
     @Test func aWriteThatCannotChangeTheOrderIsPublishedWithoutReadingIt() async throws {
@@ -328,9 +334,10 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-019
     /// Identical copies share their kinds, formats and places, so which file is a copy offers
     /// no other choice: All Media, which shows one copy of each, reads its order again for a
-    /// digest that makes two files copies, and never its options. On the owner's catalog 227 of
+    /// digest that makes two files copies, and never its options. On the reference catalog 227 of
     /// the 277 changes in four minutes named copies, and each read the options again.
     @Test func aDigestThatMakesCopiesNeverReadsTheOptionsAgain() async throws {
         let window = try await settledWindow()
@@ -357,6 +364,7 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A choice is a stack fact (ADR 0052) and what the choices filter selects by, so the order
     /// is read again; it offers no other type or place, so the options are not.
     @Test func aStackFactReadsTheOrderAgain() async throws {
@@ -372,6 +380,7 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-018
     /// Faces decide nothing the library's order holds, so reading them reads no order there;
     /// a person's photos are the faces given that person, so a face given the person shown
     /// reads that order again.
@@ -457,6 +466,7 @@ struct ProjectionEnrichmentCoalescingTests {
         return (window, libraryPath)
     }
 
+    // Validates: ARC-019
     /// ARC-018: All Media's order is held while the user is in another scope that reads its
     /// own, so returning to it with no fact moved reads nothing and shows what it showed.
     @Test func aReturnToAllMediaWithNoFactMovedReadsNothing() async throws {
@@ -481,6 +491,7 @@ struct ProjectionEnrichmentCoalescingTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-019
     /// ARC-018: a return to a scope whose facts moved while the user was elsewhere paints what
     /// it last showed at once, without a read, and the pass after it reads the moved row again
     /// and republishes: a capture date moved in the library reorders All Media only in

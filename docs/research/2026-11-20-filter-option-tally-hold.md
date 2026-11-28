@@ -4,13 +4,13 @@
 
 `docs/research/2026-11-19-store-change-facts-actor-hold-read-turns.md` (M2) measured
 `filterOptionTally` holding the `CatalogStore` actor for 79 ms at p99 (64 holds, max 78.6 ms) on
-the generated owner-shaped catalog. Plan 0117 step 1 left it "not yet attributed". Which part of
+the generated reference-shaped catalog. Plan 0117 step 1 left it "not yet attributed". Which part of
 it holds the actor: synchronous work on the actor, or read time charged to it?
 
 ## Method
 
-Nothing touched the owner's catalog or library. Every run used the catalog the tests generate
-(`OwnerShapedCatalog`, scale 1).
+Nothing touched the reference catalog or library. Every run used the catalog the tests generate
+(`ReferenceShapedCatalog`, scale 1).
 
 The hold harness from the M2 note was reused on a new local branch,
 `experiment/2026-11-20-filter-option-tally-hold` (commit `26397413`, on top of `6216befe`). It

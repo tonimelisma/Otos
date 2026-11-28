@@ -4,6 +4,7 @@ import Testing
 import UniformTypeIdentifiers
 
 struct MediaEligibilityTests {
+    // Validates: ARC-035
     @Test func catalogMediaIncludesImageAndMovieTypes() {
         #expect(MediaEligibility.isCatalogMedia(contentType: .jpeg))
         #expect(MediaEligibility.isCatalogMedia(contentType: .heic))
@@ -23,6 +24,7 @@ struct MediaEligibilityTests {
         #expect(!MediaEligibility.isCatalogMedia(contentTypeIdentifier: "public.swift-source"))
     }
 
+    // Validates: ARC-045
     @Test func skipsDeviceArtifactAndTrashPaths() {
         #expect(MediaEligibility.shouldSkipDirectory(name: ".Trash-1000"))
         #expect(MediaEligibility.shouldSkipDirectory(name: "$RECYCLE.BIN"))
@@ -34,6 +36,7 @@ struct MediaEligibilityTests {
         #expect(!MediaEligibility.isRecognizedCompanion(relativePath: MediaRelativePath(rawValue: "a.lrc")))
     }
 
+    // Validates: APP-032
     @Test func sourceEraseClassificationIsCaseInsensitiveAndLeavesUnknownUntouched() {
         #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "PRIVATE/M4ROOT/THMBNL/a.jpg"))
             == .sourceArtifact("sonyThumbnailDirectory"))

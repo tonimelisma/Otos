@@ -1,14 +1,14 @@
 # What Otos's background work makes the machine carry (2026-11-17)
 
-Sources: the installed app's unified log for today's sessions on the owner's library (read
+Sources: the installed app's unified log for today's sessions on the reference library (read
 only, `log show` for the installed image; three launch-kind tours of 609–610 s: pids 64416,
 4485, 10258), a machine sampler beside a sandbox tour (every 5 s: the kernel's pressure level
 and available share, the load average, `top` for Otos's processes, the system language model's
 service and the indexing daemons, and other agents' compiler processes), and the survey of
 installed ef4492e6 (`build/surveys/eighth-ef4492e6`, local). Nothing was launched on the
-owner's data.
+reference data.
 
-## The owner's library: what each owner asked for per unit time
+## The reference library: what each owner asked for per unit time
 
 Pid 10258 (installed f398d5dc), 609 s:
 
@@ -60,7 +60,7 @@ The app read 624 MB and used 455 s of CPU in the session: 2,002 rows enriched (5
 minute until the backlog was done), 62 descriptions (about 15 a minute), one text helper (135
 pictures). The machine stayed at normal pressure, so on this machine the in-process work
 (renders, faces, embeddings) and a describing model service do not by themselves move the
-level from normal. What the sandbox cannot reproduce is the owner's download path: 13 GB in
+level from normal. What the sandbox cannot reproduce is the reference library's download path: 13 GB in
 ten minutes through the provider's process into the file cache.
 
 ## The same tour with the background room (ADR 0057)

@@ -5,14 +5,14 @@
 
 ## Context
 
-The owner asked for "a story player for on this day, photos and videos, similar to
-Immich" after the survey `docs/research/2026-11-07-memories-and-highlights.md`, and then
-chose, on 2026-11-09:
+On This Day is a story player for photos and videos, similar to Immich's, decided after
+the survey `docs/research/2026-11-07-memories-and-highlights.md`, with these choices made
+on 2026-11-09:
 
 - **the unit:** On This Day — items captured on today's month and day in earlier years;
-  and, on 2026-11-12, "show photos from months ago, if nothing newer is available": a
-  library with nothing from an earlier year on the day — the owner's own, seven months
-  deep, showed `Nothing on This Day` while holding 713 items taken on the 12th of earlier
+  and, on 2026-11-12, photos from months ago when nothing newer is available: a
+  library with nothing from an earlier year on the day — a library seven months
+  deep showed `Nothing on This Day` while holding 713 items taken on the 12th of earlier
   months — shows the day of the month in earlier months instead;
 - **the content:** photos and videos;
 - **the presentation:** a story player like Immich's — one progress segment per item,
@@ -22,8 +22,8 @@ chose, on 2026-11-09:
   a strip);
 - **the pane:** a grid of photo cards, one per earlier year, chosen from four options
   (photo cards, story circles, a by-year feed, a hero plus smaller cards) after the
-  layout survey `docs/research/2026-11-09-on-this-day-layouts.md`. The reference is the
-  owner's own Immich v3.3.0 memory strip and Immich's memories page (PR #28675).
+  layout survey `docs/research/2026-11-09-on-this-day-layouts.md`. The reference is
+  Immich v3.3.0's memory strip and Immich's memories page (PR #28675).
 
 Otos's architecture splits *scope* (`SidebarSelection`, what media) from *presentation*
 (`BrowserViewMode`). Places (ADR 0040) and Duplicates (ADR 0042) are scopes whose detail
@@ -46,9 +46,8 @@ and materialization (ADR 0016, ADR 0023); the no-blank grid rule (ADR 0006).
 **On This Day is a scope, and its anniversaries are what that scope looks like.** There is no
 view mode for it.
 
-1. **Placement (owner decision).** A sidebar row, `On This Day`, SF Symbol `calendar`,
-   second under All Media, present whenever one fixed library exists, with no trailing count
-   (owner decision, 2026-11-11).
+1. **Placement.** A sidebar row, `On This Day`, SF Symbol `calendar`,
+   second under All Media, present whenever one fixed library exists, with no trailing count.
 2. **What matches.** Rows of the available fixed libraries — All Media's membership —
    whose day bucket has today's month and day in a year before today's — or, only when no
    such row exists, today's day of the month in a month before today's (§4). The day bucket
@@ -62,7 +61,7 @@ view mode for it.
    matches nothing, and a 30-day month has no 31st. Undated rows never match. It is a live query, never a snapshot, so a
    late import appears and a deleted file goes (ADR 0008). Of the rows that match, it
    leaves out a Disliked photo (a stack by its key, ADR 0052) and one Vision is confident is
-   a screenshot or a document (`OnThisDayPicks`, owner direction 2026-11-13). Those labels
+   a screenshot or a document (`OnThisDayPicks`, 2026-11-13). Those labels
    count only from the photo's current search row, the one read from the thumbnail it has
    now (ADR 0048's staleness, `OnThisDayPicks.leftOutSQL`): a row read from an earlier
    picture — a re-rendered thumbnail, a new file at a deleted photo's path, an older model —
@@ -126,7 +125,7 @@ view mode for it.
    An anniversary's distance (`OnThisDayInterval`) is whole years when its month is
    today's and months otherwise, so a run 14 months back reads `14 months ago`, never a
    rounded year; the bar counts in years when every run is in today's month.
-7. **The pane is a grid of photo cards (owner decision).** A 52 pt bar in the Places
+7. **The pane is a grid of photo cards.** A 52 pt bar in the Places
    bar's place (L1 the day, `9 November`; L3 `14 photos and videos from 4 years`, or
    `612 photos and videos from 4 months`), over an adaptive grid of 16:9 cards (260–420 pt
    wide, 16 pt gaps, 20 pt margins), one per anniversary, newest first. A card's key photo is aspect-filled — a cover stands for the anniversary,
@@ -191,7 +190,7 @@ view mode for it.
 
 ### A strip above the grid (Immich, Google Photos)
 
-Rejected by the owner's placement choice, and on Otos's own rules: the top of the grid
+Rejected by the placement choice, and on Otos's own rules: the top of the grid
 belongs to the day bar (DES-069), the grid is the one AppKit boundary, and a strip would
 render these items a second time in All Media ("one fact, one owner").
 
@@ -214,26 +213,26 @@ which the order index answers about 20× faster on 500,000 rows (6 ms against 10
 But SQLite refuses an expression deeper than 1,000 terms and more than 32,766 bound
 arguments, so one photo dated 1904 — a scan, or a camera that lost its clock — gives
 1,464 month ranges and the scope fails to read. A balanced `OR` tree avoids the depth
-but not the argument limit for a bogus year. The predicate costs 21 ms on the owner's
+but not the argument limit for a bogus year. The predicate costs 21 ms on the reference library's
 19,500 items and stays linear; measure again before reaching for ranges.
 
 ### A fourth view mode, or the ordinary browser
 
-The first plan showed the scope in the ordinary grid, loupe and compare. The owner chose
-a pane of its own; a view mode would inherit zoom and the day bar, as ADR 0040 found
+The first plan showed the scope in the ordinary grid, loupe and compare. A pane of its own
+was chosen instead; a view mode would inherit zoom and the day bar, as ADR 0040 found
 for a map mode.
 
 ### Circles as the cards
 
-Considered after the owner rejected the ordinary browser. No surveyed product uses
+Considered after the ordinary browser was rejected. No surveyed product uses
 circles as a full page; a circle centre-crops a scene photo
 (`docs/research/2026-11-09-on-this-day-layouts.md`).
 
 ### Months beside years, always
 
 Showing last month's 12th next to 12 November three years ago crowds the years out of the
-cards in any library older than a few months, and the owner asked for months only "if
-nothing newer is available". Months are the fallback, never mixed in.
+cards in any library older than a few months, and months are wanted only when nothing
+newer is available. Months are the fallback, never mixed in.
 
 ### Deciding years or months with the filter applied
 

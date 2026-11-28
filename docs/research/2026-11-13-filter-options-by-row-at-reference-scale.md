@@ -1,15 +1,15 @@
-# Filter options by sidebar row, at owner scale (2026-11-13)
+# Filter options by sidebar row, at reference-library scale (2026-11-13)
 
 ## Question
 
 The filter popover's options (file types, countries and towns) move from one read over
 every available source to one read over the shown sidebar row's scope (ADR 0011, ADR 0051).
-What do those reads cost for every kind of row on the owner's catalog, and do any plans
+What do those reads cost for every kind of row on the reference catalog, and do any plans
 scan?
 
 ## Method
 
-An APFS clone of the owner's read-only catalog backup
+An APFS clone of the reference library's read-only catalog backup
 (`build/catalog-backups/catalog-before-review-fixes.sqlite`, 166,554 photos, 32,161
 located, 201 named cells, schema v42) in the session scratchpad, given v43's place-cell
 columns and index and v45's language key by hand, with no `sqlite_stat1` (the app runs no
@@ -47,4 +47,4 @@ No plan scans `media_asset`, `asset_metadata`, `face` or `search_embedding`.
   cheaper in the media-driven reads too (types 25–47 ms against 53–84 ms). It replaces the
   `NOT IN` for every On This Day read, and v52 drops `idx_search_embedding_left_out`, which
   no read uses after it.
-- The languages read scans `place_cell`, one row per named cell (201 for the owner).
+- The languages read scans `place_cell`, one row per named cell (201 in the reference catalog).

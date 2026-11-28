@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct MediaChoiceTests {
+    // Validates: APP-024
     /// DES-066: neutral has no button, so the third state is reached by pressing
     /// the act the item already carries. Both the AppKit tile and the SwiftUI
     /// Loupe/Compare control resolve through this one function rather than each
@@ -18,6 +19,7 @@ struct MediaChoiceTests {
         #expect(MediaChoiceToggle.dislike.resolved(from: .liked) == .disliked)
     }
 
+    // Validates: APP-025
     @Test func choiceFilterUsesOrWithinCurationAndAndAcrossMediaGroups() {
         let jpeg = MediaFormatToken(rawValue: "JPEG")
         let likedOnly = MediaFilter(choices: [.liked])
@@ -35,6 +37,7 @@ struct MediaChoiceTests {
         #expect(!imageLiked.includes(kind: .image, format: jpeg, choice: .disliked))
     }
 
+    // Validates: APP-025
     @Test func selectingAllChoicesCanonicalizesToNoCurationRestriction() {
         var filter = MediaFilter()
         for choice in MediaChoice.allCases {

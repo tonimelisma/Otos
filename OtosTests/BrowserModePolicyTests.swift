@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct BrowserModePolicyTests {
+    // Validates: APP-019
     @Test func loupeEntryPrefersExplicitID() {
         let ids = makeIDs(4)
         let selection = GridSelection.empty.plainClick(ids[2])
@@ -47,6 +48,7 @@ struct BrowserModePolicyTests {
         #expect(BrowserModePolicy.neighbor(of: nil, in: ids, delta: 1) == ids[0])
     }
 
+    // Validates: APP-042
     /// A filter's survivors are a different, shorter sequence; the nearest survivor is
     /// found by walking the order the user was looking at, later first, then earlier.
     @Test func nearestSurvivorWalksThePreviousOrder() {

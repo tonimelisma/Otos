@@ -1,0 +1,66 @@
+# Saves main's build caches, the one place they are saved (ADR 0044, ADR 0062): every pull
+# request's Build And Test shards and the release restore them. Each push to main builds the
+# tests (script/build.sh, the same build-for-testing check.sh runs) from the caches the previous
+# push left, then saves the compilation cache, the lint tools and the resolved Swift packages
+# under that commit, and the packages alone, which is all the release reads. CI's shards no longer
+# run on a push to main whose tree its pull request already tested, so this is a workflow of
+# its own; it gates nothing and publishes nothing.
+name: Build Cache
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cache
+  cancel-in-progress: true
+
+jobs:
+  cache:
+    name: Save The Build Caches
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select the newest Xcode 27
+        id: xcode
+        run: script/ci-select-xcode.sh >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+          restore-keys: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-
+
+      - name: Build the tests
+        run: script/build.sh
+
+      - name: Save the build caches
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData/CompilationCache.noindex
+            ~/Library/Caches/net.melisma.Otos.lint-tools
+            build/DerivedData/SourcePackages
+          key: build-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ github.sha }}
+
+      # The resolved packages alone, keyed by their pins: a fraction of the build caches' size,
+      # so the release restores them in seconds instead of fetching every package again.
+      - name: Save the resolved packages
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true # an existing entry for the same pins is kept as it is
+        with:
+          path: build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('Otos.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}

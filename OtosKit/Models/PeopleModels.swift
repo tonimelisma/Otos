@@ -100,7 +100,7 @@ nonisolated struct PeopleFaces: RandomAccessCollection, Equatable, Sendable {
     }
 
     /// The faces a read collected (`MappedArrayBuilder`), each column made at its length once:
-    /// no column outgrows a buffer while an owner-scale snapshot is read.
+    /// no column outgrows a buffer while a library-scale snapshot is read.
     /// Those `isIncluded` keeps; room is made for all of them.
     init(
         collected faces: borrowing MappedArrayBuilder<PeopleSnapshot.Face>,
@@ -546,7 +546,7 @@ nonisolated struct FaceAssignmentPlan: Sendable, Equatable {
     }
 
     /// How far a likeness must move to be a change. Accelerate's matrix product rounds
-    /// differently from process to process: on the owner's 89,474 faces, likenesses read by
+    /// differently from process to process: on the reference library's 89,474 faces, likenesses read by
     /// the same code in two processes differed by up to 4.8e-7. Writing such a wobble would
     /// make every assignment change the catalog, and the change starts the next assignment,
     /// so People would never settle. Likeness only orders a person's photos.
@@ -832,7 +832,7 @@ nonisolated struct CatalogPeopleState: Equatable, Sendable {
         if lhs.isFavorite != rhs.isFavorite {
             return lhs.isFavorite
         }
-        // Every named person before every unnamed one (owner, 2026-11-20), then most photos,
+        // Every named person before every unnamed one, then most photos,
         // then by name.
         if (lhs.name == nil) != (rhs.name == nil) {
             return lhs.name != nil
@@ -925,7 +925,7 @@ nonisolated struct PhotoFaces: Equatable, Sendable {
     static let none = PhotoFaces(photos: [], own: [:])
 
     /// The faces `photo` shows, with what held acts do to them: its own, in reading order,
-    /// then — a named face on any copy being the photo's (ADR 0054; owner, 2026-11-15) — the
+    /// then — a named face on any copy being the photo's (ADR 0054) — the
     /// face of each person a present copy holds and this file does not, from the first copy
     /// in shown order that holds one. A face stays on the copy it was read from: its box is
     /// of that copy's pixels, so it is outlined only where that copy shows, and an act on it

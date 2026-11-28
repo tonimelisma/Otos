@@ -2,7 +2,7 @@
 
 ## Question
 
-On the owner's library (installed 160a1997, launch tour), the first search took 1,466 ms to
+On the reference library (installed 160a1997, launch tour), the first search took 1,466 ms to
 its first results with the text tower already prepared. Was that the tower's first-inference
 cost, its pages being read back in after an idle, or something else?
 
@@ -38,7 +38,7 @@ A hosted probe (a test run once and not committed: CPU-only tower, this Mac, 530
 - Preparing already ran one warm-up prediction (`SearchTextTower.prepare`). `op=search.encoder
   phase=prepared` now reports the load and the warm-up apart (`loadMs`, `warmUpMs`).
 - An idle of two minutes alone does not reproduce the cost, even with comparable swap. What made
-  the owner's second prediction take 1.1 s is **not established**. Candidates are page-out of
+  the reference session's second prediction take 1.1 s is **not established**. Candidates are page-out of
   the tower's pages under that session's pressure, or CPU contention with the text reader and
   hashing. The tour does not mark page-ins for a search step, so the session cannot tell them
   apart.

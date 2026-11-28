@@ -2,7 +2,7 @@
 
 ## Question
 
-A read-only tour of the owner's library on the installed build (6c973892; about 167k assets,
+A read-only tour of the reference library on the installed build (6c973892; about 167k assets,
 103k faces, 749 people) kept the footprint under 700 MB through every step, peaking at 648 MB.
 Then, in the tour's idle step, with nobody touching the app, `event=peopleBuilt` samples showed
 the footprint at 526 MB, then 773 MB 43 s later, and 770–809 MB for the next 50 s, peaking at
@@ -35,9 +35,9 @@ gallery read (`PeopleGallery`), not every assignment pass. The passes themselves
   onto the heap and ran the kernel. The later passes moved it within ±30 MB, peaking at
   851 MB while one ran.
 
-## Attribution on a generated catalog of the owner's shape
+## Attribution on a generated catalog of the reference library's shape
 
-A probe (not kept) in two test processes on `OwnerShapedCatalog` at scale 1 (102,979 faces,
+A probe (not kept) in two test processes on `ReferenceShapedCatalog` at scale 1 (102,979 faces,
 755 people, unit vectors one direction per person): the first process generated the catalog and
 settled it; the second opened it fresh and ran the live session's sequence with one owner — the
 launch pass, a pass after a new reading of one photo (named, as a reading's change names it),
@@ -108,7 +108,7 @@ in megabytes: what it held at its most above where it started, and what it kept.
 | The whole assignment | 51 | 18 |
 
 The generated catalog's faces are all anchors, so a run of chaining there has no open rows; on
-the owner's, most faces are guesses, so the rows a run copied are most of the faces.
+the reference catalog, most faces are guesses, so the rows a run copied are most of the faces.
 
 ## Faces read by position
 
@@ -135,12 +135,12 @@ The live session's sequence, same probe, same catalog (footprint, MB):
 | Held snapshot, live | 44 | 44 | **31** |
 | A pass's live peak above what it keeps | 81 | 86 | 72 |
 
-The on-demand owner-scale test, in one process after the earlier parts: five keyed passes
+The on-demand reference-scale test, in one process after the earlier parts: five keyed passes
 249 → 251 MB.
 
 ## Why the passes ran in a second session (#874 installed, 942d82d1)
 
-The owner's tour after #874 peaked at 812 MB. Its log, read-only:
+The reference library's tour after #874 peaked at 812 MB. Its log, read-only:
 
 - **People passes:** five in the first 23 s, not six. `peopleBuilt` is written by each gallery
   read, and there were more gallery reads than passes.

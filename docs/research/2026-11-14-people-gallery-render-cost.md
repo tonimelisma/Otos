@@ -2,7 +2,7 @@
 
 ## Question
 
-On the owner's catalog (738 people, 102,753 faces, faces still being read), the installed app
+On the reference catalog (738 people, 102,753 faces, faces still being read), the installed app
 (72dfc9b8) stalled the main thread for about 8 s when People opened, and for about 0.3 s after
 every People update, one every few seconds while faces were read. Every stall's stack ran
 through `PersonCell.body` into `CatalogWindowViewModel.galleryPersonMenu(_:)` and
@@ -72,5 +72,5 @@ person's newest faces); the cell renders from its own person and selection and i
 the cell it replaces while they are, and the gallery equal to the one it replaces while its
 People state and selection are; its menu and VoiceOver actions are child views that ask for
 the menu as they open; and the toolbar menu of a person's photos is built once per People
-state or scope (ADR 0047, APP-072). Not measured: the installed app on the owner's catalog
+state or scope (ADR 0047, APP-072). Not measured: the installed app on the reference catalog
 (never launched by an agent), and VoiceOver reading a cell's actions.

@@ -141,7 +141,7 @@ nonisolated enum PhotoStackRule {
     /// A pair is exactly two stills sharing a stem key (`FilesystemNamespaceSemantics.stemKey`,
     /// the volume's own name equality): one RAW and one processed image. Any other count —
     /// a RAW alone, two JPEGs, a RAW with a JPEG and a HEIC — pairs nothing. The processed
-    /// file is the default key, as Apple Photos shows it (owner, 2026-11-13).
+    /// file is the default key, as Apple Photos shows it.
     ///
     /// A burst is two or more frames whose stills carry one burst identifier. A pair is one
     /// frame, shown as its pair's key. Its default key is its first Liked frame, else its
@@ -157,7 +157,7 @@ nonisolated enum PhotoStackRule {
         libraryRootPath: LibraryRootPath,
         pairing: RawPairing
     ) -> [PhotoStack] {
-        // Built as `MappedArrayBuilder` says: a root's candidates are owner-scale.
+        // Built as `MappedArrayBuilder` says: a root's candidates are library-scale.
         let stills = MappedArrayBuilder.collect(candidates) { $0.kind != .video ? $0 : nil }
         let pairs = pairing == .paired ? pairs(stills, libraryRootPath: libraryRootPath) : []
         return pairs + bursts(stills, pairs: pairs, libraryRootPath: libraryRootPath)
@@ -446,9 +446,9 @@ nonisolated enum PhotoStackCollapse {
         // One probe a file finds the files in a stack, a few percent of a library; both levels
         // and the tiles then touch those files alone, and the order is copied once, without
         // the files a level hides. A file in no stack is never hidden, so a level over the
-        // stacked files alone hides what it would over every file. On the owner's 164,762
+        // stacked files alone hides what it would over every file. On the reference library's 164,762
         // files the two levels each walked every file twice, about 0.5 s
-        // (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+        // (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
         var stackedPositions: [Int] = []
         for (position, id) in ids.enumerated() where stacks.stackedMembers.contains(id) {
             stackedPositions.append(position)

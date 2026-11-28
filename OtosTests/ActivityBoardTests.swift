@@ -107,6 +107,7 @@ struct ActivityBoardTests {
         }
     }
 
+    // Validates: APP-096
     @Test func aKindWorksFromItsFirstRequestAndIsUpToDateWhenItsOwnerSettles() async {
         let clock = TestClock()
         let board = ActivityBoard(now: { clock.now })
@@ -134,6 +135,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     @Test func aKindServedByTwoOwnersWorksWhileEitherDoesAndIsPausedOnlyWhenBothAre() async {
         let clock = TestClock()
         let board = ActivityBoard(now: { clock.now })
@@ -172,6 +174,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     @Test func theRoomChangingRingsTheBoardForAHoldReadAsOfTheRound() async {
         let board = ActivityBoard()
         let room = BackgroundRoom(conditions: MachineConditions(memory: .normal, thermal: .nominal, lowPower: false))
@@ -189,6 +192,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     /// An owner at rest that says what stops its work waits on it; a backoff wake alone is no
     /// trouble; once nothing stops it, it is up to date.
     @Test func anOwnerWaitsOnWhatItSaysStopsItAndIsUpToDateWithoutIt() async {
@@ -218,6 +222,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     /// A kind whose every item left waits out a failure waits, and keeps waiting while its
     /// owner retries them — busy, moving nothing — with what stopped it still said, so the
     /// row neither flickers to working nor drops its reason; it works again only once an item
@@ -266,6 +271,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     /// A kind moved only by its grouping owner groups; once an owner of its items moves it
     /// too, it works on its items again.
     @Test func aKindMovedOnlyByItsGroupingOwnerGroups() async {
@@ -299,6 +305,7 @@ struct ActivityBoardTests {
         await board.shutdown()
     }
 
+    // Validates: APP-096
     /// An owner that is only a kind's detail — the downloads behind the photos to show —
     /// never makes the kind work; its run is the working kind's line while the run is
     /// background work.
@@ -326,6 +333,7 @@ struct ActivityBoardTests {
 }
 
 extension ActivityBoardTests {
+    // Validates: APP-096
     /// A stretch's tally: `done` is what the owner finished since the stretch began and
     /// `total` is that and what is left, so the bar moves only as the owner finishes items; an
     /// item that leaves the owed set by no work of the owner's is never counted as done; the
@@ -371,6 +379,7 @@ extension ActivityBoardTests {
 }
 
 extension ActivityBoardTests {
+    // Validates: APP-096
     /// Two owners counting one kind — a still's faces and a video's — sum: what each finished
     /// since the stretch began, of that and what each has left.
     @Test func aKindCountedByTwoOwnersSumsWhatEachFinishedAndHasLeft() async {
@@ -414,6 +423,7 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == nil)
     }
 
+    // Validates: APP-096
     /// Nothing runs or waits: the popover says so in its header alone, with no row.
     @Test func withEverythingUpToDateThePopoverListsNoRow() {
         let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
@@ -427,6 +437,7 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == nil)
     }
 
+    // Validates: APP-096
     /// Only what the user would notice is listed, each named by what it does with how many
     /// items it has left. An item failing on its own is never said: a row whose items all
     /// wait says only that they are tried again. The line names the work that has run longest.
@@ -461,6 +472,7 @@ struct ActivityPresentationTests {
         #expect(presentation.accessibilityLabel == "Activity, Indexing for search, and 3 more")
     }
 
+    // Validates: APP-096
     /// With nothing working, the line names what waits and, for one waiting row alone, what
     /// stops it.
     @Test func withNothingWorkingTheLineSaysWhatWaitsAndWhy() {
@@ -487,6 +499,7 @@ struct ActivityPresentationTests {
         #expect(two.footer == nil, "nothing else is watched")
     }
 
+    // Validates: APP-096
     /// What the user can fix comes first, on the line too, whatever else works.
     @Test func whatNeedsTheUserComesFirst() {
         let presentation = ActivityPresentation.map(
@@ -505,6 +518,7 @@ struct ActivityPresentationTests {
         #expect(presentation.rows.last?.details == ["You’re signed out of this account. Sign in again in Settings."])
     }
 
+    // Validates: APP-096
     /// Each row is named for what Otos does, in the order the popover lists them, and the
     /// details the Info pane shows wait like any other work: a server that holds them back is
     /// a row that waits, saying only that they are tried again.
@@ -528,6 +542,7 @@ struct ActivityPresentationTests {
         #expect(waiting.line == "Reading photo info")
     }
 
+    // Validates: APP-096
     /// Only what the user would notice reads as a sentence, saying what is wrong and what
     /// happens next or what to do; a source is named as the sidebar names it.
     @Test func onlyWhatTheUserWouldNoticeIsSaid() {
@@ -553,6 +568,7 @@ struct ActivityPresentationTests {
             == "The cloud provider isn’t answering. Otos will try again.")
     }
 
+    // Validates: APP-096
     @Test func accountsAreListedOnlyWhileTheySyncOrWait() {
         let accounts = [
             ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, isSyncing: true)),
@@ -570,6 +586,7 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == "Everything else is up to date")
     }
 
+    // Validates: APP-096
     /// The assets an account's server has not read yet are said on the account's row, so the
     /// photos Otos does not show yet are accounted for; an otherwise current account waits on
     /// its server for them.
@@ -587,6 +604,7 @@ struct ActivityPresentationTests {
         #expect(ActivityPresentation.unreadText(1) == "The server hasn’t processed 1 photo or video yet. They appear once it has.")
     }
 
+    // Validates: APP-096
     /// An account's pass says how far it is: its listing so far with no bar, since the stream
     /// names no total ahead; then its images of those owed, with a bar when they were counted;
     /// and a pass that ended shows only what stops it.
@@ -615,6 +633,7 @@ struct ActivityPresentationTests {
         #expect(offline.map(\.bar) == [nil])
     }
 
+    // Validates: APP-096
     /// Each row says how many items it has left, in its own words, with an exact bar while it
     /// works; a waiting or paused row keeps its count and draws no bar, since its work does not
     /// move; the downloads the photos to show wait on are that row's line, with their bytes
@@ -662,9 +681,10 @@ struct ActivityPresentationTests {
         )
     }
 
+    // Validates: APP-096
     /// A kind whose items are done and whose result is still being built says that step: no
     /// count of none beside a working row, and a spinner in place of a bar that would read as
-    /// done; a count is still said while items are left (owner, 2026-11-28).
+    /// done; a count is still said while items are left.
     @Test func aKindThatOnlyGroupsSaysSoWithNoBar() {
         let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true, entries: [
             ActivityEntry(
@@ -686,6 +706,7 @@ struct ActivityPresentationTests {
         #expect(parkedLeft.rows.map(\.details) == [["Grouping faces into people", "3 photos and videos to scan"]])
     }
 
+    // Validates: APP-096
     @Test func theDuplicatesBarSaysItIsStillLookingOnlyWhileNothingWouldMove() {
         let tally = DuplicatesTally(itemsWithDuplicates: 3, noun: .photos, itemsToMove: [], bytesToMove: 0, needingChoice: 0)
         #expect(DuplicatesBarPresentation.map(tally, stillLooking: true).secondaryLine == "Still looking for duplicates")

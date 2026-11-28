@@ -12,6 +12,7 @@ struct EnrichmentScheduleTests {
         MediaAssetID(libraryRootPath: root ?? self.root, relativePath: MediaRelativePath(rawValue: name))
     }
 
+    // Validates: ENR-009
     /// ENR-009: a claim that found nothing asked every root with room, and none had a row, so
     /// it is asked again only once a root it could not ask, one whose window was full, has
     /// room; more room for a root that had some reaches no row.
@@ -44,6 +45,7 @@ struct EnrichmentScheduleTests {
         return schedule.takeSubmissions(globalLimit: 16, backgroundPerRoot: 16, viewport: [], now: now).map(\.id)
     }
 
+    // Validates: ENR-008
     /// ENR-008: a cloud download held by the free-space floor spends no attempt and keeps its
     /// claim, held until the space recheck offers it again, without limit. Held, it is not
     /// outstanding, so it holds back no other row's hand-off.
@@ -69,6 +71,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.materializations[row]?.work.attemptCount == 0)
     }
 
+    // Validates: ENR-008
     /// A claimed row the hand-off has no slot for is held with its claim and handed off when a
     /// slot frees, never given back to be claimed again.
     @Test func aRowWithNoSlotIsHeldAndHandedOffWhenOneFrees() throws {
@@ -89,6 +92,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.heldCount == 0)
     }
 
+    // Validates: ENR-009
     /// ENR-009: background materialization retries in-window on the shipped schedule, and
     /// the failure after the last delay holds the row, with its claim, for the pacing.
     @Test func backgroundRetriesFollowTheScheduleThenPaceThroughTheLedger() throws {
@@ -136,6 +140,7 @@ struct EnrichmentScheduleTests {
         #expect(afterPacing.map(\.attemptCount) == [0])
     }
 
+    // Validates: ENR-009
     /// ENR-009: the ledger defers a row it paces — one whose source sends the original only
     /// for the user's work — whose source signature matches until its pacing comes due, and a changed signature lets it through at once and drops the entry.
     @Test func ledgerDefersAMatchingSignatureUntilDueAndResetsOnChange() {
@@ -156,6 +161,7 @@ struct EnrichmentScheduleTests {
         #expect(afterReset)
     }
 
+    // Validates: APP-096
     /// What stops rows, by cause (ADR 0058): rows the ledger paces count under the cause they
     /// were paced for, a transfer the floor turned away under a full disk and one that failed
     /// under failed downloads; each stops counting once its wait has passed, and a transfer
@@ -181,6 +187,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.troubles(at: start.advanced(by: .seconds(3600))).isEmpty, "every wait has passed")
     }
 
+    // Validates: APP-096
     /// The rows held back, by the outcome each was claimed for: a paced row counts while its
     /// wait runs, or once passed while a claim holds it, until its read lands; a row only the
     /// user's work can read is no work left, counted apart. What stops rows is told by outcome
@@ -215,6 +222,7 @@ struct EnrichmentScheduleTests {
         )
     }
 
+    // Validates: ENR-009
     /// ENR-009: success clears the row's ledger entry.
     @Test func materializationSuccessClearsTheLedgerEntry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
@@ -230,6 +238,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.retryLedger[row] == nil)
     }
 
+    // Validates: ENR-009
     /// ENR-009: cancellation releases the claim without consuming an attempt or pacing.
     @Test func cancelledMaterializationReleasesItsClaimWithoutRetry() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
@@ -282,6 +291,7 @@ struct EnrichmentScheduleTests {
         #expect(retry.retryNotBefore == now.advanced(by: .seconds(60)))
     }
 
+    // Validates: ENR-011
     /// ENR-011: visible rows go first, then device staging, then background work; within
     /// each, stills before videos and newest capture first. Background transfers stay
     /// within their per-root bound.
@@ -320,6 +330,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.waitingCount == 2)
     }
 
+    // Validates: ENR-011
     /// ENR-011 (B2): a readiness deferral set when a row reads `.unknown` is spent when
     /// the row is probed again. One a pass never reached is dropped when the pass ends —
     /// left behind, it would be a deadline in the past and the wake delay zero forever.
@@ -353,6 +364,7 @@ struct EnrichmentScheduleTests {
         #expect(schedule.readinessRechecks.isEmpty)
     }
 
+    // Validates: ENR-011
     /// B2 at the trigger that produced the spin: demand saturated at the outstanding limit
     /// with every transfer in flight. Nothing waiting on those can wake the loop — their
     /// completions do — so a past deferral leaves no wake at all, never one in the past.
@@ -407,6 +419,7 @@ struct EnrichmentScheduleTests {
 }
 
 extension EnrichmentScheduleTests {
+    // Validates: ENR-031
     /// ADR 0047: while the face model cannot be loaded, no claim hands out a video's faces,
     /// and the hold is a wait the scheduler wakes for, spent once it passes. A held claim
     /// covers everything else it covers: a library's other products, an account's metadata.

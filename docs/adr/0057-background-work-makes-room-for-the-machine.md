@@ -5,8 +5,8 @@
 
 ## Context
 
-The owner's standing complaint is that leaving Otos open makes the machine un-quiet ("fills
-the disk"). On his 16 GB Mac, a read-only ten-minute tour of the installed app (f398d5dc,
+Leaving Otos open made the machine un-quiet: it filled the disk. On the 16 GB test Mac, a
+read-only ten-minute tour of the installed app (f398d5dc,
 machine quiet at the start) was sampled every 30 s from outside: the kernel's pressure level
 went from 1 (normal, 61 % available) at launch to 2 (warning, 29 %) within 30 s and stayed at
 2 for the ten minutes, load 13–45. The app's own footprint peaked at 367 MB. The pressure is
@@ -86,7 +86,7 @@ instruments to ADR 0015.
      counted readers seen so far, not alive); each holds its own copy of the text model,
      and its cold start alone costs 3–116 s of compile.
    - Descriptions: one request at a time, as before; the model service answers one at a time.
-   - Downloads: unchanged — four per root (the owner's choice, 2026-10-31), 2 GB in flight,
+   - Downloads: unchanged — four per root (2026-10-31), 2 GB in flight,
      two large videos, and a file larger than half the budget alone, so never two multi-GB
      transfers at once. The room adds the hold, not a smaller cap: no measurement shows a
      cap below four costs less per byte hashed.
@@ -105,21 +105,19 @@ instruments to ADR 0015.
    warning 3.7–5.6 s later, four times (`docs/research/2026-11-17-launch-pressure-dips.md`).
    Text reading (one helper, 80–169 MB) and downloads (the file cache) reopen in the same step:
    neither was the cost measured.
-8. **Descriptions run while Otos is frontmost and at memory-pressure warning.** The owner,
-   2026-11-18: "Descriptions should run when the app is foreground ed. OS will swap running
-   apps". The memory a request takes is the system language model's service's, which macOS
+8. **Descriptions run while Otos is frontmost and at memory-pressure warning** (2026-11-18):
+   the OS swaps running apps out. The memory a request takes is the system language model's service's, which macOS
    compresses and swaps out like any other app's; free memory and the app being in the
    background are not preconditions for it. With descriptions held while Otos was active and
-   admitted only at 67 % available, none was written on his Mac (755 owed). A description is
+   admitted only at 67 % available, none was written on the test Mac (755 owed). A description is
    held only at `critical`, a `serious` or `critical` thermal state, and Low Power Mode, and
    never at `warning`: held there, a request loaded the model, raised the level to warning,
    was held, and started again at the return to normal, 13 dips in 128 s before #943. A
    request in flight is never stopped by a level change (decision 5). The pressure
    description writing raises is accepted: the scorecard reports it as the descriptions'
    (ADR 0015), not as a failure.
-9. **Free memory is for the work; Otos's own size is not a condition.** The owner,
-   2026-11-18: "if there's resources on the computer, use them to do the work that needs
-   doing!" Work is held only by the machine's conditions above, never by how large Otos's
+9. **Free memory is for the work; Otos's own size is not a condition** (2026-11-18): when
+   the computer has resources, they do the work that needs doing. Work is held only by the machine's conditions above, never by how large Otos's
    own footprint has grown: a peak that the machine has room for costs nothing, and holding
    work to keep it small only makes the backlog take longer. The scorecard reports the
    footprint as a number and judges the pressure Otos causes (`machine.pressureCaused`,
@@ -130,7 +128,7 @@ instruments to ADR 0015.
 
 ### The two memory-pressure sources
 
-Measured on the owner's machine (installed f398d5dc, pid 10258, ten minutes): the kernel's
+Measured on the test Mac (installed f398d5dc, pid 10258, ten minutes): the kernel's
 level, read from outside every 30 s, was 2 (warning) from 30 s after launch to the end,
 while the app's dispatch source reported warning at 119 s, normal at 271 s and warning at
 534 s. In a sandbox tour the kernel read 2 for about 34 s and the source reported nothing
@@ -160,15 +158,15 @@ while the app's dispatch source reported warning at 119 s, normal at 271 s and w
 
 So the level is read where it is needed, and the source rings the room to read it. Whether
 the source ever delivers a normal after a warning it never sent was not measured live
-(producing pressure on the owner's machine is not safe); the kernel's code says it does not,
+(producing pressure on the test Mac is not safe); the kernel's code says it does not,
 which is why the held level is read again on a poll rather than left to the next event.
 
 ## Rejected alternatives
 
 - **Descriptions only while Otos is not the active app** (this ADR's first decision). On a
-  library whose window is in front, nothing was written; the owner rejected it on 2026-11-18
+  library whose window is in front, nothing was written; rejected on 2026-11-18
   (decision 8).
-- **A setting for running descriptions in the foreground.** The owner's direction is the
+- **A setting for running descriptions in the foreground.** The direction is the
   behaviour, not a choice for the person to make.
 
 - **The dispatch source as the level.** It reports late or never (above); the room believed

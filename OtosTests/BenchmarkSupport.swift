@@ -164,7 +164,7 @@ struct BenchmarkRun: Sendable {
     }
 }
 
-/// A generated library for benchmarks, shaped like the owner's measured on 2026-11-01
+/// A generated library for benchmarks, shaped like a reference library measured on 2026-11-01
 /// (`docs/research/2026-11-01-launch-first-frame-and-duplicates-cost.md`): about 15,000
 /// stills, one in nine without capture metadata, a few percent identical copies and a few
 /// percent near-identical versions. Every value comes from a fixed seed, so every run and
@@ -180,7 +180,7 @@ struct BenchmarkLibrary {
         (4032, 3024), (3024, 4032), (6000, 4000), (4000, 6000), (1920, 1080), (3000, 3000),
     ]
     /// A file without capture metadata is mostly a screenshot or a download, in shapes
-    /// cameras do not make; that keeps its comparisons near the owner's.
+    /// cameras do not make; that keeps its comparisons near the reference library's.
     private static let strippedSizes = [(1179, 2556), (1170, 2532), (1284, 2778)]
 
     /// What the fixture writes for the still at one index.
@@ -326,7 +326,7 @@ struct SplitMix64: RandomNumberGenerator {
     }
 }
 
-/// A generated library of RAW+JPEG pairs (ADR 0052), shaped like the owner's catalog on
+/// A generated library of RAW+JPEG pairs (ADR 0052), shaped like the reference catalog on
 /// 2026-11-13: a few files in each of thousands of folders, a RAW in every folder. Each of
 /// 3,000 folders holds two pairs and one JPEG alone, so the window shows 9,000 tiles for
 /// 15,000 files (a check of the scenario's own behavior takes fewer folders).

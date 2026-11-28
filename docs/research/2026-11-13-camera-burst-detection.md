@@ -1,4 +1,4 @@
-# Camera bursts: what the owner's library says about detecting them
+# Camera bursts: what the reference library says about detecting them
 
 Date: 2026-11-13. Plan 0115 increment 6, ADR 0052. Question: can Otos stack a camera's
 continuous-shooting burst the way it stacks an iPhone burst, from facts it already reads,
@@ -70,7 +70,7 @@ folder rule.
   (ADR 0039).
 - Separately, the Immich account's RAW+HEIF pairs need the account's own stack data.
 
-The owner chose the drive-mode record (2026-11-13). MediaMetadata 0.9.5 reports it as
+The drive-mode record was chosen (2026-11-13). MediaMetadata 0.9.5 reports it as
 `continuousShootingFrame`, and Otos stacked a camera's frames by it (ADR 0052).
 
 ## Follow-up: the frame number does not bound a burst (2026-11-13)
@@ -81,7 +81,7 @@ folder, kept to its frames 3 and 5 read as one rising sequence, and a collapsed 
 keepers while Move to Trash on the tile took all three. Deleting a burst's frame 1 inside Otos
 had the same effect. A rule needs a fact that names the sequence, not the frame's place in it.
 
-What the a6700 records, read with ExifTool 13.55 from the 668 ARW files of the owner's a6700 copied
+What the a6700 records, read with ExifTool 13.55 from the 668 ARW files of the reference a6700 copied
 into a research corpus outside the library (nothing in the library read or downloaded):
 
 - `SequenceNumber` / `SequenceImageNumber` / `SequenceFileNumber`: the frame's place, 1 up.
@@ -104,7 +104,7 @@ order, the difference of their camera file numbers (the digits of `DSC01234`) eq
 difference of their frame numbers. A burst writes its frames consecutively on the camera's
 counter, so culled frames keep the equality.
 
-- **The owner's library cannot carry it.** Of the corpus's 668 ARW files, 667 are named by
+- **The reference library cannot carry it.** Of the corpus's 668 ARW files, 667 are named by
   capture time (`YYYYMMDD_HHMMSS`, then `_001`, `_002`… for files sharing a second: 538 with
   no suffix, 108 `_001`, 18 `_002`, 4 `_003`) and one is `original.arw`. That is Otos's own
   import naming (`ImportNaming`, collision suffix `_%03d`), so an import removes the camera's
@@ -114,7 +114,7 @@ counter, so culled frames keep the equality.
   one second import as `20260503_104710` and `20260503_104710_001`; burst B three weeks later
   as `…_090000`, `…_090000_001`, `…_090000_002`, all in one `2026/05` folder. Keeping A2 and
   B3, the trailing digits differ by 1 and the frame numbers by 1: they join. A strict camera
-  name pattern avoids this only by stacking nothing in the owner's library.
+  name pattern avoids this only by stacking nothing in the reference library.
 - **Counter-example: a counter reset.** Two bursts satisfy the equality exactly when they
   started at the same counter value. Sony's `File Number: Reset` restarts the counter when a
   card is formatted: A at `DSC00004`–`DSC00006` kept to A2 (`DSC00005`), then B at

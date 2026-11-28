@@ -1,7 +1,7 @@
 # Copy, paste, drag and cloud-only originals
 
 Date: 2026-11-26. A review of the hand-off code (Copy, Share, Open, drag, Reveal) after the
-owner reported two symptoms: a paste sometimes gives "a text file instead of an image", and
+user reported two symptoms: a paste sometimes gives "a text file instead of an image", and
 downloading a cloud-only original sometimes stalls and then fails. Research only: it was
 done in a cloud session with no Mac, so nothing here was run on macOS. Each finding below
 was read in the code, then checked against the cited sources.
@@ -145,7 +145,7 @@ means the path is gone, which is a fact.
   (<https://forums.swift.org/t/structured-caching-in-an-actor/65501>,
   <https://forums.swift.org/t/updating-imagedownloader-actor-sample-to-support-cancellation/85126>).
 
-## Decisions taken from this (owner, 2026-11-26: "yes, download before copying — fix them all")
+## Decisions taken from this
 
 - Copy, Share, Open and Open With download a cloud-only original before handing it over (ADR
   0012, ADR 0037). A drag still hands a placeholder over as it is: it cannot wait, and Chrome
@@ -161,7 +161,7 @@ means the path is gone, which is a fact.
 - A promise for an unread tile waits for its details before it names the file (§6).
 - A preparation is joined per target with per-waiter continuations (§7).
 
-## Owner steps (need the Mac)
+## Steps that need the Mac
 
 - Dump `NSPasteboard.general.pasteboardItems?.map(\.types)` after an Otos ⌘C, and after a
   Finder ⌘C of the same files, to confirm §1.
@@ -169,17 +169,17 @@ means the path is gone, which is a fact.
   `Preparing 1 photo to copy`, the file arrives, and `op=materialization.coordinatedRead`
   logs no failure. Open a cloud-only photo in the loupe the same way.
 
-## After v1.0.2: what the owner's Mac logged (2026-11-26, read-only)
+## After v1.0.2: what the test Mac logged (2026-11-26, read-only)
 
-The owner reported that ⌘C on a grid photo beeped or did nothing and a paste gave the old
+The user reported that ⌘C on a grid photo beeped or did nothing and a paste gave the old
 clipboard, and that the Activity surface said Apple Intelligence was not responding while
-Apple Intelligence worked. Read from his Mac's unified log, Otos's own `lsof`, and macOS's
+Apple Intelligence worked. Read from the test Mac's unified log, Otos's own `lsof`, and macOS's
 model-service log, with the installed v1.0.2:
 
-- **No Copy reached the hand-off.** Over the minutes he tried, there is no `op=ui.copy` and
+- **No Copy reached the hand-off.** Over the minutes the user tried, there is no `op=ui.copy` and
   no `op=handOff.submit` line. The relay's record of which window held the keyboard read
-  `elsewhere` at 10:17:07, when he selected a photo in the catalog window, and from 10:17:14
-  while he scrolled it until 10:18:40; it read `photos` only for a few seconds after each
+  `elsewhere` at 10:17:07, when the user selected a photo in the catalog window, and from 10:17:14
+  while the user scrolled it until 10:18:40; it read `photos` only for a few seconds after each
   activation. Copy was enabled only for `photos`, so it was disabled: the beep. The key
   window's identity across activation, popovers and sheets is not a record that can be kept
   reliably, so nothing decides on it now: Copy is available whenever photos are targeted,
@@ -203,7 +203,7 @@ model-service log, with the installed v1.0.2:
   - `textunderstandingd`, a system daemon, logged the same lock failure at 11:00:14.
 
   The lock file
-  (`/System/Library/AssetsV2/locks/com.apple.UnifiedAssetFramework/com.apple.MobileAsset.UAF.FM.Overrides/shared_locks/atomic_instance_1A4CB6F0-….locker`,
+  (`/System/Library/AssetsV2/locks/com.apple.UnifiedAssetFramework/com.apple.MobileAsset.UAF.FM.Overrides/shared_locks/atomic_instance_<UUID>.locker`,
   root-owned, read-only to users) is a 620 KB `SoftwareUpdateCorePersistedStateFile` whose
   `sharedLockSetStatus` archive records about 270 shared locks across at least seven asset
   versions, the oldest from October 2025 builds. That stale lock entries accumulated

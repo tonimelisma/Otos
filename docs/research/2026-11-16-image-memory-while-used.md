@@ -3,7 +3,7 @@
 ## Question
 
 Plan 0116's last unmet target is a peak footprint of at most 700 MB. At rest the app now
-meets it, but the owner's full tour on 270d9a66 peaked at 1,171 MB and never came back down.
+meets it, but the full tour of the reference library on 270d9a66 peaked at 1,171 MB and never came back down.
 Its own `op=process.memory` samples, by step:
 
 | Step | Footprint |
@@ -18,14 +18,14 @@ What allocates at each of these moments?
 
 ## Method
 
-- **The owner's unified log** for that session, read-only (`log show --info --debug`). The
+- **The test Mac's unified log** for that session, read-only (`log show --info --debug`). The
   installed app was not launched.
 - **A standalone probe**: a Swift program with no Otos code, `-O`. It reads `phys_footprint`
   from `TASK_VM_INFO` and runs `vmmap --summary` on itself. Its input is 60 generated
   2560 × 1920 8-bit Display P3 HEICs, the stored previews' shape (ADR 0035). Each mode runs in
   a fresh process.
 - **The test process**: `ImageMemoryTests` (`OTOS_SCALE_TEST=1`, alone) and
-  `PeopleStoreTests.peopleCostsOnTheOwnersShape` on the generated owner-shaped catalog.
+  `PeopleStoreTests.peopleCostsOnTheReferenceShape` on the generated reference-shaped catalog.
 
 ## 1. Opening People: a face tile held the whole decode it was cut from
 

@@ -5,7 +5,7 @@
 
 ## Context
 
-Owner decisions (2026-10-25): each photo has one current edit, stored in the catalog,
+Product decisions (2026-10-25): each photo has one current edit, stored in the catalog,
 with no sidecars. Originals are never modified; an edit is a recipe rendered from the
 original. Grid, loupe and thumbnails always show the edited photo. The edit panel is a
 trailing inspector that collapses the way the sidebar does.
@@ -186,10 +186,10 @@ open takes 20–180 ms per change. Opening it again for every change takes about
 - **A separate recipe table.** It would be one row per photo with the photo's own
   lifecycle, so it would duplicate the keying, move, import and purge mechanics that
   the asset row already has.
-- **Edit history (a stack of recipes per photo).** The owner decided on one current
+- **Edit history (a stack of recipes per photo).** Each photo has one current
   edit. Undo covers the session.
 - **Rendering the products on every slider change.** That would write two files per
   frame. The live render is shown from memory, and only the save is written.
 - **A fresh `CIRAWFilter` per render.** About a second per change instead of tens of
   milliseconds.
-- **Sidecar XMP.** The owner ruled it out (2026-10-25), and AGENTS.md forbids it.
+- **Sidecar XMP.** Ruled out (2026-10-25), and CLAUDE.md forbids it.

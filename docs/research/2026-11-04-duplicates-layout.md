@@ -1,18 +1,18 @@
 # Duplicates layout: how competitors lay out a group
 
-Date: 2026-11-04. A second pass on the Duplicates list after the owner rejected the
-2026-11-02 design (`docs/research/2026-11-02-duplicates-review-ux.md`) on sight. That pass
+Date: 2026-11-04. A second pass on the Duplicates list after the
+2026-11-02 design (`docs/research/2026-11-02-duplicates-review-ux.md`) was rejected on sight. That pass
 compared competitors' *controls* — who uses a checkbox, who states the keeper's reason —
 and never their *layout*. It borrowed the file tools' controls (dupeGuru, Mylio) and laid
 them out as a file list. This pass compares the layout, and it is what
 `docs/design/duplicates.md` follows.
 
 Labels: **[D]** documented by the vendor; **[E]** reported by reviewers; **[M]** measured on
-the owner's screen.
+the test Mac's screen.
 
 ## What the rejected design put on screen [M]
 
-The owner's screenshot, 2026-11-04, a group of six Sony ARW files:
+A screenshot, 2026-11-04, a group of six Sony ARW files:
 
 - **One row per copy.** Each row was about 120 pt tall, so six copies filled the window
   and one group of 166 was all that showed.
@@ -47,7 +47,7 @@ What every one of them does, and the rejected design did not:
 3. **Metadata comes second**: one short line under the tile, or an Info panel. A
    difference is shown so it can be read (Mylio's highlight), not as raw bytes.
 
-## First decision (superseded by the owner follow-up below)
+## First decision (superseded by the follow-up below)
 
 The design follows Lightroom Classic, Otos's reference idiom, as far as a review surface
 allows.
@@ -92,11 +92,11 @@ Rejected:
 - [Mylio: Photo DeDupe](https://support.mylio.com/find-duplicate-photos-photo-dedupe)
 - [Excire: duplicate finder](https://excire.com/en/tutorials/excire-search/duplikatefinder/)
 
-## Owner follow-up, 2026-11-04
+## Follow-up, 2026-11-04
 
-A Photos-style Merge was built next ("just like Photos.app") and rejected before merging:
-it hides which copy stays and offers no clean way to choose it. The owner asked for "a
-really clean way to choose which photo to keep", and for acting on a whole folder of
+A Photos-style Merge was built next, like Photos.app, and rejected before merging:
+it hides which copy stays and offers no clean way to choose it. The need is a
+clean way to choose which photo to keep, and acting on a whole folder of
 duplicates at once by a rule. The design that followed, in `docs/design/duplicates.md`:
 
 - Photos' layout kept: the copies side by side as photos, the size over each.

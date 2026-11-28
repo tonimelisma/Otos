@@ -148,6 +148,7 @@ struct ImmichMirrorTests {
         try await store.windowReads.mediaAssets(for: [id])[id]
     }
 
+    // Validates: APP-081
     /// A pass that lists the asset learns the mirror from the asset's path and pairs it with
     /// the library file its path names, though neither has a digest — a cloud-only file whose
     /// bytes Otos never read: All Media shows the library's file alone, the library shows its
@@ -177,6 +178,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// A file's digest read after the pair agrees with it: the pair stays one photo, and the
     /// asset is given no digest of its own.
     @Test func aDigestReadAfterThePairKeepsItOnePhoto() async throws {
@@ -195,7 +197,8 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
-    /// A Like or a Dislike on either row of a pair is the photo's (owner, 2026-11-15): it is
+    // Validates: APP-089
+    /// A Like or a Dislike on either row of a pair is the photo's: it is
     /// written on both, whichever the user chose it on.
     @Test func aChoiceOnEitherRowOfAPairIsThePhotos() async throws {
         let fixture = try await fixture(digested: false)
@@ -213,6 +216,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// With the library not available, the account's asset is the photo's reachable copy and
     /// shows in All Media; with the account not available, the library's file does.
     @Test func eitherCopyShowsWhenTheOtherIsNotAvailable() async throws {
@@ -229,7 +233,8 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
-    /// A file and its mirror are one photo, never duplicates (owner, 2026-11-15): with
+    // Validates: APP-083
+    /// A file and its mirror are one photo, never duplicates: with
     /// Duplicates across libraries and accounts, the pair is no group, before the pairing is
     /// learned and after; a second copy of the file in its library makes a group of the two
     /// files alone; and with the library not available the mirror is no copy of anything. So
@@ -270,6 +275,7 @@ struct ImmichMirrorTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// An asset at the file's path but listed with another modification time is another
     /// version: the file was changed and the server has not read it again. The pair stands,
     /// by path, but the two are two photos until their versions agree.
@@ -288,14 +294,15 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// The server lists a new asset before it has read the file's size (an external library's
     /// scan finds the file; its metadata job comes later): the pair is made by path, and the
     /// two are one photo at once (v83), since the modification time the scan read is the
     /// file's, so a Like on the file is the asset's too. The next pass lists the asset again
     /// with its size, an upsert of a row whose pair's key holds, and the pair stays one photo.
     /// The upsert's own conflict policy reaches the copy triggers, so it once aborted there,
-    /// the batch was never acknowledged, and every pass after failed on it (owner's catalog,
-    /// 2026-11-19).
+    /// the batch was never acknowledged, and every pass after failed on it (seen on the
+    /// reference catalog).
     @Test func anAssetTheServerHasNotReadIsOnePhotoWithItsFileByTime() async throws {
         let fixture = try await fixture(digested: true, secondCopy: true)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
@@ -330,6 +337,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// An asset the server has not read, listed with another modification time than the file's,
     /// is another version: with no size to compare, the time alone tells them apart, so a Like
     /// on the file is not the asset's.
@@ -361,6 +369,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// An asset the server has not read yet, with no library file it is one photo with, is
     /// hidden by its source until the server reads it, as the server's own timeline hides it
     /// (v84), and the account counts it; the size the server reports once it has read it
@@ -393,6 +402,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// A same-named file of the same size in a folder the library does not have teaches no
     /// mirror: its path does not end with the library file's, so nothing pairs.
     @Test func aSameNamedFileFromAnotherFolderTeachesNoMirror() async throws {
@@ -409,6 +419,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// A prefix that pairs every file is kept, and the probe has no candidate left to ask
     /// about: the pass asks the server one path and no more.
     @Test func aPrefixThatPairsAFileIsKeptWithNoRequest() async throws {
@@ -426,6 +437,7 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-081
     /// Immich's path checksum is the SHA-1 of `path:` and the server path's bytes; the prefix
     /// is the server path before the relative path, compared as characters, so a name in the
     /// other Unicode normal form is the same path, and a server path that teaches none says why.

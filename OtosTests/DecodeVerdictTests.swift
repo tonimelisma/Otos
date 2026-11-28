@@ -15,6 +15,7 @@ struct DecodeVerdictTests {
         try MediaEnricher.live(thumbnailDirectory: makeTestDirectory())
     }
 
+    // Validates: ENR-029
     @Test func aStillNoDecoderCanReadNamesTheDecoderThatSaidSo() async throws {
         let directory = try makeTestDirectory()
         let broken = directory.appending(path: "broken.jpg")
@@ -32,6 +33,7 @@ struct DecodeVerdictTests {
         #expect(result.rendering?.generatedPreview == nil)
     }
 
+    // Validates: ENR-029
     /// A still whose bytes cannot be read is not judged: nothing is stamped and the row is
     /// retried, rather than stamped with QuickLook's thumbnail and no preview, which would
     /// leave it with no faces (ADR 0047).
@@ -52,6 +54,7 @@ struct DecodeVerdictTests {
         }
     }
 
+    // Validates: ENR-029
     @Test func aStillTheDecoderReadsIsDecoded() async throws {
         let url = SourceTree.mediaFixtures.appending(path: "jpeg-exif-offset-date.jpg")
 
@@ -64,6 +67,7 @@ struct DecodeVerdictTests {
         #expect(result.decodeVerdict == .decoded)
     }
 
+    // Validates: ENR-029
     /// At launch a still another decoder could not read loses its rendering stamp, so
     /// enrichment tries it; one this decoder could not read keeps it, and a decoded still is
     /// untouched.
@@ -94,6 +98,7 @@ struct DecodeVerdictTests {
         #expect(rows["decoded.jpg"] == Stamps(rendered: true, undecodableBy: nil))
     }
 
+    // Validates: ENR-031
     /// At launch a video another frame reader could not decode loses its faces stamp, so
     /// enrichment reads its faces again (ENR-031); one this reader could not decode keeps it.
     /// Each kind is judged by its own decoder: a video's verdict never releases a still's
@@ -141,6 +146,7 @@ struct DecodeVerdictTests {
         #expect(rows["videoReader.jpg"] == Stamps(rendered: false, undecodableBy: nil))
     }
 
+    // Validates: ENR-029
     /// Before the verdict was stored, a still the renderer could not read was rendered
     /// from QuickLook's thumbnail: stamped, with no preview. The migration marks those as
     /// undecodable by Otos's first decoder, so launch tries each again; a still with a

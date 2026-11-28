@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 source "$ROOT_DIR/script/lib/operational-busy.sh"
+# Validates: ARC-002A
 self_test() {
   command -v sqlite3 >/dev/null 2>&1 || { echo "sqlite3 is required for smoke predicate self-test" >&2; return 1; }
   local d db corrupt fake_path

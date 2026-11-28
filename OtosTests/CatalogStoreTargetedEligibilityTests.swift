@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreTargetedEligibilityTests {
+    // Validates: ARC-041
     @Test func targetedFileEventDeletesCatalogRowWhenPathBecomesIneligible() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

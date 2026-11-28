@@ -105,6 +105,7 @@ struct OneCopyTests {
         MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
     }
 
+    // Validates: APP-081
     /// A digest write wakes what is built from copies only when it makes a file a copy or no
     /// longer one: a digest no other file holds changes the row's own detail, the second
     /// file with it makes two copies, and writing it again changes nothing and names nothing.
@@ -145,6 +146,7 @@ struct OneCopyTests {
         #expect(after.last == .changed(.duplicateFacts))
     }
 
+    // Validates: APP-081
     /// All Media shows the library's copy and not the account's; the account's own row, and
     /// Duplicates, show the account's copy too.
     @Test func aCombinedScopeShowsTheLibrarysCopyAndOneRootShowsEveryFile() async throws {
@@ -174,6 +176,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// An external library's checksum hashes its path, so it is no digest: its asset is shown
     /// beside the library file it names nothing about.
     @Test func anAssetWithoutADigestOfItsBytesIsShown() async throws {
@@ -187,6 +190,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// Two copies inside one account: the first by path is shown, and when Immich puts it in
     /// its trash the other is shown in its place.
     @Test func theNextCopyIsShownWhenTheShownOneIsHidden() async throws {
@@ -209,6 +213,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// A digest listed before the server reported the size stays the row's once the size
     /// arrives: the size is of the same bytes.
     @Test func aSizeReportedAfterTheDigestKeepsItCurrent() async throws {
@@ -227,9 +232,9 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// Three copies and the library's not available: the next best reachable copy, the
-    /// account's first by path, stands in alone; when the library is back, it shows again
-    /// (owner, 2026-11-15).
+    /// account's first by path, stands in alone; when the library is back, it shows again.
     @Test func onlyTheNextBestReachableCopyStandsIn() async throws {
         let fixture = try await fixture()
         let store = fixture.store
@@ -249,6 +254,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-089
     /// A choice made on any copy is the photo's: every copy holds it, so a Liked filter finds
     /// the photo whichever copy shows, and undoing the act puts every copy back.
     @Test func aChoiceOnAnyCopyIsThePhotos() async throws {
@@ -271,6 +277,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-089
     /// A copy found after choices were made on it and on the photo: every copy takes the
     /// choice made last. Liking the account's copy before the library's digest is read
     /// leaves the photo Liked once it is, and a copy disliked later and then found makes the
@@ -304,6 +311,7 @@ struct OneCopyTests {
         await store.shutdown()
     }
 
+    // Validates: APP-081
     /// Two files with the same bytes in one library (ADR 0054; ADR 0042): All Media shows one
     /// of them, the first by path, as one photo; the library's own view shows both files;
     /// Duplicates lists them as one group to clean up, within their library; and a Like on
@@ -336,6 +344,7 @@ struct OneCopyTests {
         return ids.map { assets[$0]?.mediaChoice }
     }
 
+    // Validates: APP-082
     /// Info's Copies row lists where the item's other copies are, says none when it has
     /// none, and says not checked while its digest is owed.
     @Test func infoNamesWhereTheOtherCopiesAre() async throws {

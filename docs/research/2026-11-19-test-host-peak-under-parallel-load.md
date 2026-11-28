@@ -40,5 +40,5 @@ The suite has grown since 2026-11-15, when its peak was 1.4 GB, and its legitima
 about 2.9 GB. A 2,048 MB ceiling kills healthy runs at random, which is how `main` passed and a
 branch with no new load failed twice. The ceiling is raised to 4,096 MB, about 40% above the
 measured peak, as 2,048 MB sat 45% above 1.4 GB. It still catches a test that grows without
-bound. Owner direction (ADR 0057): a footprint is a number, not a target, so the suite is not
+bound. As decided (ADR 0057): a footprint is a number, not a target, so the suite is not
 squeezed under a ceiling set before it grew.

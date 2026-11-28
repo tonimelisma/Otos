@@ -12,6 +12,7 @@ import Testing
 /// People filter and likeness order the browser reads.
 @Suite(.testScope)
 struct PeopleStoreTests {
+    // Validates: ENR-024
     @Test func theUsersActsAreReadBackAsFacts() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
         try await library.readFaces([
@@ -50,6 +51,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// One photo holds a person once. The user's face is the fact: giving them another face
     /// of the photo is refused; Otos's guess in the photo makes way.
     @Test func aPersonIsInAPhotoOnce() async throws {
@@ -73,6 +75,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A name is one person's: renaming to it or naming a new person with it is refused —
     /// merging is the act.
     @Test func aNameIsOnePersons() async throws {
@@ -88,6 +91,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A birthday is a full date or only a year, which counts from 1 January. One after a
     /// photo the user gave the person is refused; Otos's guesses from before it lose them.
     @Test func aBirthdayHoldsTheUsersFacesAndDropsEarlierGuesses() async throws {
@@ -106,6 +110,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// Reading a photo again keeps the user's word: their face and its rejections, the seed,
     /// the removed name and the key photo move to the new face that overlaps the old;
     /// Otos's guess does not. A key photo the user chose on a face Otos had guessed is the
@@ -146,6 +151,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-023
     /// The faces stamp a migration clears owes a re-read, but says nothing of the source the
     /// faces came from: a re-read of the same source keeps "not a face" and a named face it
     /// does not find, and a re-read after the file changed reads it afresh.
@@ -178,6 +184,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A face row no reading writes fails only its own photo. One with no vector row: the
     /// People read leaves that photo out. One whose vector holds no embedding: People finds it
     /// as it reads the vectors and leaves the face out of assignment. Either way the photo's
@@ -212,6 +219,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A merged person's birthday holds both people's faces: Otos's guesses and seeds of
     /// either from before it lose their person, as Set Birthday's do, and the user's are
     /// refused.
@@ -236,6 +244,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// Merging gives the first person's faces to the second, which keeps its name and takes
     /// the first's when it has none, and is a favourite if either was. Otos's guess of one in
     /// the other's photo is dropped.
@@ -268,7 +277,8 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// Merging says two people are one (owner, 2026-11-19), so a photo the user gave both a
+    // Validates: ENR-024
+    /// Merging says two people are one, so a photo the user gave both a
     /// face of never refuses it: the face there most like the merged person's other faces
     /// stays theirs, and the other is held, whichever person it was: it was vouched for as the
     /// merged person, whom the photo holds once.
@@ -297,6 +307,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// When the two faces of one photo are equally like the merged person, the face of the
     /// person merged into stays.
     @Test func aMergeKeepsThePersonMergedIntoOnATie() async throws {
@@ -320,7 +331,8 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// A merge stays merged (owner's catalog, 2026-11-20): an unnamed person whose only seeds
+    // Validates: ENR-024
+    /// A merge stays merged (as seen on the reference catalog): an unnamed person whose only seeds
     /// are in photos the person merged into is already in keeps its faces with them through
     /// the next assignment. Its guesses become the merged person's seeds, so assignment never
     /// groups them into a new person again, and its seeds there are held, never regrouped.
@@ -366,6 +378,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// The merged birthday still refuses a merge: a face the user gave either person from
     /// before it.
     @Test func aMergeIsRefusedForAFaceTheUserGaveFromBeforeTheMergedBirthday() async throws {
@@ -387,6 +400,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A person has one key photo; a face that leaves them takes it along.
     @Test func aKeyPhotoIsOneFaceOfThePerson() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
@@ -410,6 +424,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// Undo writes back exactly what each act changed, and redo is the act again.
     @Test func undoRestoresEveryAct() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])
@@ -447,6 +462,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A person is never merged into themself: the store refuses it and changes nothing. Merged,
     /// deleting the person merged away deleted them, and left their seeds with no person
     /// but still marked seeds, which assignment then planned again on every pass.
@@ -465,6 +481,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// A merge carries what the user said a face is not to the merged person and leaves no face
     /// rejected for its own person: merging Sam into Ian, a held face that is not Sam
     /// becomes not Ian, while a face the user said is not one of them and then gave the other
@@ -500,6 +517,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-025
     /// A face People leaves out and that comes back with its vector — This Is Not a Face
     /// undone — is compared again: its vector was held while it was set aside, so the pass
     /// after Undo assigns it and settles. Dropped with the face, the vector was never read
@@ -530,6 +548,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// Assignment writes a guess only where the face is still Otos's to decide: a face the
     /// user gave someone while the pass ran keeps their word. A person Otos found is deleted
     /// once they have no face left and the user said nothing about them.
@@ -564,6 +583,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-025
     /// A lapsed seed loses its person only while it is still that person's seed, and the
     /// person Otos found is gone once no face is theirs; a seed the user moved meanwhile
     /// keeps the user's word.
@@ -619,6 +639,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// The assignment rules SQL reads come from `FaceAssignment`, and a stored row no
     /// assignment can hold is an error, never an open face.
     @Test func aStoredAssignmentIsReadByTheAssignmentRules() throws {
@@ -638,6 +659,7 @@ struct PeopleStoreTests {
         }
     }
 
+    // Validates: APP-013
     /// A person's photos and the People filter: several people are photos of them together,
     /// `Unidentified` a face with no person; in a person's photos the likeness order puts the
     /// face least like them first.
@@ -679,6 +701,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-024
     /// People acts and assignments that wrote reach the window: each is a catalog change.
     @Test func anActOrAnAssignmentIsACatalogChange() async throws {
         let library = try await FaceEnrichmentTests.ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg"])
@@ -694,6 +717,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A People pass writes in pages: on a library whose every face is owed a guess and a
     /// likeness, no transaction of the pass changes more than `backgroundWritePage` rows, so a
     /// write the user is waiting on never queues behind all of it. The guard over every People
@@ -717,6 +741,7 @@ struct PeopleStoreTests {
         await store.shutdown()
     }
 
+    // Validates: APP-072
     /// People paints from what the catalog stores and assigns only when what assignment reads
     /// moved: a pass on a catalog whose assignment settled — a launch with nothing changed —
     /// publishes the stored guesses and reads no vector; ranking a photo's faces reads the
@@ -762,6 +787,7 @@ struct PeopleStoreTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-025
     /// At the free-space floor People holds "no room for the vectors": its pass writes the
     /// gallery facts it read and assigns nothing, says so once, and arms one backoff wake; a
     /// change while it holds is read and moves the gallery facts — the hold gates only the
@@ -844,15 +870,15 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
-    /// What People costs at the owner's scale, on a generated catalog of his shape whose faces
+    /// What People costs at the reference scale, on a generated catalog of the reference shape whose faces
     /// carry real unit vectors, one direction per person: the first gallery's read, a first
     /// pass that assigns, a settled pass after it, and the footprint the process reached
     /// while they ran. On demand (`OTOS_SCALE_TEST=1`), since it writes a 2.3 GB file; a
-    /// measurement written to `build/people-cost/owner.txt`, not a benchmark.
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func peopleCostsOnTheOwnersShape() async throws {
+    /// measurement written to `build/people-cost/reference.txt`, not a benchmark.
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
+    func peopleCostsOnTheReferenceShape() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         try await queue.write { db in
             let ids = try Row.fetchAll(db, sql: "SELECT e.id, f.person_id FROM face_embedding e JOIN face f USING (library_root_id, relative_path, face_index)")
@@ -1000,7 +1026,7 @@ struct PeopleStoreTests {
             try await phase("keyedPass\(pass)") { try await owner.settle() }
         }
         let line = "op=peopleCost " + fields.joined(separator: " ")
-        let url = SourceTree.root.appending(path: "build/people-cost/owner.txt")
+        let url = SourceTree.root.appending(path: "build/people-cost/reference.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
         // The guard: a pass over held vectors leaves the footprint within the margin of where it
@@ -1018,6 +1044,7 @@ struct PeopleStoreTests {
         await store.shutdown()
     }
 
+    // Validates: APP-072
     /// A pass costs what changed: once People holds a whole read, faces written for a few
     /// photos — a change that names them — are read by key, those photos only, and the read
     /// it holds then equals a whole read of the catalog. The guard: N photos' readings cost N
@@ -1062,9 +1089,10 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A burst of changes costs one pass after the one in flight (ADR 0032 rule 2): a request
     /// adds to a revision, and the pass that starts next covers every request made before it.
-    /// On the owner's library a run of content hashes, each finding a copy, rang People once a
+    /// On the reference library a run of content hashes, each finding a copy, rang People once a
     /// second while each pass took six; the guard is that N changes delivered while a pass
     /// runs cost at most two passes, whatever N is.
     @Test func aBurstOfChangesDuringAPassCostsOneMorePass() async throws {
@@ -1089,6 +1117,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ARC-065
     /// The user's People act is a load they wait on (ADR 0055, 0057): with the background room
     /// held at memory warning, a pass owed only to a catalog change keeps waiting, and the
     /// user's act grants it at once, so their act's twins and neighbours are assigned while
@@ -1115,6 +1144,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: ARC-065
     /// With nothing waiting, the user's act starts a pass of its own as theirs: granted under
     /// the held room, while a later request owed only to a catalog change waits again.
     @Test func aUsersActStartsItsOwnPassAndALaterChangeWaits() async throws {
@@ -1140,7 +1170,7 @@ struct PeopleStoreTests {
     }
 
     /// How far a People pass over held vectors may leave the footprint above where it found it,
-    /// at the owner's scale: the allocator's own reuse slack, nothing a pass holds.
+    /// at the reference scale: the allocator's own reuse slack, nothing a pass holds.
     static let strandedMarginMB: UInt64 = 48
 
     /// What reading every one of 103k vectors may add to the footprint: their numbers and the
@@ -1201,6 +1231,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// What a metadata write wakes: a date or render of a photo that holds no face wakes no
     /// People pass, however many arrive; one of a photo that holds a face wakes one. The guard
     /// over People's wake (`PeopleAssignment.inputs`, `.faceTiles`).
@@ -1233,6 +1264,7 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// `count` photos each holding one face like the others, the first on the user's word
     /// Sam's, the rest not yet assigned, in a catalog file.
     /// The People gallery paints from facts the catalog stores (`person_summary`): after any
@@ -1328,9 +1360,10 @@ struct PeopleStoreTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The gallery's read seeks every face and photo row it reads by key: the people are the
     /// one table it walks, and the faces that define them come from their partial index, so
-    /// its cost is the people's, never the faces' (7.5–7.9 s cold on the owner's catalog when
+    /// its cost is the people's, never the faces' (7.5–7.9 s cold on the reference catalog when
     /// every face was joined to its photo).
     @Test func theGallerysReadSeeksEveryFaceAndPhotoByKey() async throws {
         let directory = try makeTestDirectory()

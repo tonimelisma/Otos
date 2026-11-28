@@ -158,7 +158,7 @@ materialization exposure), and identical inputs always produce identical plans.
    fully-imported source replans to all-preexisting with zero comparison probes.
 3. Replan gating during execution (E).
 4. Per-file and per-batch copy spans (bytes, ms, MB/s) in the executor.
-5. Bounded worker pool for copy entries — owner directive: 8 workers — with the
+5. Bounded worker pool for copy entries — 8 workers — with the
    new spans still measuring 1/2/4/8 so the choice is documented by evidence;
    companion bundles stay within one worker.
 6. Enrichment admission dequeue stops scanning on capacity-class rejections and

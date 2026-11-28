@@ -205,7 +205,7 @@ subordinate, rebuildable overlay.
    `MaterializationCoordinator` records a per-root 60s `providerBreakerOpen`
    suppression after two consecutive `providerUnavailable` on that root so the next
    background candidates do not each pay 2s holding a `backgroundPerRootCap`
-   slot (four per root, the owner's choice of 2026-10-31).
+   slot (four per root).
    Materialization status stays transient and is never persisted. The current
    catalog/scanner still reads only filesystem facts and materializes nothing;
    byte-reading materialization is the enrichment owner's job (ADR 0009). See
@@ -364,7 +364,7 @@ new identity columns, no sidecar writers, and no overlay-class split.
 
 ## Living Documentation Impact
 
-- `AGENTS.md`: filesystem-truth, no-hostage, opt-in mutation, and overlay-lifecycle
+- `CLAUDE.md`: filesystem-truth, no-hostage, opt-in mutation, and overlay-lifecycle
   non-negotiables added; Application Support overlay and cloud materialization
   baseline rewritten. Done in this increment.
 - `docs/requirements.md`: new current architecture requirements for filesystem

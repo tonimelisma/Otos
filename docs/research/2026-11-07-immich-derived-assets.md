@@ -1,8 +1,8 @@
 # Immich's derived images against Otos's products (2026-11-07)
 
-Research for ADR 0046 and ADR 0035. The owner proposed (2026-11-07): "we could download
-the immich thumbnails to the Otos catalogue instead of spending cycles generating our
-own". This note measures what Immich makes and what each Otos product would lose by
+Research for ADR 0046 and ADR 0035. The proposal: download
+Immich's thumbnails into the Otos catalog instead of spending cycles generating
+Otos's own. This note measures what Immich makes and what each Otos product would lose by
 using it.
 
 Facts marked **live** were measured against a disposable Immich 3.3.6 server (official
@@ -89,7 +89,7 @@ follow a server setting any admin can change.
    reason (full-resolution zoom, edit, export, digest); Otos renders its own from that
    read. The cost is a 1920–2160 px loupe instead of 2560.
 3. RAWs show Immich's development until RAW9 renders them, from an original fetched
-   either on demand or by a background job. That timing is the owner's product choice.
+   either on demand or by a background job. That timing is a product choice.
 4. An edited still always shows Otos's rendering from the original.
 5. Digests stay pending until the original is read. Render signatures are keyed by the
    pipeline that made their thumbnail.

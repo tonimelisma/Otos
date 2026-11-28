@@ -1,6 +1,6 @@
 # The performance process: one weekly run, one verdict (2026-11-18)
 
-The owner asked why Otos runs two performance instruments, the daily benchmarks (ADR 0043)
+The question was why Otos runs two performance instruments, the daily benchmarks (ADR 0043)
 and the scorecard tour (ADR 0015), as two processes when both look for the same outcome, and
 asked for the smallest process that keeps performance from regressing, run rarely. This note
 records what other projects do, what this repo's own history shows, the options and the
@@ -10,17 +10,17 @@ recommendation that ADR 0043 now carries.
 
 | | Benchmarks (`script/bench.sh`) | Tour (`script/scorecard.sh --tour`) |
 | --- | --- | --- |
-| Measures | instructions retired by owner code on a generated catalog, Debug at `-Onone` | what a session felt on the owner's library: launch, clicks, search, stalls, memory, machine pressure, in the installed app at `-O` |
+| Measures | instructions retired by owner code on a generated catalog, Debug at `-Onone` | what a session felt on the reference library: launch, clicks, search, stalls, memory, machine pressure, in the installed app at `-O` |
 | Noise | about 1% for a steady case, up to 45% for a case in Apple's frameworks | wall time; moves with other load on the machine |
 | Load | runs fine beside other builds | wants a quiet machine; quits nothing it did not launch |
 | Cadence before this note | once a day, started by the session whose check said due | every performance PR, before and after, plus `--ablate` attribution; nothing scheduled |
-| Failure meant | `verdict=flagged`: fixing it is the next work unless the owner accepts | nothing: a report |
+| Failure meant | `verdict=flagged`: fixing it is the next work unless the maintainer accepts | nothing: a report |
 
 ## What this repo's history shows (2026-11-01 to 2026-11-18)
 
 - **The tour found every felt win; the benchmarks found none of them.** A view went from
   48.8 s to 51 ms and launch from 4.0 s to 1.1 s; both were found and verified by tours of the
-  owner's library (`2026-11-16-performance-baseline.md`).
+  reference library (`2026-11-16-performance-baseline.md`).
 - **The benchmarks' flags were not felt.** The last three flags (#898, #904, #945) each took a
   bisection, a research note and a fix. The most recent: a two-line SQL comment holding `§`
   raised `immich.listing.batch500.of20k` by about 10%, and an order walk raised
@@ -79,22 +79,22 @@ recommendation that ADR 0043 now carries.
 
 What they share: the user-felt number sets priorities and the deterministic counter helps
 find the cause. A counter's alert is triaged; it is not a block, and most alerts are not
-work. Large projects pay a sheriff to triage. A one-owner project has no sheriff, so a
+work. Large projects pay a sheriff to triage. A one-maintainer project has no sheriff, so a
 process that makes every alert someone's next work costs exactly the toil this repo saw.
 
 ## Options
 
-1. **Keep both as they are.** Daily benchmarks that flag work, per-PR owner tours. Rejected:
+1. **Keep both as they are.** Daily benchmarks that flag work, per-PR tours of the reference library. Rejected:
    this is the toil above, and the flags it turned into work were not felt.
 2. **One scheduled run with one verdict, judged on the felt targets, counts reported.** The
    tour and the benchmarks run together on one schedule. The tour's target misses decide the
-   verdict, and instruction rises are listed beside it for the owner to triage. Per PR,
+   verdict, and instruction rises are listed beside it for the maintainer to triage. Per PR,
    nothing beyond `script/check.sh`.
-3. **Keep only the tour.** It sees what the owner feels. Rejected: without the counts, a felt
+3. **Keep only the tour.** It sees what the user feels. Rejected: without the counts, a felt
    miss has no per-commit trail, and bisecting by tour costs about ten minutes on a quiet
    machine for each step.
 4. **Keep only the benchmarks.** Rejected: they missed every felt win of the program, and
-   they measure a `-Onone` build on a generated catalog with none of the owner's waits,
+   they measure a `-Onone` build on a generated catalog with none of the reference library's waits,
    cold reads or memory pressure.
 5. **Change only the cadence (weekly, or before an install), both still blocking.** This
    would cut runs to a seventh, but each flag would still be work, and a run gated on an
@@ -105,14 +105,14 @@ process that makes every alert someone's next work costs exactly the toil this r
 Option 2:
 
 - **What runs.** One command, `script/perf.sh run`. It tours the installed app on the
-  owner's library, read-only (a launch tour with the ten-minute idle the program measured
+  reference library, read-only (a launch tour with the ten-minute idle the program measured
   with), then counts the benchmark cases on `origin/main` against the previous run's head
   (`script/bench.sh compare`). It writes one verdict line.
 - **How often.** Once a week. It is due when the last run finished seven or more days ago and
   `main` has moved since. A run that could not measure is due again the next day.
 - **Who starts it.** The session whose `script/check.sh` prints `op=perf.status verdict=due`
   starts it in the background and keeps working, as with the daily run. A launchd agent was
-  rejected again (ADR 0043): it is persistent configuration on the owner's Mac, and nobody
+  rejected again (ADR 0043): it is persistent configuration on the test Mac, and nobody
   watches its runs.
 - **The installed app.** The tour needs the installed app not running, and the app runs
   almost always, because each install relaunches it. The run quits it the way
@@ -120,24 +120,24 @@ Option 2:
   is `pending` and stays due), with a normal Quit, never a kill, and it reopens the app in the
   background afterwards.
 - **What a failure means.** `verdict=fail` means a target in `docs/scorecard-targets.json`
-  was missed on the owner's library. Fixing it is the next work. The fix starts with one tour
+  was missed on the reference library. Fixing it is the next work. The fix starts with one tour
   that reproduces the miss; a miss that does not reproduce is noted in the DoD and left to the
-  next weekly run. A target changes only with the owner's decision, in the targets file.
+  next weekly run. A target changes only by a recorded decision, in the targets file.
 - **The instruction counts.** Rises beyond a case's noise are listed in the verdict
-  (`cpu=`). They decide nothing, the baseline moves to each run's head, and the owner decides
+  (`cpu=`). They decide nothing, the baseline moves to each run's head, and the maintainer decides
   whether a rise is work. They remain the per-commit trail (`bench.sh history`,
   `bench.sh compare`) for finding the commit behind a felt miss.
 - **Per PR.** Nothing beyond the one `script/check.sh`. A performance PR adds a
   deterministic twin test for its win (rows visited, stall lines, a hosted footprint) and says
-  "measured in the next weekly run". No before-and-after owner tour is required. A tour or a
-  bench comparison happens only to reproduce a fail or when the owner asks.
+  "measured in the next weekly run". No before-and-after tour is required. A tour or a
+  bench comparison happens only to reproduce a fail or when the maintainer asks.
 - **Cases kept.** All cases on Otos's own code. The five that count Apple's frameworks
   (`face.crop.x16`, `face.embed`, `search.embedImage`, `search.embedQuery`,
   `search.readText`) are removed.
 
 ### Trade-offs accepted
 
-- A CPU regression the owner does not take up stays in the code. It is visible once in the
+- A CPU regression the maintainer does not take up stays in the code. It is visible once in the
   weekly line and always in `bench.sh history`. Slow drift under the per-run noise is not
   flagged run to run.
 - A felt regression is found within a week, not within a day, and as a range of a week's
@@ -145,7 +145,7 @@ Option 2:
 - The weekly tour runs whatever else the machine is doing. The scorecard's `MACHINE` section
   records the load, and the reproduce-first rule keeps a miss caused by load from becoming a
   fix.
-- Acts (Like, Trash) are timed only in a sandbox library, so the weekly run on the owner's
+- Acts (Like, Trash) are timed only in a sandbox library, so the weekly run on the reference
   library does not judge `act.resultMs`. Their CPU paths have cases
   (`grid.choiceReconfigure…`, `grid.hideApply…`), and the sandbox tour remains the tool for
   measuring them.

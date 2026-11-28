@@ -51,8 +51,8 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
     var byteBudget: Int64
     var largeVideoThresholdBytes: Int64
     var largeVideoCap: Int
-    /// How many background transfers one root may hold at once. Four is the owner's
-    /// choice (2026-10-31) for draining a cloud library's backlog faster; interactive
+    /// How many background transfers one root may hold at once. Four is chosen
+    /// for draining a cloud library's backlog faster; interactive
     /// work is exempt and keeps its reserved global slot.
     var backgroundPerRootCap: Int
 

@@ -13,6 +13,7 @@ import Testing
 /// 1.1 s for five minutes.
 @MainActor
 struct MediaGridScrollAnchorTests {
+    // Validates: APP-033
     /// The defect, stated as the invariant it broke: the item under the viewport's top edge
     /// stays under the viewport's top edge across an apply that inserts above it.
     @Test func insertingAboveTheViewportDoesNotMoveWhatTheUserIsLooking() throws {
@@ -35,6 +36,7 @@ struct MediaGridScrollAnchorTests {
         )
     }
 
+    // Validates: APP-033
     /// The exception that makes the rule feel right. At the top, arrivals pushing the grid
     /// down is the signal that something is happening, and nothing the user was reading is
     /// displaced — so anchoring is deliberately withheld there.
@@ -45,6 +47,7 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []) == nil)
     }
 
+    // Validates: ARC-023
     /// A scroll Otos makes itself (an apply keeping its anchor, a focus scroll) is no one
     /// scrolling: it holds nothing, so the next grid, an act's result among them, is taken
     /// in at once instead of parking for the quiet threshold.
@@ -58,6 +61,7 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.mutationGate.receive(next) == [.apply(next, change: .unchanged)])
     }
 
+    // Validates: ARC-023
     /// The user's scrolling (a gesture or the scroller, which AppKit brackets as a live
     /// scroll) still holds the grid's content still until the scrolling is quiet.
     @Test func theUsersLiveScrollHoldsTheGrid() {
@@ -72,6 +76,7 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.mutationGate.receive(next) == [.pending(replacedExisting: false)])
     }
 
+    // Validates: ARC-023
     /// A wheel mouse sends no live-scroll pair; its ticks are the user's by their event.
     @Test func aTickIsTheUsersOnlyInALiveScrollOrAWheelEvent() {
         #expect(MediaGridScrollInput.isUserScroll(liveScrolling: true, handlingEvent: nil))
@@ -89,6 +94,7 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.captureScrollAnchor(change: .scope, nextOrderedIDs: []) == nil)
     }
 
+    // Validates: APP-033
     /// An anchor whose item this apply removed leaves the scroll alone rather than guessing
     /// at a replacement — a guess would be a jump to an unrelated place in the library.
     @Test func aVanishedAnchorLeavesTheScrollAlone() {
@@ -109,6 +115,7 @@ struct MediaGridScrollAnchorTests {
         #expect(controller.scrollView.contentView.bounds.origin.y == before)
     }
 
+    // Validates: APP-033
     /// The filmstrip under the loupe scrolls horizontally, and the same import order puts
     /// every arrival to the left of the viewport. The tile under the viewport's left edge
     /// stays there, at the same offset.
@@ -129,6 +136,7 @@ struct MediaGridScrollAnchorTests {
         )
     }
 
+    // Validates: APP-033
     /// The grid's top-edge exception does not carry over: the strip's viewport holds the
     /// tile the loupe is showing, so arrivals at its leading edge would push that tile away.
     /// Asserted on the anchored tile's on-screen position rather than on which tile is
@@ -150,6 +158,7 @@ struct MediaGridScrollAnchorTests {
 
     // MARK: - Filter and sort keep the user's place (APP-042)
 
+    // Validates: APP-042
     /// A filter that keeps the item under the viewport's top edge leaves that item exactly
     /// where it was on screen — the user's place survives narrowing the collection. The
     /// assertion is on the item's on-screen offset, not on which item is now leftmost in
@@ -174,6 +183,7 @@ struct MediaGridScrollAnchorTests {
         #expect(abs(after - before.offsetFromViewportLeadingEdge) < 1)
     }
 
+    // Validates: APP-042
     /// A filter that removes the top item puts its nearest survivor *in the order the user
     /// was looking at* in its place — the next later survivor, not whatever now sits at the
     /// same index of the shorter list. Scrolled deep into a large library so the survivor
@@ -202,6 +212,7 @@ struct MediaGridScrollAnchorTests {
         #expect(abs(after - before.offsetFromViewportLeadingEdge) < 1)
     }
 
+    // Validates: APP-042
     /// A visible selected tile is what the user was working on, so a sort that would carry
     /// it to the other end of the grid keeps it on screen at the same position instead.
     @Test func aSortKeepsAVisibleSelectedTileWhereItWas() async throws {
@@ -226,6 +237,7 @@ struct MediaGridScrollAnchorTests {
         #expect(abs(offsetAfter - offsetBefore) < 1)
     }
 
+    // Validates: APP-042
     /// At the top of the grid a filter with nothing selected stays at the top — there is no
     /// place to keep other than "the beginning".
     @Test func aFilterAtTheTopStaysAtTheTop() async throws {

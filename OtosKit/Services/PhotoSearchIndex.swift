@@ -12,7 +12,7 @@ nonisolated struct SearchCutoff: Sendable, Equatable {
     let floor: Float
     let margin: Float
 
-    /// Calibrated on the owner's judged queries (`docs/research/2026-11-09-keyword-search.md`
+    /// Calibrated on the reference library's judged queries (`docs/research/2026-11-09-keyword-search.md`
     /// §8): 83% of the judged relevant photos kept, a median of 123 shown, against 84% and 140
     /// for the best single cosine, whose longest lists ran to 854 photos rather than 418.
     static let calibrated = SearchCutoff(floor: 0.08, margin: 0.04)
@@ -261,7 +261,7 @@ actor PhotoSearchIndex: QuiescentOwner {
     /// pages evicted since (`SearchQueryReader.prepare`), and the kernel is asked to read the
     /// mapped vectors ahead (`SearchVectorFile.adviseWillNeed`). No scope is read ahead: a
     /// query's scope is the projection's, its stacks' members included, so its slots are read
-    /// with its first match (`scopedRows`, milliseconds over the owner's 165,000 photos) and
+    /// with its first match (`scopedRows`, milliseconds over the reference library's 165,000 photos) and
     /// reused by every later one while the scope and memory hold. Nothing is published; a blur
     /// cancels nothing, and a query that comes first is answered as it always is. Returns at
     /// once: the preparation is this owner's loop's (ADR 0032 rule 5), so no caller waits on
@@ -949,7 +949,7 @@ actor PhotoSearchIndex: QuiescentOwner {
         SearchVectorFile.removeOthers(in: vectorDirectory, keeping: file.id)
     }
 
-    /// Embeddings a build page reads: measured 32–90 ms a page of 2,000 on the owner's catalog
+    /// Embeddings a build page reads: measured 32–90 ms a page of 2,000 on the reference catalog
     /// (`docs/research/2026-11-16-plan-0116-due-diligence.md` §5), so no read holds a connection
     /// long.
     static let loadPageSize = 2000

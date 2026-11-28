@@ -2,16 +2,17 @@
 # The weekly performance run (ADR 0043): one entry point, one verdict.
 #
 #   script/perf.sh status     One line: due, running, pass, fail or error, or `elsewhere` on a
-#                             machine with no installed app (a cloud session's VM, a CI runner),
-#                             where the run cannot happen and its verdict is not kept.
-#                             script/check.sh prints it.
+#                             machine with no Xcode (a cloud session's VM) or on a CI runner, where the run
+#                             cannot happen and its verdict is not kept. script/check.sh
+#                             prints it.
 #   script/perf.sh run        At most once a week, one run at a time, from the primary
-#                             checkout: tours the installed app on the owner's library,
-#                             read-only, and judges the felt numbers against
-#                             docs/scorecard-targets.json; then counts the benchmark cases'
-#                             instructions on origin/main against the last run's head
-#                             (script/bench.sh compare). The session whose check reports
-#                             verdict=due starts it in the background.
+#                             checkout: tours an optimized dev build on a generated library
+#                             of the reference size (REFERENCE_PHOTOS) and judges the felt
+#                             numbers against docs/scorecard-targets.json; then counts the
+#                             benchmark cases' instructions on origin/main against the last
+#                             run's head (script/bench.sh compare). The session whose check
+#                             reports verdict=due starts it in the background. It reads no
+#                             user data.
 #   script/perf.sh not-reproduced <scorecard.json>
 #                             After verdict=fail: records that the one reproducing tour, whose
 #                             saved scorecard this is, met every target the run missed. The
@@ -19,13 +20,12 @@
 #   script/perf.sh self-test  The status and verdict rules against stubbed inputs. Measures
 #                             nothing.
 #
-# The verdict fails only on a felt target missed on the owner's library. Instruction rises
+# The verdict fails only on a felt target missed on the reference library. Instruction rises
 # are listed in it (cpu=) and decide nothing; the baseline moves to each run's head.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/build-folder.sh"
-source "$ROOT_DIR/script/lib/installed-app.sh"
 
 COMMON_DIR="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"
 PRIMARY_DIR="$(dirname "$COMMON_DIR")"
@@ -37,6 +37,9 @@ LOCK_FILE="$COMMON_DIR/otos-perf.flock"
 BASELINE_REF="refs/bench/baseline"
 # A week between runs: time: schedule — the product's chosen cadence for this run (ADR 0043).
 INTERVAL_DAYS=7
+# The reference library the felt targets hold for: 160,000 generated small photos, the size the
+# targets were measured at (docs/research/2026-11-16-performance-baseline.md).
+REFERENCE_PHOTOS=160000
 
 usage() {
   awk 'NR >= 4 { if ($0 == "#") exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
@@ -55,14 +58,14 @@ days_between() {
 }
 
 # The status line for a stored verdict, today's date, origin/main's head, the lock's state
-# and whether this machine has the installed app. Pure, so self-test can hold every case.
+# and whether this machine can build and tour the app. Pure, so self-test can hold every case.
 status_line() {
-  local verdict="$1" today="$2" main="$3" lock_state="$4" installed_app="${5:-present}"
+  local verdict="$1" today="$2" main="$3" lock_state="$4" xcode="${5:-present}"
   local kind day head
-  # The run tours the installed app on the owner's library, and its verdict is kept in that
-  # checkout's git folder: a machine without the app neither runs it nor holds its verdict.
-  if [[ "$installed_app" == absent ]]; then
-    echo "op=perf.status verdict=elsewhere reason=noInstalledApp action=\"none: the weekly run and its verdict are on the owner's Mac (script/perf.sh status in its primary checkout)\""
+  # The run builds and tours the app, and its verdict is kept in that checkout's git folder: a
+  # machine without Xcode neither runs it nor holds its verdict.
+  if [[ "$xcode" == absent ]]; then
+    echo "op=perf.status verdict=elsewhere reason=noXcode action=\"none: the weekly run and its verdict are on a Mac with Xcode (script/perf.sh status in its primary checkout)\""
     return
   fi
   kind="${verdict%% *}"
@@ -98,9 +101,10 @@ status() {
     echo "op=perf.status verdict=unknown reason=lockQueryFailed lock=$LOCK_FILE" >&2
     return 1
   fi
-  local installed_app=absent
-  [[ -d "$OTOS_INSTALLED_APP" ]] && installed_app=present
-  status_line "$verdict" "$(/bin/date +%Y-%m-%d)" "$(git -C "$ROOT_DIR" rev-parse origin/main)" "$lock_state" "$installed_app"
+  # A CI runner has Xcode but keeps no verdict from week to week: the run is a Mac's.
+  local xcode=absent
+  [[ "$(uname -s)" == Darwin && -z "${GITHUB_ACTIONS:-}" ]] && command -v xcodebuild > /dev/null 2>&1 && xcode=present
+  status_line "$verdict" "$(/bin/date +%Y-%m-%d)" "$(git -C "$ROOT_DIR" rev-parse origin/main)" "$lock_state" "$xcode"
 }
 
 # The felt targets a saved scorecard missed, comma-separated, or `none`. Exits 1 when the
@@ -179,16 +183,6 @@ not_reproduced() {
   echo "op=perf.notReproduced phase=recorded felt=$(field "$verdict" felt) tourMissed=$tour_misses scorecard=$scorecard"
 }
 
-reopen_installed_app() {
-  if [[ "${OTOS_INSTALLED_WAS_RUNNING:-0}" == 1 ]]; then
-    if otos_reopen_installed_app; then
-      echo "op=perf.run phase=reopened app=$OTOS_INSTALLED_APP"
-    else
-      echo "op=perf.run phase=reopenFailed app=$OTOS_INSTALLED_APP" >&2
-    fi
-  fi
-}
-
 run() {
   # The primary checkout outlives the session that started the run.
   if [[ "$ROOT_DIR" != "$PRIMARY_DIR" ]]; then
@@ -212,25 +206,14 @@ run() {
   baseline="$(git -C "$ROOT_DIR" rev-parse -q --verify "$BASELINE_REF" || true)"
   echo "op=perf.run phase=start head=$head baseline=${baseline:-none}"
 
-  # The tour needs the installed app to itself. It is quit as script/install.sh quits it,
-  # never while an import or reorganization is in flight, and reopened however the run ends.
-  local quit_status=0
-  trap reopen_installed_app EXIT
-  otos_quit_installed_app || quit_status=$?
-  case "$quit_status" in
-    0) echo "op=perf.run phase=installedApp quit=$OTOS_INSTALLED_WAS_RUNNING" ;;
-    1) echo "op=perf.run phase=pending reason=busy root=$OTOS_INSTALLED_BUSY_ROOT — stays due"; return ;;
-    *) fail_run "$today" "$head" quitInstalledApp ;;
-  esac
-
   local scorecard felt cpu output status=0
   mkdir -p "$ROOT_DIR/build/scorecards"
   scorecard="$ROOT_DIR/build/scorecards/$(/bin/date -u +%Y%m%dT%H%M%SZ)-weekly.json"
-  # A launch tour with a two-minute idle (owner, 2026-11-18): long enough to see background
-  # work beside the window, short enough that the run stays a few minutes.
-  "$ROOT_DIR/script/scorecard.sh" --tour --idle 120 --json "$scorecard" || fail_run "$today" "$head" tour
-  # The owner has the app back while the counts are measured.
-  reopen_installed_app
+  # A launch tour with a two-minute idle: long enough to see background work beside the window,
+  # short enough that the run stays a few minutes. The library is generated for the run, on a
+  # volume of its own, and removed however the run ends (script/scorecard.sh --seed).
+  "$ROOT_DIR/script/scorecard.sh" --tour --dev --optimized --seed "$REFERENCE_PHOTOS" --seed-media small \
+    --idle 120 --json "$scorecard" || fail_run "$today" "$head" tour
   felt="$(felt_misses "$scorecard")" || fail_run "$today" "$head" tourJudgedNothing
 
   # With no baseline yet, the head is measured and becomes it.
@@ -261,7 +244,7 @@ self_test() {
   }
   expect neverRun "$(status_line "" 2026-11-18 aaa free)" "verdict=due reason=neverRun lastRun=never"
   expect running "$(status_line "" 2026-11-18 aaa "held pid=1")" "verdict=running pid=1"
-  expect elsewhere "$(status_line "" 2026-11-18 aaa free absent)" "verdict=elsewhere reason=noInstalledApp"
+  expect elsewhere "$(status_line "" 2026-11-18 aaa free absent)" "verdict=elsewhere reason=noXcode"
   expect sameWeek "$(status_line "pass day=2026-11-12 head=aaa felt=none cpu=none" 2026-11-18 bbb free)" "verdict=pass day=2026-11-12"
   expect weekPassed "$(status_line "pass day=2026-11-11 head=aaa felt=none cpu=none" 2026-11-18 bbb free)" "verdict=due reason=weekPassed lastRun=2026-11-11"
   expect mainUnmoved "$(status_line "pass day=2026-11-01 head=aaa felt=none cpu=x" 2026-11-18 aaa free)" "verdict=pass"

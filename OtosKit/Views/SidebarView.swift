@@ -70,15 +70,14 @@ struct SidebarView: View {
             }
             if let onThisDay {
                 // Items captured on today's month and day in earlier years, else on today's day
-                // of the month in earlier months (ADR 0049), second under All Media (owner
-                // decision, 2026-11-11). No count, as Places carries none.
+                // of the month in earlier months (ADR 0049), second under All Media. No count, as Places carries none.
                 SidebarRow(systemImage: "calendar", title: "On This Day") {
                     EmptyView()
                 }
                 .tag(SidebarSelection.onThisDay(onThisDay))
             }
             // The other ways to browse the whole library, under On This Day: by who is in a
-            // photo and by where it was taken (owner decision, 2026-11-12). They exist from the
+            // photo and by where it was taken. They exist from the
             // moment a fixed library does, as On This Day does, so they never arrive under the
             // pointer.
             if showsPeople {
@@ -150,8 +149,7 @@ struct SidebarView: View {
             }
 
             // Last, so its row's arrival pushes no row under the pointer (ADR 0042), under the
-            // header Photos gives it: Duplicates is upkeep, not a way to browse (owner decision,
-            // 2026-11-12).
+            // header Photos gives it: Duplicates is upkeep, not a way to browse.
             if showsDuplicates {
                 Section("Utilities") {
                     // Its count is the bar's L1 unit: photos with duplicates.

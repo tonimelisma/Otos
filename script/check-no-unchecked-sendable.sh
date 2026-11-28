@@ -40,6 +40,7 @@ case "${1:-check}" in
 check)
   check_root "$ROOT_DIR"
   ;;
+# Validates: ARC-042
 self-test)
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT

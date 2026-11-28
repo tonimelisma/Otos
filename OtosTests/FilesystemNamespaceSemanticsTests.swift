@@ -39,6 +39,7 @@ struct FilesystemNamespaceSemanticsTests {
         #expect(probed == .unknown)
     }
 
+    // Validates: APP-032
     /// `isKnown` and the persisted column are one fact. Writing `0` for an
     /// unprobed root made it read back as a confidently case-insensitive one.
     @Test func unknownCapabilitiesPersistAsNullNotAsFalse() {

@@ -10,6 +10,7 @@ struct MediaSortKeyTests {
         MediaSortKey.naturalKey(string)
     }
 
+    // Validates: ARC-037
     @Test func numbersOrderNumericallyNotLexically() {
         // "2" sorts before "10" even though "10" is lexically smaller.
         #expect(key("img2.jpg") < key("img10.jpg"))

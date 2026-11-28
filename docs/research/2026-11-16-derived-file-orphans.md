@@ -43,7 +43,7 @@ What is unnamed today is about 11 MiB.
 
 ## What keeps the folder honest
 
-**Superseded the same day.** On the owner's library (installed `ece1ffe1`) the pass below listed 322,829 files and read 501,645 protected names in 89 s. One read transaction held a reader for 34.9 s. At the footprint peak the heap held the listing: 321,853 `NSPathStore2` (52 MB), 107,035 `_FileCache` (34 MB) and 227,436 `CFString` (32 MB). It removed 1,003 files (11.6 MB) as designed, but every launch paid that cost. ADR 0009 now describes the replacement: stored counters, a reconciliation only when a fact owes one, keyed pages of rows and a `readdir` stream. The rest of this section records the pass that was measured.
+**Superseded the same day.** On the reference library (installed `ece1ffe1`) the pass below listed 322,829 files and read 501,645 protected names in 89 s. One read transaction held a reader for 34.9 s. At the footprint peak the heap held the listing: 321,853 `NSPathStore2` (52 MB), 107,035 `_FileCache` (34 MB) and 227,436 `CFString` (32 MB). It removed 1,003 files (11.6 MB) as designed, but every launch paid that cost. ADR 0009 now describes the replacement: stored counters, a reconciliation only when a fact owes one, keyed pages of rows and a `readdir` stream. The rest of this section records the pass that was measured.
 
 - `CatalogStore.reconcileDerivedFiles` ran once a launch, after the first grid.
   - It lists the folder's top level (never `.staging`).
@@ -52,9 +52,9 @@ What is unnamed today is about 11 MiB.
 - **A file a row will name again is never removed.** Names are a function of identity, so a row whose column is empty for a while (a promotion not yet named, a row about to render again) still protects its file.
 - A promotion happens only inside a write transaction, so no file can become named while the reconciliation holds the writer.
 - It logs `op=derived.reconcile phase=finish` with counts and bytes by kind, then `op=derived.folder phase=census`. The scorecard reads the census as the session's disk (`disk.derivedFolderMB`, compared between sessions with `--compare`).
-- It also removes the July `Diagnostics/catalog-diagnostics-*.jsonl` that the removed JSONL sink wrote (17 MB on the owner's Mac).
+- It also removes the July `Diagnostics/catalog-diagnostics-*.jsonl` that the removed JSONL sink wrote (17 MB on the test Mac).
 - `DerivedFileLifecycleTests` renders, re-renders, moves a file outside Otos, renders it again, deletes a file, offers a camera thumbnail and plants leftovers, all on a generated library. The leftovers include the purged file's own names, and one file of a present row's own identity that its column does not name. After each step the test asserts that the folder holds exactly the names the rows hold. The present row's own file stays.
 
-## Left to the owner
+## Left to the user
 
-The catalog folder holds two pre-migration copies, `pre-baseline-2026-10-24` (77 MB) and `pre-v8-2026-10-26` (62 MB). No code wrote or reads them: they were made by hand before two migrations. The app does not delete folders it did not make. Removing them is the owner's choice.
+The catalog folder holds two pre-migration copies, `pre-baseline-2026-10-24` (77 MB) and `pre-v8-2026-10-26` (62 MB). No code wrote or reads them: they were made by hand before two migrations. The app does not delete folders it did not make. Removing them is the user's choice.

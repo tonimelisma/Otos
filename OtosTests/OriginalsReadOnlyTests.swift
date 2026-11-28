@@ -89,6 +89,7 @@ private enum SnapshotError: Error {
 
 @Suite(.testScope)
 struct OriginalsReadOnlyTests {
+    // Validates: MED-001
     @Test func addLibraryAndFullScanLeaveOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "scan")
         let before = try FilesystemTreeSnapshot.capture(root: root)
@@ -99,6 +100,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    // Validates: MED-001
     @Test func companionInventoryAndRemoveLibraryLeaveOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "companions")
         try Data("sidecar".utf8).write(to: root.appending(path: "photo.xmp"))
@@ -113,6 +115,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(beforeRemove, root: root)
     }
 
+    // Validates: MED-001
     @Test func previewDecodeLeavesOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "preview")
         let before = try FilesystemTreeSnapshot.capture(root: root)
@@ -128,6 +131,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    // Validates: MED-001
     @Test func enrichmentAndThumbnailStagingLeaveOriginalTreeUnchanged() async throws {
         let root = try makeMediaFixtureRoot(
             named: "enrichment",
@@ -158,6 +162,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    // Validates: MED-001
     @Test func materializationCoordinatorLeavesOriginalTreeUnchanged() async throws {
         let root = try makeFixtureRoot(named: "materialization")
         let before = try FilesystemTreeSnapshot.capture(root: root)
@@ -183,6 +188,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    // Validates: MED-001
     @Test @MainActor func videoPreviewLeavesOriginalTreeUnchanged() async throws {
         let root = try makeMediaFixtureRoot(
             named: "video-preview",
@@ -214,6 +220,7 @@ struct OriginalsReadOnlyTests {
         try assertUnchanged(before, root: root)
     }
 
+    // Validates: MED-001
     /// The reconcile an external change schedules must read the root and leave the
     /// originals already there untouched. The event is delivered by the test, so the
     /// rescan is known to have happened: the catalog lists the new file only after it.

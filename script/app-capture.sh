@@ -7,7 +7,7 @@
 # The views: `library` (the library's grid), `places` (the map), `on-this-day`, `duplicates`,
 # and `edit` (the grid with the Edit pane open on its first still); all of them unless some
 # are named.
-# People is not captured: the generated photos hold no faces (owner, 2026-11-27). The
+# People is not captured: the generated photos hold no faces. The
 # library's photos include what each view needs: some with GPS, some on today's day in past
 # years, an exact copy and a re-encoded version (script/sandbox-library-media.swift).
 #

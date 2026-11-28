@@ -6,7 +6,7 @@
 ## Evidence
 
 Installed Otos logged `op=mediaTrash.path failed role=primary` for a photo in
-`OneDrive-Personal/Pictures/Camera Roll`; the error itself was not logged. The
+`OneDrive/Pictures/Camera Roll`; the error itself was not logged. The
 import batch it belonged to had 361 of 484 files flagged `compressed,dataless`
 (`ls -lO`).
 
@@ -44,7 +44,7 @@ dataless with `evictUbiquitousItem(at:)`:
 `NSFileCoordinator.coordinate(writingItemAt:options: .forMoving)` around `trashItem`
 still fails with 3328, so file coordination is not what lets Finder succeed.
 
-Gold standard (the owner, by hand in Finder): a local `test.txt` moved to the Trash
+Gold standard (by hand in Finder): a local `test.txt` moved to the Trash
 landed in `~/.Trash`; a 1 GiB file that OneDrive had made dataless, moved to the Trash
 the same way, did not appear in `~/.Trash` and was gone from the domain.
 

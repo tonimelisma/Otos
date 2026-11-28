@@ -2,8 +2,8 @@
 
 ## Question
 
-The owner inserted an SD card into the MacBook's built-in reader at 17:46:59 with Otos
-running. The card mounted (`/Volumes/4152150790`, exFAT, through FSKit) but never appeared
+The user inserted an SD card into the MacBook's built-in reader at 17:46:59 with Otos
+running. The card mounted (`/Volumes/CARD`, exFAT, through FSKit) but never appeared
 in Otos. Why?
 
 ## Evidence
@@ -17,7 +17,7 @@ Otos's unified log at the insert, against the system's own reports:
 | 17:46:59.158 | UVFSService starts creating the volume for `disk10s1` |
 | 17:46:59.208 | fskitd `ReallyMountVolume`, mount task created at .212 |
 | 17:46:59.228 | Otos `op=removableVolume.refresh phase=finish count=0` (the last read) |
-| 17:46:59.232 | Finder's volume observer sees `/Volumes/4152150790` |
+| 17:46:59.232 | Finder's volume observer sees `/Volumes/CARD` |
 | 17:47:00.524 | storagekitd: `disk10s1 Mounted: Yes` |
 
 Every read Otos made ran before the mount was usable, and no DiskArbitration report

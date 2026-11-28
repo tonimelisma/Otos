@@ -18,7 +18,7 @@ Verified repo facts:
 - The app is a native SwiftUI macOS app.
 - ADR 0002 defines media rows as scoped by `library_root_id` and
   `relative_path`, but intentionally does not own root selection or access.
-- `AGENTS.md` requires SwiftUI-first UI and AppKit only when SwiftUI cannot
+- `CLAUDE.md` requires SwiftUI-first UI and AppKit only when SwiftUI cannot
   provide the required capability or verified responsiveness.
 - The Xcode project previously enabled App Sandbox and user-selected read-only
   file access. This ADR sets the posture to unsandboxed.

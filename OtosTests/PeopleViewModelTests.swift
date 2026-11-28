@@ -144,6 +144,7 @@ struct PeopleViewModelTests {
         }
     }
 
+    // Validates: APP-072
     /// A person's photos are the leaf under People: every library's photos of them, titled
     /// with the name, with Back to People; the filter set before is kept both ways.
     @Test func openingAPersonShowsTheirPhotosUnderPeople() async throws {
@@ -168,6 +169,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-013, APP-072
     /// Choosing another sidebar row leaves the person and starts that row unfiltered, so no
     /// back item and no filter follow the user there.
     @Test func anotherRowLeavesThePersonUnfiltered() async throws {
@@ -187,6 +189,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-013
     /// The filter offers the people with a name; an unnamed one only while it is checked.
     @Test func theFilterOffersUnnamedPeopleOnlyWhileChecked() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
@@ -200,6 +203,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A hidden person is seen only in the gallery: their photos close back to it, they do
     /// not open, and the filter lets go of them.
     @Test func aHiddenPersonLeavesTheirPhotosAndTheFilter() async throws {
@@ -218,6 +222,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The photo menu groups the targets' faces by person (DES-113): Sam's face (guessed in
     /// b.jpg) under `Change to` with everyone else to move it to, then the unidentified face
     /// under `Assign to`, with Sam among the people it may be. Two faces are two submenus,
@@ -257,6 +262,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A person without a name is named as a whole (DES-113): their entry counts every photo
     /// of them, `Name This Person` offers the named people to merge them into and `New Name…`,
     /// and nothing asks to correct a grouping the user cannot see — except in their own
@@ -293,6 +299,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// With several photos, an entry counts the photos it changes, and Make Key Photo is
     /// gone. Unidentified faces are offered only while no photo holds more than one, so no
     /// act has to pick a face; with one photo, each unidentified face is its own entry.
@@ -324,6 +331,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The Person sheet says who it names and how many photos Save changes, and suggests the
     /// people who already have a name.
     @Test func thePersonSheetSaysWhoAndHowMany() async throws {
@@ -352,6 +360,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The outlined faces are the view model's: by photo, each face's box, so every surface
     /// showing the photo draws them; empty clears (DES-113).
     @Test func outlinedFacesAreGroupedByPhoto() async throws {
@@ -369,6 +378,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// Saving the Person sheet with a name another person has asks whether they are the same
     /// person; Merge merges them. Someone Else… with a taken name gives the faces to that
     /// person.
@@ -396,9 +406,10 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072, ENR-024
     /// A hidden person merges as anyone does, however the merge is asked for — a drag, Merge
     /// Into among the selected people, or a person named with their name — and the person they
-    /// become is hidden (owner decision, 2026-11-21).
+    /// become is hidden.
     @Test func aHiddenPersonMergesAsAnyoneAndTheMergedPersonIsHidden() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory())
         let ian = try #require(try await fixture.store.perform(.moveToNewPerson([fixture.stranger], name: "Ian")).person)
@@ -425,6 +436,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A taken name whose merge the hard rules refuse disables Save with the merge's reason,
     /// rather than closing the sheet with nothing done; faces named as a hidden person are
     /// refused, since no surface but the gallery offers them; a name with another birthday for
@@ -449,6 +461,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// `Someone Else…` with a new name and a birthday makes one person with both, in one act:
     /// one undo takes the person away and gives the face back.
     @Test func someoneElseKeepsTheBirthdayTyped() async throws {
@@ -474,6 +487,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-065
     /// An act's result shows from its submission even while another heavy load holds the
     /// window's admission (ADR 0055): the name is on the face and in the store before the load
     /// ends; only the People pass the write asks for waits its turn, and once the load ends it
@@ -522,6 +536,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// Assign to ▸ Ian on the unidentified face: the undo item names the act and the photos
     /// it changed; undo writes the face back as it was, redo gives it to him again.
     @Test func undoAndRedoAnAct() async throws {
@@ -541,6 +556,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// Merge answered while an act ahead of it in the People stream is unpublished: the
     /// question was judged when asked, so the answer submits the merge and the store, applying
     /// it after that act, judges it — here This Is Not Sam frees the photo from before the
@@ -569,6 +585,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A merge the store refuses when it applies it says why, in the words the disabled act
     /// uses (DES-038), and the window keeps showing and filtering the person it would have
     /// merged away.
@@ -594,6 +611,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The People state a merge publishes can reach the window while the store's answer is
     /// still on its way: the store commits the merge and rings the projection before its
     /// await returns. Delivered at exactly that suspension, a state that no longer lists the
@@ -632,6 +650,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A redo of a merge is that merge: with the window on the person it merges away, a People
     /// state that no longer lists them, arriving before the redo's answer, leaves the window
     /// to it, and the answer takes the window to the person merged into, as the merge's own
@@ -680,6 +699,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A merge the store refuses hands the person it would have merged away back to the
     /// published state: here they were hidden while the merge was on its way, so its refusal
     /// returns the window to the gallery and the filter lets go of them.
@@ -710,6 +730,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-039
     /// Two acts undone in turn redo in turn: redoing the first keeps the second on the redo
     /// stack (APP-039), so both come back.
     @Test func redoingOneOfTwoUndoneActsKeepsTheOther() async throws {
@@ -744,6 +765,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-039
     /// Redo returns the catalog to the state an act left: a person `Someone Else…` created,
     /// undone away, comes back under the same ID, so a later act that named them redoes too.
     @Test func aRedonePersonKeepsTheirLaterActs() async throws {
@@ -777,6 +799,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-041
     /// The Info pane's People section says `No Faces` only for a photo the catalog read and
     /// holds none of, `Not Checked Yet` for one not read, and `—` for what it cannot know:
     /// several photos with none listed. A photo read while it is shown says so without being
@@ -805,6 +828,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-041
     /// An Info row's outline belongs to the targets and the pane: another photo, or the pane
     /// hidden, lets go of it, though the pointer that set it reported no exit.
     @Test func anInfoRowsOutlineEndsWithItsTarget() async throws {
@@ -823,6 +847,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-041
     /// An unidentified face offers its likely people as Info buttons only once ranked, so no
     /// button names a person only gallery order put there.
     @Test func suggestionsWaitForTheRanking() async throws {
@@ -846,6 +871,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// Up and Down keep the column inside each section's own rows, crossing the Hidden header
     /// into the next section's first row or the previous one's last.
     @Test func theArrowKeysKeepTheColumnAcrossTheHiddenHeader() {
@@ -870,6 +896,7 @@ struct PeopleViewModelTests {
         #expect(PeopleGalleryStep.down.target(from: nil, columns: 3, sections: []) == nil)
     }
 
+    // Validates: APP-072
     /// The gallery's context menu, the menu bar's person items and VoiceOver's actions are one
     /// value: the selected person's settings, Merge Into the other selected people, Hide and
     /// Show Photos; a hidden person's is Unhide alone. The toolbar's Merge Into offers only
@@ -908,6 +935,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// This Is Not Sam: the face loses her and Otos never gives it to her again; the undo
     /// item says so in the menu's words.
     @Test func notThisPersonHoldsTheFace() async throws {
@@ -924,6 +952,7 @@ struct PeopleViewModelTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A video's face is counted as a video's (APP-072): her person holds two photos and a
     /// video, a menu over a photo and the video says `Photos & Videos`, the video's face offers
     /// no Make Key Photo, and it is never outlined, its box being one frame's.

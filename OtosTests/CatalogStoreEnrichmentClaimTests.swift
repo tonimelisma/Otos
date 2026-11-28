@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreEnrichmentClaimTests {
+    // Validates: ENR-009
     @Test func startupClearsAbandonedEnrichmentClaims() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -32,6 +33,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 0)
     }
 
+    // Validates: ENR-001, ENR-018
     @Test func priorityClaimingSkipsRowsAlreadyClaimed() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -64,6 +66,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(visibleClaims.map(\.asset.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
     }
 
+    // Validates: ENR-001
     @Test func fallbackEnrichmentClaimsUseNewestBestDateOrder() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -85,6 +88,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(claims.map(\.asset.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
 
+    // Validates: ENR-001, ENR-011
     @Test func fallbackEnrichmentClaimsRemovableSourcesBeforeFixedLibraries() async throws {
         let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -171,6 +175,7 @@ struct CatalogStoreEnrichmentClaimTests {
         )
     }
 
+    // Validates: ENR-001
     /// Fixed sources share a claim window: with two libraries owing work, a window of two
     /// takes one row from each, whatever their dates, so a source whose rows wait on
     /// downloads never holds back another. Room a source does not fill goes to the others.
@@ -184,6 +189,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(rest.count == 4)
     }
 
+    // Validates: ENR-009
     /// ENR-009: each root is claimed only into its own room. A root whose window is full is
     /// claimed nothing, and the claim's room goes to the roots that have some, up to theirs.
     @Test func aRootWithAFullWindowIsNotClaimed() async throws {

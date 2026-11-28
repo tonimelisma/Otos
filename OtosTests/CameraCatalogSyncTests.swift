@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CameraCatalogSyncTests {
+    // Validates: APP-018
     /// A camera item is named by the name the device lists, which is unique in its folder;
     /// a path two items claim is no one's, so no suffix is ever invented for it.
     @Test func aCameraItemIsNamedByItsListedName() {
@@ -18,6 +19,7 @@ struct CameraCatalogSyncTests {
         #expect(CameraItemNaming.contested(paths) == ["202610_a/A.JPG"])
     }
 
+    // Validates: APP-018
     @Test func aConnectedCameraStaysInStepWithItsCard() async throws {
         let fixture = try await Fixture(passes: [
             Fixture.snapshot(["A.JPG", "B.JPG"], isStable: true),

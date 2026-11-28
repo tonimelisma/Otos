@@ -1,5 +1,7 @@
 # Import Screen — Spec
 
+GOVERNS: `OtosKit/Views/ImportBarPresentation.swift`, `OtosKit/Views/ImportPlanFooter.swift`
+
 The import experience: a removable source selected in the sidebar, its media in the
 ordinary grid, and one status surface at the bottom of the content pane. Cites
 `docs/design/design-system.md` by ID; rules are not restated.
@@ -463,7 +465,7 @@ the same path.
 
 ## What the presentation must carry
 
-The bar is passive: it renders what it is handed and calls intents (`AGENTS.md` →
+The bar is passive: it renders what it is handed and calls intents (`CLAUDE.md` →
 Architecture Standards). Today's `ImportPlanFooter` breaks that — it derives every
 string in the view, from `readinessText` down. The rewrite moves that derivation to
 one pure, testable mapper from presentation to drawn state, which means the

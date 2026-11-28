@@ -35,6 +35,7 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
+    // Validates: APP-046
     /// A photo whose edit was taken back to none keeps counting from its last revision, so a
     /// new edit never reuses a revision a rendering of another edit was made at.
     @Test func anEditAfterNoEditCountsOnFromTheLastRevision() async throws {
@@ -92,6 +93,7 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
+    // Validates: APP-046
     @Test func productsOfASupersededRevisionAreRefusedAndDiscarded() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -112,6 +114,7 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
+    // Validates: APP-046
     @Test func productsRenderedFromAFileThatHasSinceChangedAreRefused() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -127,6 +130,7 @@ struct CatalogStoreEditRecipeTests {
         }
     }
 
+    // Validates: ENR-016
     /// Enrichment renders with the recipe it read; a result rendered before a newer save
     /// is refused, and one rendered from the current save records it as rendered.
     @Test func anEnrichmentResultRenderedFromAnOlderEditIsRefused() async throws {
@@ -163,6 +167,7 @@ struct CatalogStoreEditRecipeTests {
         #expect(EditControl.shadows.formatted(EditRecipe(shadows: -20), facts: still) == "-20")
     }
 
+    // Validates: APP-047
     /// A still's white balance is relative and zero is as shot; a RAW's is kelvin, its
     /// slider even in mireds, and as shot until moved.
     @Test func whiteBalanceIsRelativeForAStillAndKelvinForARAW() {
@@ -182,6 +187,7 @@ struct CatalogStoreEditRecipeTests {
         #expect(abs(EditControl.kelvin(atPosition: EditControl.position(ofKelvin: 6500)) - 6500) < 0.01)
     }
 
+    // Validates: APP-046
     /// `hig-validation.md` F-15: a typed value is read as the panel shows it — signs, a
     /// degree mark, a kelvin unit — and a RAW's temperature in kelvin.
     @Test func typedValuesAreReadAsThePanelShowsThem() {
@@ -196,6 +202,7 @@ struct CatalogStoreEditRecipeTests {
         #expect(EditControl.temperature.position(fromEntered: "30", facts: still) == 30)
     }
 
+    // Validates: APP-049
     /// ADR 0036: a photo is offered the Detail and Optics controls its decoder supports.
     @Test func sectionsAndControlsFollowWhatThePhotoOffers() {
         let still = EditPhotoFacts.still
@@ -225,6 +232,7 @@ struct CatalogStoreEditRecipeTests {
         #expect(EditSection.effects.reset(EditRecipe(vignette: -30, vignetteMidpoint: 10)) == .neutral)
     }
 
+    // Validates: APP-047
     @Test func eachSectionResetsOnlyItsOwnControls() {
         let edited = EditRecipe(exposure: 1, contrast: 10, temperature: 5000, tint: 3, vibrance: 20, saturation: -5)
         #expect(EditSection.color.reset(edited) == EditRecipe(exposure: 1, contrast: 10))

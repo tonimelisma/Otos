@@ -6,25 +6,25 @@
 ## Context
 
 Otos has two performance instruments. The **tour** (ADR 0015) runs the installed app over
-the owner's library and reports what a session felt, against the targets in
+the reference library and reports what a session felt, against the targets in
 `docs/scorecard-targets.json`. The **benchmarks** count the instructions owner code retires
 on a generated catalog, per commit. Until 2026-11-18 they ran as two processes. The
-benchmarks ran daily, and a flagged case became the next work unless the owner accepted it.
-Every performance PR toured the owner's library before and after. Nothing scheduled a tour.
+benchmarks ran daily, and a flagged case became the next work unless it was accepted.
+Every performance PR toured the reference library before and after. Nothing scheduled a tour.
 
-The owner asked why the same outcome was looked for twice, and asked for one short process
-run rarely (2026-11-18). The record (`docs/research/2026-11-18-performance-process.md`):
+The same outcome was looked for twice, and one short process run rarely is enough
+(2026-11-18). The record (`docs/research/2026-11-18-performance-process.md`):
 
 - The tours found every felt win of the performance program (a view from 48.8 s to 51 ms,
   launch from 4.0 s to 1.1 s). The benchmarks found none of them.
 - The benchmarks' flags were not felt. Each one took a bisection, a research note and a fix.
   The last was a SQL comment holding `§` and an order walk, measured in a `-Onone` build.
 - Chromium, Firefox and rustc all triage a lab counter's alert: they do not block on it, and
-  most alerts are not work. They set priorities from user-felt numbers. A one-owner project
+  most alerts are not work. They set priorities from user-felt numbers. A one-maintainer project
   has no sheriff, so making every alert someone's next work is the toil this repo had.
 
 Two measured facts shape the counts (2026-11-01, a duplicates build on a copy of the
-owner's catalog):
+reference catalog):
 
 - **Wall time is not a stable measure on this machine.** The same build's phases varied
   2–5× between runs while another worktree's `xcodebuild` ran. Parallel checks are normal
@@ -49,14 +49,14 @@ owner's catalog):
   primary checkout, which outlives the session's worktree. It holds a kernel lock
   (`otos_hold_lock`) on a file in the clone's git directory, so a second start reports
   `phase=skipped` and `status` reads `verdict=running`. The lock dies with the run.
-  Rejected: a launchd agent, which is persistent configuration on the owner's Mac and owns a
+  Rejected: a launchd agent, which is persistent configuration on the test Mac and owns a
   run nobody watches; GitHub Actions, whose `xcode-27` runner is a virtual Mac
   (`VirtualMac2,1`) that reads zero instructions retired (`proc_pid_rusage`, run
   45870604355, 2026-11-26), so it has nothing to count.
 - **What it measures, in order.**
-  1. **The tour** of the installed app on the owner's library, read-only: a launch tour
-     with a 120 s idle (`script/scorecard.sh --tour --idle 120`). The owner set two
-     minutes on 2026-11-18; stall lines are still judged as a rate per 10 minutes. The tour never runs beside a running
+  1. **The tour** of the installed app on the reference library, read-only: a launch tour
+     with a 120 s idle (`script/scorecard.sh --tour --idle 120`). Two minutes were
+     set on 2026-11-18; stall lines are still judged as a rate per 10 minutes. The tour never runs beside a running
      installed app. The run quits that app through the helper `script/install.sh` uses
      (`otos_quit_installed_app`, `script/lib/installed-app.sh`): never while an import or
      reorganization is in flight (then `phase=pending`, and it stays due), with a
@@ -67,7 +67,7 @@ owner's catalog):
      (`refs/bench/baseline`), through `script/bench.sh compare <baseline> <head>`, which
      measures either side that has no records.
 - **One verdict.** The verdict is `fail` when any scorecard row is `FAIL`: a target missed
-  on the owner's library, a tour step that reached its deadline, or memory pressure Otos
+  on the reference library, a tour step that reached its deadline, or memory pressure Otos
   caused. Otherwise it is `pass`. The line names the missed targets (`felt=`) and the flagged
   cases (`cpu=`). A tour that judged nothing, or a comparison that failed or was refused, is
   `error`, and it moves no baseline.
@@ -76,17 +76,17 @@ owner's catalog):
   <the tour's scorecard>` and left to the next weekly run, because the weekly tour runs beside
   whatever else the machine is doing. The verdict stays `fail` and carries `notReproduced=`,
   so no other session repeats the tour. A
-  target changes only with the owner's decision, in `docs/scorecard-targets.json`.
+  target changes only by a deliberate decision, in `docs/scorecard-targets.json`.
 - **Instruction rises decide nothing.** They are listed in the verdict, and the baseline
-  moves to each run's head. The owner decides whether a rise is work. The counts remain the
+  moves to each run's head. The maintainer decides whether a rise is work. The counts remain the
   per-commit trail for finding the commit behind a felt miss (`bench.sh history`,
-  `bench.sh compare`). Rejected: a flag that is the next work until accepted, which the owner
-  chose before; its flags were not felt, and it turned every alert into a bisection.
+  `bench.sh compare`). Rejected: a flag that is the next work until accepted, which was the
+  process before; its flags were not felt, and it turned every alert into a bisection.
 - **Per PR, nothing.** One `script/check.sh` is a PR's verification. A performance PR adds a
   deterministic twin test for its win (rows visited per row returned, stall lines in
   `StallReproductionTests`, a hosted footprint) and says it is measured in the next weekly run.
   No session runs a tour or a comparison for a PR unless it is reproducing a `fail` or the
-  owner asks for it. Rejected: a before-and-after owner tour on every performance PR, which
+  maintainer asks for it. Rejected: a before-and-after tour of the reference library on every performance PR, which
   cost about ten minutes of a quiet machine each, often several times a PR.
 
 ### The counts
@@ -104,8 +104,8 @@ owner's catalog):
   unmeasured (`BenchmarkScenarioTests`, `BenchmarkRun.checked`). What a scenario expects
   beyond its numbers then fails the change that breaks it, not the next weekly run, which
   records nothing for a failed case.
-- **Fixtures are generated from a fixed seed, never the owner's library.**
-  `BenchmarkLibrary` builds about 15,000 stills shaped like the owner's catalog of
+- **Fixtures are generated from a fixed seed, never the reference library.**
+  `BenchmarkLibrary` builds about 15,000 stills shaped like the reference catalog of
   2026-11-01, so every commit measures the same catalog. Each case checks that it did its
   work, so a broken fixture fails instead of measuring nothing. No case asserts a budget.
 - **A measurement is several test processes, each with one hash seed.** Each side builds
@@ -141,7 +141,7 @@ owner's catalog):
 - **Keep only the tour.** A felt miss would have no per-commit trail, and bisecting by tour
   costs about ten minutes a step on a quiet machine.
 - **Keep only the counts.** They missed every felt win of the program. They measure a
-  `-Onone` build on a generated catalog, so the owner's waits, cold reads and memory pressure
+  `-Onone` build on a generated catalog, so the user's waits, cold reads and memory pressure
   never reach them.
 - **XCTest `measure` with Xcode baselines.** One number per machine, pass/fail, no history per
   commit, and XCTest beside a Swift Testing suite.
@@ -159,11 +159,11 @@ owner's catalog):
   the installed app quit for that time, and for each side without records a build and three
   test processes (about five minutes). A PR costs no measurement.
 - A felt regression is found within a week, as a range of commits. An instruction rise is
-  shown once in the weekly line and always in `bench.sh history`. A rise the owner does not
+  shown once in the weekly line and always in `bench.sh history`. A rise the maintainer does not
   take up stays, and drift below the per-run noise is not flagged run to run.
 - Acts are timed only in a sandbox library (ADR 0015), so the weekly run does not judge
   `act.resultMs`. Their CPU paths have cases (`grid.choiceReconfigure…`, `grid.hideApply…`),
-  and the sandbox tour measures them when the owner asks or an act is being fixed.
+  and the sandbox tour measures them when the maintainer asks or an act is being fixed.
 - The counts build at `-Onone`, which the installed app does not run (ADR 0030).
 - Numbers compare only on one machine and configuration. Notes stay in the local clone
   unless pushed (`git push origin refs/notes/benchmarks`).

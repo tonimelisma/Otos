@@ -4,6 +4,7 @@ import Foundation
 import Testing
 
 struct CameraSourcePolicyTests {
+    // Validates: APP-018
     @Test func rejectsMassStorageAndMountedCameraDevices() {
         #expect(ImageCaptureCameraSourcePolicy.rejectionReason(
             mountPoint: "/Volumes/CARD",
@@ -22,6 +23,7 @@ struct CameraSourcePolicyTests {
         ) == .massStorageLocation)
     }
 
+    // Validates: APP-018
     @Test func acceptsUnMountedPTPCameraDevices() {
         #expect(ImageCaptureCameraSourcePolicy.rejectionReason(
             mountPoint: nil,
@@ -30,6 +32,7 @@ struct CameraSourcePolicyTests {
         ) == nil)
     }
 
+    // Validates: ARC-007
     @Test func duplicateRemovableVolumeIdentitiesArePathDisambiguated() {
         let attachments = RemovableVolumeMonitor.disambiguatedAttachments([
             RemovableVolumeAttachment(

@@ -2,6 +2,7 @@
 import Testing
 
 struct MediaGridAnimationTests {
+    // Validates: APP-033
     /// Import arrivals land left of the strip's anchored tile. The restore scrolls the strip
     /// by their width, so animating the survivors would draw a lurch the restore already
     /// cancelled — every visible tile ends where it started (APP-033).
@@ -16,6 +17,7 @@ struct MediaGridAnimationTests {
         )
     }
 
+    // Validates: APP-033
     /// Changes that leave the anchored tile at its index scroll nothing, so the motion the
     /// animation draws (a neighbor closing a gap to the right) is real.
     @Test func keepsStripAnimationWhenTheAnchoredTileKeepsItsIndex() {
@@ -29,6 +31,7 @@ struct MediaGridAnimationTests {
         )
     }
 
+    // Validates: APP-033
     /// A removed anchor leaves the scroll untouched, so nothing is cancelled.
     @Test func keepsStripAnimationWhenTheAnchoredTileIsRemoved() {
         let ids = assetIDs(10)

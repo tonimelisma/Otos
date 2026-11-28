@@ -33,6 +33,7 @@ struct EnrichmentClaimIndexContractTests {
         """)
     }
 
+    // Validates: ENR-022, ENR-031
     /// A card's second pass is claimed for the products, and a fixed library for its every
     /// product, a video's faces included (ADR 0047); each walks its own pair of indexes.
     @Test func eachClaimWalksItsOwnIndexes() async throws {
@@ -52,6 +53,7 @@ struct EnrichmentClaimIndexContractTests {
         }
     }
 
+    // Validates: ENR-031
     /// `INDEXED BY` matches a partial index by its text, so each claim's predicate is the
     /// text its indexes hold in a migrated catalog: the products' and the library's as v65
     /// made them again over the rows no source lists, the account's as v40 made it.

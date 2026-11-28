@@ -165,6 +165,7 @@ struct MediaGridLayoutTests {
         days, daysOnQuarterPoints, daysRightToLeft, ungrouped, trailingDay, emptyUngrouped, noSections,
     ]
 
+    // Validates: APP-006
     @Test(arguments: oracles.indices)
     func geometryIsTheCompositionalLayouts(index: Int) {
         let oracle = Self.oracles[index]
@@ -215,7 +216,7 @@ struct MediaGridLayoutTests {
         #expect(items == Self.oracles[index].sections.map(\.itemCount).reduce(0, +))
     }
 
-    /// The owner's scale: a rect deep in the grid holds exactly the rows it crosses, found
+    /// The reference scale: a rect deep in the grid holds exactly the rows it crosses, found
     /// without visiting the sections before it.
     @Test func aRectDeepInALargeGridHoldsOnlyItsRows() {
         let sections = (0 ..< 5000).map { MediaGridLayoutGeometry.Section(itemCount: 31 + $0 % 3, hasHeader: true) }
@@ -254,6 +255,7 @@ extension AppKitWindowTests {
     /// a header's item), and the collection view realizes what the geometry puts on screen.
     @MainActor
     struct MediaGridLayoutWindowTests {
+        // Validates: APP-006
         @Test func theLayoutAnswersAtAppKitsIndexPathsFromItsSectionsWidthAndScale() {
             // Days newest first, the unknown day's run third.
             let counts = [3, 14, 1, 40, 7]

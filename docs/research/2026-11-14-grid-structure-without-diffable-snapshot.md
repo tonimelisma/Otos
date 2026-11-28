@@ -5,8 +5,8 @@ the snapshot build off the main actor at 16,869 items but left its quadratic ter
 
 ## Question
 
-At the owner's scale the grid stays blank for 13–15 s after the window state lands, at
-launch and on every sidebar, sort or filter switch. Installed app, owner's catalog:
+At reference-library scale the grid stays blank for 13–15 s after the window state lands, at
+launch and on every sidebar, sort or filter switch. Installed app, reference catalog:
 
     op=ui.mediaGrid.structuralApply phase=finish items=157971 inserted=157971 largeApply=true
       reloadDataFallback=true diffPolicyMs=22 snapshotBuildMs=13390 applyCallMs=591
@@ -51,7 +51,7 @@ mutating call goes through `_commitUpdateAtomic` and copies the item set
 | 1,505 | 16.6 G instructions (41 s wall, loaded) | 0.16 G |
 | 5,097 | 54.0 G instructions (111 s wall, loaded) | 0.16 G |
 
-The owner's 13.4 s `snapshotBuildMs` on a quiet machine is the 5,000-day row. The plain
+The reference catalog's 13.4 s `snapshotBuildMs` on a quiet machine is the 5,000-day row. The plain
 build is flat in sections and linear in items.
 
 ### The layout resolve is per section, and the header's estimated height doubles it
@@ -88,11 +88,11 @@ covered the top 16 pt of the first row instead of the space DES-069 reserves. Gi
 header the label's own fitting height (`MediaGridDayHeaderView.height`, measured once from
 a header holding a date and a count) as an `.absolute` dimension fixes that and moves the
 resolve from the 5.96 G row to the 2.72 G row above: about half the main-thread layout
-cost of every reload and every batch at the owner's 5,000 days.
+cost of every reload and every batch at the reference catalog's 5,000 days.
 
 The remaining ~0.5 M instructions per section are the compositional layout's own section
 solve. Removing them needs a different layout model (one section with day headers drawn as
-decorations, or a custom layout). The owner declined that here, then ordered it on
+decorations, or a custom layout). That was declined here, then ordered on
 2026-11-15: `2026-11-15-grid-layout-without-compositional-solve.md` replaces the layout
 and supersedes this paragraph and the conclusion's second point.
 
@@ -121,16 +121,16 @@ wall time under load average 30–50):
 | `grid.structureBuild.days5000` (158,000 items) | 1,697 M | 177 | new case; the diffable build was 54 G at `-O` |
 | `grid.structuralApply.days5000` | 4,569 M | 654 | new case |
 
-`grid.structuralApply.days5000` is the whole apply a sidebar switch costs at the owner's
+`grid.structuralApply.days5000` is the whole apply a sidebar switch costs at the reference catalog's
 size, through the controller in a window: the off-main build, `reloadData`, the layout
 resolve with fixed-height headers, and the post-apply pass, alternating two 158,000-item
 libraries. Against the installed app's 15.5–18 s `applyMs` for the same item count, that
 is the blank-grid time going from seconds to well under one.
 
-A sandbox run of the dev build against a copy of the owner's catalog did not reach a grid:
+A sandbox run of the dev build against a copy of the reference catalog did not reach a grid:
 the catalog started (166,555 assets, 9 roots) but the first window-state publication had
 not finished after 11 minutes under the machine's load, so no `structuralApply` line was
-logged. The installed app's log after install is the owner-scale confirmation.
+logged. The installed app's log after install is the full-scale confirmation.
 
 ## Conclusion
 

@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelImportIntentTests {
+    // Validates: ARC-047
     /// "Change the destination, then Import" — two synchronous calls, back to back — must
     /// import into the new destination, never the one the card started with.
     @Test func destinationThenImportImportsIntoTheNewDestination() async throws {

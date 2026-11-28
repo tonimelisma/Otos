@@ -21,7 +21,7 @@ libraries, and 17,493 of the Immich account's, whose reading is under way.
 | `receipt` | 31 | 27 | 4 | 0 | 0 |
 
 A confident `screenshot` is almost never a camera's file: 549 of 553 carry no camera make,
-and none comes from the owner's Sony or Nikon. A confident `document` is the same at 806 of
+and none comes from the reference library's Sony or Nikon. A confident `document` is the same at 806 of
 848, its Apple-made ones being phone photos of paper. The confident labels are a usable
 screenshot and document classification. The loose labels are not: `printed_page` and
 `whiteboard` never pass the confidence gate, and loose `document` covers 3,271 items.
@@ -45,4 +45,4 @@ RAW and its JPEG):
 Share of days a cap would leave untouched: 56.3 % at 12, 72.9 % at 25, 84.5 % at 50.
 
 On 13 November the anniversaries hold 3 (2016) to 42 (2017) items. A cap is a product choice
-the owner makes from these numbers. The owner chose 25 (2026-11-12).
+made from these numbers. The choice was 25 (2026-11-12).

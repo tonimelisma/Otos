@@ -417,7 +417,7 @@ nonisolated enum SourceProductsSQL {
     /// The rows on screen are asked for ahead of the walk (`ImmichCatalogSync.fetchVisibleProducts`).
     /// Pinned to the key: left to itself SQLite ranged the root's source-item index, every
     /// row of the account, and tested each against the paths, 406 ms for 120 rows on the
-    /// owner's 147,293 against 24 ms by key (`docs/research/2026-11-16-idle-disk-read-attribution.md`).
+    /// reference library's 147,293 against 24 ms by key (`docs/research/2026-11-16-idle-disk-read-attribution.md`).
     static func visibleCandidatesSQL(count: Int) -> String {
         """
         SELECT relative_path, source_item_id, kind, byte_size,
@@ -618,7 +618,7 @@ nonisolated struct ScanFactValues: Sendable {
     /// byte for byte and a missing value apart from every present one (each value is written
     /// with whether it is present and, for text, its length). What a scan's baseline holds of
     /// a row: 32 bytes, where the values themselves held five strings
-    /// (`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+    /// (`docs/research/2026-11-17-a-new-library-at-the-reference-size.md`).
     var digest: ScanFactDigest {
         var hasher = SHA256()
         for text in [pathKey, nameSortKey, name, contentTypeIdentifier, kind, format] {
@@ -719,7 +719,7 @@ nonisolated struct ScanBaseline: Sendable {
     /// Settled rows only: a row awaiting presence or held in the Trash is absent, so
     /// observing it always writes.
     /// Each row's facts as their digest (`ScanFactValues.digest`): a whole root's baseline at
-    /// the owner's library size is held for the walk's length.
+    /// the reference library's size is held for the walk's length.
     let media: [MediaRelativePath: ScanFactDigest]
     let companions: [MediaRelativePath: ScanCompanionFactValues]
     let capabilities: VolumeNamespaceCapabilities

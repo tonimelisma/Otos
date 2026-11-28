@@ -2,13 +2,13 @@
 
 ## Question
 
-Plan 0116's last unmet target is a peak footprint of at most 700 MB. On the owner's library
+Plan 0116's last unmet target is a peak footprint of at most 700 MB. On the reference library
 (installed build d07bec4f), a switch-off tour with only enrichment running peaked at
 832 MB, against a floor of 350–494 MB with every owner off. It read 1,073 MB from disk in
 an 18-second session; the other owners read 14–235 MB alone. What does enrichment allocate
 in its first seconds?
 
-## Evidence from the owner's session (unified log, read-only)
+## Evidence from the reference session (unified log, read-only)
 
 Enrichment started at +1.0 s (`Enrichment coordinator started`), 16 ms after the first
 grid painted. In the first second it claimed 32 rows: 2 were local and 16 went to download.
@@ -54,7 +54,7 @@ mallocs it whole. That buffer is freed into the same malloc pages after the rend
 the test process, reading 64 MB that way and letting it go left the footprint 64 MB higher
 (below).
 
-## Measured in the test process (generated owner-shaped catalog, 167,215 rows)
+## Measured in the test process (generated reference-shaped catalog, 167,215 rows)
 
 `EnrichmentLaunchMemoryTests` (`OTOS_SCALE_TEST=1`), one run with the old reads and one with
 `FileBytes`:
@@ -85,7 +85,7 @@ per item, inside one job:
   - Render signatures, search embeddings, preview faces and descriptions decode thumbnails or
     previews in pages of 128, 16, 32 and 16. Each page is one job, and each image is a CF
     object released by ARC. A page's autoreleased objects are freed at the page's `await`.
-  - The scanner flushes on its cadence; the owner's log shows 127–220 files a batch, so one
+  - The scanner flushes on its cadence; the reference session's log shows 127–220 files a batch, so one
     job holds a few hundred URLs.
   - The search vector file's compaction appends 4,096 slots a batch (about 6 MB) and awaits
     each write.

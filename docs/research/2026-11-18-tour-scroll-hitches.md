@@ -2,10 +2,10 @@
 
 ## Question
 
-The owner reported scrolling "like a stop motion movie", in his full library and in a
-109-asset import alike. His installed app's log showed a main-thread stall of 100–220 ms
+Scrolling was reported as visibly stuttering, frame by frame, in the full reference library and in a
+109-asset import alike. The installed app's log showed a main-thread stall of 100–220 ms
 (`op=mainThreadStall`, `bracketedOp=MediaGridViewController.reconfigureVisibleItems`,
-`scrollHold=true`) on nearly every new row while he scrolled. The weekly tour passed: its scroll
+`scrollHold=true`) on nearly every new row while the user scrolled. The weekly tour passed: its scroll
 steps jump 300 items with a focus scroll, so each shows one screenful in one commit and stalls
 once, and its only stall target is `mainThreadStalls.worstMs` ≤ 250 ms. What does the tour have
 to do to catch a scroll that hitches on every row, and what number should it judge?
@@ -34,7 +34,7 @@ to do to catch a scroll that hitches on every row, and what number should it jud
 - **Speed and distance: 1,500 points a second for 12,000 points (8 s).** A steady two-finger
   scroll moves about one to three thousand points a second. At the default six columns in a
   1,512-point window a row is about 250 points, so the step reveals about 48 rows, six a
-  second. That is several new rows every second, which is what stalled for the owner, and
+  second. That is several new rows every second, which is what stalled for the user, and
   long enough that one slow frame does not decide the ratio.
 - **The hitch rule.** An interval longer than 1.5 refreshes adds its time past one refresh to
   the hitch time (`ScrollFrameTally`). An interval within half a refresh is the display's own
@@ -53,11 +53,11 @@ to do to catch a scroll that hitches on every row, and what number should it jud
 
 ## What it predicts
 
-The owner's stalls were 100–220 ms on about every other row at a handful of rows a second, so
+The user's stalls were 100–220 ms on about every other row at a handful of rows a second, so
 the probe's hitch rate for that build is on the order of a hundred ms/s, far past 5. A probe
 outside the app measured the same cause: 60 thumbnails shown in one commit took 182–215 ms of
 main-thread work when their pixels were decoded lazily, and 1.3 ms when the pixels were already
-decoded. The first weekly run after this lands measures the real number on the owner's library.
+decoded. The first weekly run after this lands measures the real number on the reference library.
 
 ## Sources
 

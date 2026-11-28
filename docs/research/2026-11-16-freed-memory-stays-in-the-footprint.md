@@ -2,7 +2,7 @@
 
 ## Question
 
-The owner's 200 s no-click survey on ece1ffe1 (with #837's `malloc_zone_pressure_relief` on
+A 200 s no-click survey of the reference library on ece1ffe1 (with #837's `malloc_zone_pressure_relief` on
 every `LoadAdmission` release) showed "Malloc Small (empty)" growing from 47 MB at +30 s to
 566 MB at +60 s and 701 MB at the end, while live small and large malloc stayed at 409–470 MB
 and 265–290 MB. Does `malloc_zone_pressure_relief` return freed pages on this OS at all, and
@@ -10,7 +10,7 @@ which frees leave memory in `phys_footprint`?
 
 ## Method
 
-A C program (no Otos code) on the owner's Mac, macOS 27 beta, default allocator. For each
+A C program (no Otos code) on the test Mac, macOS 27 beta, default allocator. For each
 size it allocates 400 MB in blocks of that size, touches every byte, frees them (all, or all
 but one in N), calls `malloc_zone_pressure_relief(NULL, 0)` — and, in a second build, on every
 zone `malloc_get_all_zones` lists — and reads `phys_footprint` from `TASK_VM_INFO` after each

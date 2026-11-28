@@ -11,6 +11,7 @@ struct FilesystemEventFlagsTests {
         #expect(flags.scopeKind == .root)
     }
 
+    // Validates: ARC-041
     @Test func regularFileCreateTargetsSingleFileUpsert() {
         let flags = FilesystemEventFlags(
             rawValue: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)

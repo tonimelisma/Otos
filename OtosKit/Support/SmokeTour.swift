@@ -102,7 +102,7 @@ extension PreferencesDomain {
 #if DEBUG
     /// Read-only performance tour guide
     ///
-    /// `OTOS_TOUR=1` makes a session tour itself once its first grid is in, so what the owner
+    /// `OTOS_TOUR=1` makes a session tour itself once its first grid is in, so what the user
     /// feels can be measured the same way every time (ADR 0015, the scorecard). Every step is
     /// a gesture's own intent on the window's view model — the sidebar's `selectSidebar`, the
     /// gallery's `openPerson`, the grid's focus, Return's `openLoupe`, the arrow keys'
@@ -119,7 +119,7 @@ extension PreferencesDomain {
     /// so a full-resolution decode of a cloud-only photo is never asked of its provider. A
     /// tour session writes no preference of Otos's: its domain is `.sessionOnly(.standard)`
     /// (`PreferencesDomain.configured`), so the place saved at quit, the grid's zoom and every
-    /// other setting stay in memory and the owner's stored ones are untouched however the
+    /// other setting stay in memory and the user's stored ones are untouched however the
     /// session ends (AppKit's own frame autosave writes only when the window or the sidebar's
     /// divider moves, which no step does; ADR 0020). The window is still put back as it was — scope, filter, sort, search,
     /// mode, focus, selection, inspector — before the app quits, for the visible session and
@@ -152,7 +152,7 @@ extension PreferencesDomain {
         /// The longest a settled tour waits for the settlement before it starts anyway.
         static let settleDeadlineVariable = "OTOS_TOUR_SETTLE_DEADLINE_SECONDS"
         /// The longest a tour waits for the sandbox library it registers to finish its first
-        /// walk before it fails (`sandboxLibraryNeverScanned`): a walk of the owner's library
+        /// walk before it fails (`sandboxLibraryNeverScanned`): a walk of the reference library
         /// size takes minutes, more than a step's deadline, on a loaded Mac.
         static let libraryDeadlineVariable = "OTOS_TOUR_LIBRARY_DEADLINE_SECONDS"
         /// When a search step types its query after focusing the field: `immediate` (default),
@@ -567,7 +567,7 @@ extension PreferencesDomain {
             }
             // A sandbox library this launch registers (`SandboxLibrary`) is toured once its
             // first scan has delivered, so the plan sees it: up to the library deadline, since a
-            // walk of the owner's library size outlasts a step's.
+            // walk of the reference library's size outlasts a step's.
             let library = SandboxLibrary.requestedPath(environment: environment)
             if let library {
                 guard await until(deadline: configuration.libraryDeadline, { SandboxLibrary.isScanned(library, in: $0.state) }) else {

@@ -1,15 +1,15 @@
-# Face recognition: which embedding model tells the owner's children apart
+# Face recognition: which embedding model tells siblings apart
 
 Date: 2026-11-07 to 2026-11-09. Question: which face-embedding model, at which precision, should
 Otos use so that one child is recognised across years while siblings at the same age stay apart?
 And what must detection and alignment reject before a face reaches the model?
 
-**Answer:** AdaFace IR-101 (WebFace12M), with 8-bit weights, on the CPU. On the owner's labelled
+**Answer:** AdaFace IR-101 (WebFace12M), with 8-bit weights, on the CPU. On the reference set's labelled
 faces it was the only candidate that never mistook one child for a sibling, and it found every
 child face the grouping had missed. Decision: ADR 0047.
 
 The research material lives in `~/Development/Otos-face-research`, outside the repository on
-purpose. It is about 2 GB of models plus crops of the owner's family, and is never committed.
+purpose. It is about 2 GB of models plus face crops from the reference library, and is never committed.
 This note keeps the method and the numbers. The tools named below are in that folder's `tools/`.
 
 ## 1. Pipeline measured
@@ -38,7 +38,7 @@ This note keeps the method and the numbers. The tools named below are in that fo
   dataset", and to cite the AdaFace paper (Kim et al., CVPR 2022, arXiv 2204.00964).
 - **Unread:** WebFace260M's own terms page (face-benchmark.org) could not be read on 2026-11-09,
   because its TLS certificate does not match the host name.
-- **Owner decision (2026-11-07):** Otos is non-commercial, so non-commercial licences are
+- **Decision (2026-11-07):** Otos is non-commercial, so non-commercial licences are
   acceptable.
 
 ## 2. Conversion
@@ -73,7 +73,7 @@ warm-up, 2026-11-09, on a machine running other work, load average 16–25):
 | fp16 | 1.0 s | 20 |
 | fp32 | 1.8 s | 34 |
 
-## 3. Detection on the owner's photos
+## 3. Detection on the reference photos
 
 **Run 1** (142 local 2026 photos, 222 faces):
 - Faces are large: median 602 px tall at full resolution, p10 309 px.
@@ -81,8 +81,8 @@ warm-up, 2026-11-09, on a machine running other work, load average 16–25):
 - About 1.5 s per photo, mostly full-resolution decode.
 
 **Run 2**, the bake-off set:
-- **Photos:** 400 a year drawn at random from each of 2012–2026, from the owner's archive
-  `Camera Roll` on the home server. That came to 5,810 JPEG, HEIC and DNG photos (some years
+- **Photos:** 400 a year drawn at random from each of 2012–2026, from the reference
+  library's `Camera Roll` on the test server. That came to 5,810 JPEG, HEIC and DNG photos (some years
   hold fewer), read at full resolution, with eight photos in parallel, in 25 minutes.
 - **Faces:** Vision found 4,449. 3,293 have capture quality ≥ 0.3, the admission rule used
   throughout this study. Their median height is 502 px.
@@ -130,7 +130,7 @@ What that changes:
 The shipped analyser pairs by `uuid`. Its embeddings match the study's: on run 1's photos,
 cosine ≥ 0.9984 (median 0.9997) for every face both kept, the int8 model against fp32.
 
-## 4. Ground truth: the owner's labels
+## 4. Ground truth: the reference labels
 
 Labelling 3,293 faces one by one is too slow, so they were first grouped (`tools/cluster.py`):
 - **Similarity:** the mean cosine of all four fp32 models, so the grouping favours no
@@ -139,28 +139,28 @@ Labelling 3,293 faces one by one is too slow, so they were first grouped (`tools
 - **Constraint:** two faces in one photo are never grouped together.
 - **Result:** 848 groups.
 
-The owner then labelled on a local page (`tools/review_server.py`) in three passes:
+The faces were then labelled on a local page (`tools/review_server.py`) in three passes:
 
 1. **Naming:** named 93 groups. The same name on two groups merges them.
 2. **Mixed groups:** in the named groups, marked faces that were not the named person as left
-   out. Birthdays went in for the three children, Sam, Ian and Tyler. They are kept with the
+   out. Birthdays went in for the three children. They are kept with the
    labels in the research folder, not here.
-3. **The kids round:**
+3. **The children round:**
    - **Why:** labels made by naming model-built groups only contain faces the models already
      found alike. A child's face no grouping caught stays unnamed, and those are exactly the
      hard cases.
    - **What was shown:** all 391 unnamed faces from the children's lifetimes, most child-like
      first, each offering only the children already born on its date.
-   - **Result:** the owner named 42: 28 Sam, 12 Ian, 2 Tyler. All 42 were among the first
+   - **Result:** 42 were named: 28 of child 1, 12 of child 2, 2 of child 3. All 42 were among the first
      54 shown; there were no child faces after that.
 
 Final labels: 2,196 faces of 33 people. The children:
 
 | Child | Faces |
 | --- | --- |
-| Sam | 487 |
-| Ian | 225 |
-| Tyler | 32 |
+| Child 1 | 487 |
+| Child 2 | 225 |
+| Child 3 | 32 |
 
 ## 5. Results
 
@@ -220,7 +220,7 @@ Reading:
   correctly and confidently. The next best accepted 37.
 - **ArcFace R100** keeps slightly more pairs three or more years apart above its threshold. It
   accepted one wrong child, and it trails IR-101 on every sibling column.
-- **Caveat:** the hard-face set is small (42 faces) and comes from one family's photos.
+- **Caveat:** the hard-face set is small (42 faces) and comes from one library's photos.
 
 ## 6. Precision: does fp16 or int8 change a decision?
 
@@ -278,7 +278,7 @@ no original download.
 ## 8. Grouping rules (2026-11-10)
 
 `tools/grouping_sim.py`, on the 3,293 run-2 faces (unlabelled strangers included) with the
-shipped model's int8 embeddings, scored against the owner's labels.
+shipped model's int8 embeddings, scored against the reference labels.
 
 **Unnamed groups, nobody named yet.** A group is offered only when its faces span two or more
 days, and two faces of one photo are never grouped together.
@@ -310,15 +310,15 @@ ones, and the next round starts from the larger set.
 | 0.470 | 0.08 | 4 | 509 | 6 | 0 | 741 |
 
 At 0.434 and 0.05, the 14 wrong suggestions were:
-- 8 of people the owner had not named;
-- 3 of another child, Milo, also not named;
-- 2 of Ian suggested as Sam, the sibling case;
-- 1 of an unnamed face suggested as Tyler.
+- 8 of people not named in the labels;
+- 3 of another child, also not named;
+- 2 of child 2 suggested as child 1, the sibling case;
+- 1 of an unnamed face suggested as child 3.
 
 Each is rejected once and stays rejected. Naming more people gives those faces a better
 match.
 
-**The window by age (2026-11-10).** The owner asked whether adults need a two-year window.
+**The window by age (2026-11-10).** Do adults need a two-year window?
 Identification against other days, same rules, at each window:
 
 | Faces | 2 years: matchable / wrong accepted | No window: matchable / wrong accepted |
@@ -352,7 +352,7 @@ ten strongest links at 0.65.
 
 ## 9. The accuracy check (2026-11-10)
 
-`script/face-accuracy.sh <accuracy-set.json>` runs Otos's own `FacePeoplePolicy` on the owner's
+`script/face-accuracy.sh <accuracy-set.json>` runs Otos's own `FacePeoplePolicy` on the reference
 labels (`tools/export_accuracy_set.py` writes the set from run 2: 3,293 faces with their int8
 embeddings, dates and labels, and the birthdays; it stays in the research folder). It
 simulates the review: every named person's most-photographed year is confirmed; then each
@@ -365,7 +365,7 @@ on `main` with the age rule (`9d713d6`):
 | Rounds until nothing new is accepted | 8 |
 | Suggestions accepted / rejected as wrong | 1,538 / 76 |
 | Labelled faces left unsure | 1 |
-| Children reached | Sam 487/487, Ian 224/225, Tyler 32/32 |
+| Children reached | child 1 487/487, child 2 224/225, child 3 32/32 |
 | Unnamed groups, nobody named | 102 groups, 1,983 faces, 0 wrong, 0 mixing children |
 
 Most of the 76 rejections are unlabelled faces (strangers) suggested as a named person,

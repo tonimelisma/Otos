@@ -5,6 +5,7 @@ import Testing
 /// ARC-007: a device identity's text is what the catalog and the import journal persist,
 /// so each constructor's text is fixed, and transience is decided by the type alone.
 struct DeviceIdentityTests {
+    // Validates: ARC-007
     @Test func eachConstructorWritesTheTextTheCatalogPersists() {
         #expect(DeviceIdentity.volume(uuid: "A1").rawValue == "volume:A1")
         #expect(DeviceIdentity.volume(mountPath: "/Volumes/CARD").rawValue == "volume:path:/Volumes/CARD")
@@ -14,6 +15,7 @@ struct DeviceIdentityTests {
             == "volume:A1#path:/Volumes/CARD 1")
     }
 
+    // Validates: ARC-007
     @Test func onlyMountPathNameAndDisambiguatedIdentitiesAreTransient() {
         #expect(!DeviceIdentity.volume(uuid: "A1").isTransient)
         #expect(!DeviceIdentity.camera(id: "serial-9").isTransient)

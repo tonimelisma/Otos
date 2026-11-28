@@ -2,7 +2,7 @@ import Foundation
 
 /// How many photos and videos a count holds, and its words (DES-035): `photos` when every one
 /// is a still, `videos` when every one is a video, and `photos and videos` once both are
-/// there (owner decision, 2026-11-13, when videos joined People). A count says what it holds,
+/// there. A count says what it holds,
 /// so a person's photos stay `photos` until one of them is a video.
 nonisolated struct MediaCount: Hashable, Sendable {
     var photos: Int

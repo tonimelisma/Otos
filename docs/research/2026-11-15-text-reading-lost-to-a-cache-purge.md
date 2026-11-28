@@ -96,10 +96,10 @@ average 25 on 8 cores, other sessions' checks running.
   Status 10, a cold reading's deadline overrun, stays a failure of one reading.
 - **Rejected: reading in a short-lived helper process.** It would recover without a relaunch, at
   the cost of a new target and an XPC boundary, and of recompiling the models (4 s with one file
-  gone, 120–650 s for a cold cache under load) after every purge. On the owner's disk the purges
+  gone, 120–650 s for a cold cache under load) after every purge. On the test Mac's disk the purges
   came every few minutes for hours, so a helper would spend its time recompiling into a cache
   the next purge empties. The cause is disk pressure, which Otos does not own; freeing space is
-  the owner's.
+  the user's.
 - **Rejected: deleting or rebuilding the runtime's cache from Otos.** A removed cache does not
   bring the process back (run A), and the cache belongs to the runtime.
 - **Unknown:** whether status 10 can also lose a process (not reproduced here), and whether a
@@ -109,7 +109,7 @@ average 25 on 8 cores, other sessions' checks running.
 ## Revisited the same day: reading in a child process
 
 The helper process was rejected above for the recompiling a disk purged every few minutes
-would cause. Measured against what the app did instead — read no text until the owner
+would cause. Measured against what the app did instead — read no text until the user
 relaunched, which on an app left open is days — that cost is bounded by the index's own
 backoff: a child whose reader is lost ends, and the retry after 30 s doubling to 15 minutes
 starts the next, so a purge storm costs one recompile a backoff, and the first child after the

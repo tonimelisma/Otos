@@ -10,7 +10,7 @@
 //
 // Two sizes. `camera` photos come from a person's cameras in turn (48 MP and 12 MP HEIC, 24 MP
 // and 12 MP JPEG) in one folder, so a first launch decodes what a real library holds. `small`
-// is for a library of the owner's size (about 160,000 items): 64 × 64 JPEGs of a few KB, each
+// is for a library of the reference size (about 160,000 items): 64 × 64 JPEGs of a few KB, each
 // drawn from its own index, in a year / month / ten-day folder tree of a few hundred files a
 // folder, written in parallel; the features are a small share (one photo in 500 has words, at
 // 640 × 480 so text reading can read them; one in 500 has a copy and one a version; one in 50

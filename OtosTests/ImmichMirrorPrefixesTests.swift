@@ -119,6 +119,7 @@ struct ImmichMirrorPrefixesTests {
         ImmichCatalogSync(rootPath: account, source: server, store: store, volumeCapacity: ampleVolumeCapacity)
     }
 
+    // Validates: APP-081
     /// The server holds one folder of the library under one path and another folder under a
     /// second: one pass learns both prefixes, one request each, and every file is one photo
     /// with its asset.
@@ -138,6 +139,7 @@ struct ImmichMirrorPrefixesTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-081
     /// A prefix the library already has pairs the files it names; when the server lists files
     /// under a second prefix later, the pass that lists them learns it with one request and
     /// pairs them all, and a pass after it asks nothing.
@@ -167,6 +169,7 @@ struct ImmichMirrorPrefixesTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-081
     /// A same-named, same-sized asset from a folder the library does not have teaches no
     /// prefix. The next pass that owes the walk does not ask about it again: the candidate
     /// was remembered as asked at the asset's path.
@@ -194,6 +197,7 @@ struct ImmichMirrorPrefixesTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-081
     /// The server's path for a file holds an accented folder name in one Unicode normal form
     /// and the Mac's library in the other, or the same one: the prefix learned from an ASCII
     /// file pairs it either way, from the listing alone.
@@ -213,6 +217,7 @@ struct ImmichMirrorPrefixesTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-081
     /// Two accounts on two servers each mirror a library, and each server holds a different
     /// file at the same path, so their assets have one path checksum. Neither file has a
     /// digest, so each pair's key is the pair's own: All Media shows two photos, not one.

@@ -10,6 +10,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelOpenWithTests {
+    // Validates: APP-035
     @Test func openInDefaultOpensEachGroupOnce() async throws {
         let workspace = RecordingWorkspace(
             defaults: ["jpg": .preview, "mov": .quickTime],
@@ -34,6 +35,7 @@ struct CatalogWindowViewModelOpenWithTests {
         #expect(opens[1].targets == [mov.fileURL])
     }
 
+    // Validates: APP-035
     @Test func openWithSendsWholeSelectionToChosenApp() async throws {
         let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview, .photos]])
         let model = makeOpenWithModel(workspace: workspace)
@@ -65,6 +67,7 @@ struct CatalogWindowViewModelOpenWithTests {
         #expect(await workspace.opens.first?.targets == [ids[1].fileURL])
     }
 
+    // Validates: APP-035
     @Test func staleMenuBuildIsDiscarded() async throws {
         // The JPEG build is held inside its LaunchServices query until the target has
         // moved to the MOV and the MOV's menu has landed, so the stale build is
@@ -96,6 +99,7 @@ struct CatalogWindowViewModelOpenWithTests {
         #expect(model.openWithMenu.defaultsByTarget[jpg.fileURL] == nil)
     }
 
+    // Validates: APP-035
     /// An original that is not where the catalog last saw it opens nothing: the hand-off
     /// hands over only files on this Mac, and says which photo it could not find (ADR 0012).
     @Test func aMissingOriginalOpensNothingAndSaysSo() async throws {

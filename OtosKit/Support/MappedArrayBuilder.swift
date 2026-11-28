@@ -2,7 +2,7 @@ import GRDB
 
 /// Mapped array builder guide
 ///
-/// **The rule: a read that builds an owner-scale array whose length it learns only as it reads
+/// **The rule: a read that builds a library-scale array whose length it learns only as it reads
 /// builds it here.** An array that grows by appending reallocates as it doubles, and every
 /// buffer it outgrows is freed into malloc, which keeps it in the process's footprint on macOS
 /// 27 (`docs/research/2026-11-16-freed-memory-stays-in-the-footprint.md`): a 16 MB result left
@@ -11,7 +11,7 @@ import GRDB
 /// exactly its length, so the only malloc block the build leaves is the result itself.
 ///
 /// - **What belongs here:** a cursor's rows mapped to values (`collect`), and any loop that
-///   appends an unknown number of values of a result that can be owner-scale. A build that
+///   appends an unknown number of values of a result that can be library-scale. A build that
 ///   stays small never maps: its first elements go in one heap buffer of 2 KB, well under
 ///   the 4 KB from which a freed block stays in the footprint (`smallBytes`), and only a build that outgrows
 ///   it moves to mapped regions, so a result whose scale varies (a root of ten photos or of
@@ -109,7 +109,7 @@ nonisolated struct MappedArrayBuilder<Element>: ~Copyable {
 
 nonisolated extension MappedArrayBuilder {
     /// Every value `transform` makes of `cursor`'s elements, a nil one left out, built as the
-    /// guide says: what an owner-scale read collects from its cursor.
+    /// guide says: what a library-scale read collects from its cursor.
     static func collect<C: Cursor>(_ cursor: C, _ transform: (C.Element) throws -> Element?) throws -> [Element] {
         var builder = MappedArrayBuilder()
         while let row = try cursor.next() {
@@ -120,7 +120,7 @@ nonisolated extension MappedArrayBuilder {
         return builder.finish()
     }
 
-    /// Every value `transform` makes of `elements`, a nil one left out: an owner-scale
+    /// Every value `transform` makes of `elements`, a nil one left out: a library-scale
     /// `filter` or `compactMap`, whose length is known only once it is made.
     static func collect<S: Sequence>(_ elements: S, _ transform: (S.Element) throws -> Element?) rethrows -> [Element] {
         var builder = MappedArrayBuilder()

@@ -42,6 +42,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(2, .duplicates)])
     }
 
+    // Validates: ARC-065
     /// The user comes to wait on a load already waiting (a People pass owed to their act):
     /// it is granted at once as theirs, and holds the waiting ones back while it runs. With
     /// none of its kind waiting, nothing changes.
@@ -70,6 +71,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.open) == [.grant(2, .searchIndex)])
     }
 
+    // Validates: ARC-065
     @Test func aLoadThatAsksAgainGoesBehindTheLoadsAlreadyWaiting() {
         var machine = LoadAdmissionMachine(isOpen: true)
         _ = machine.handle(.request(1, .people))
@@ -82,6 +84,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(3)) == [.grant(4, .duplicates)])
     }
 
+    // Validates: APP-068
     /// Readying a search runs behind every other waiting load, whenever it asked: before the
     /// first grid and after it, behind a People pass that asked later.
     @Test func readyingASearchRunsBehindEveryOtherLoad() {
@@ -96,6 +99,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(4)) == [.grant(1, .searchPrepare)])
     }
 
+    // Validates: ARC-065
     /// A load the user waits on (a query's encoder) is granted at once beside the running one,
     /// ahead of the loads waiting, and none of them starts while it runs.
     @Test func aLoadTheUserWaitsOnRunsAtOnceAndHoldsTheWaitingOnesBack() {
@@ -111,6 +115,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.runningForUser.isEmpty)
     }
 
+    // Validates: ARC-065
     /// The user's load does not wait for the first grid; shutdown refuses it like any other.
     @Test func aLoadTheUserWaitsOnRunsBeforeTheFirstGridAndNeverAfterShutdown() {
         var machine = LoadAdmissionMachine()
@@ -143,6 +148,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.running == nil)
     }
 
+    // Validates: ARC-065
     /// A description asked for before the first grid runs after the launch's other loads and
     /// before readying a search.
     @Test func theFirstDescriptionRunsAfterTheLaunchsLoads() {
@@ -155,6 +161,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(2)) == [.grant(1, .searchPrepare)])
     }
 
+    // Validates: ARC-065
     /// The heavy load granted last when the memory hold begins ran into it: at the reopen
     /// exactly one load starts, not that one, and it runs only after the others waiting, for the
     /// session.
@@ -177,6 +184,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.roomNeeds[.people]?.raises == 1, "a clean run does not forget the raise")
     }
 
+    // Validates: ARC-065
     /// Each grant raises the pressure at most once, a hold that is not for memory marks
     /// nothing, and an unread share measures nothing.
     @Test func aGrantRaisesThePressureOnceAndOnlyForMemory() {
@@ -201,6 +209,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.roomNeeds[.duplicates] == nil, "a thermal hold is no memory cost")
     }
 
+    // Validates: ARC-065
     /// A description needs no share: at normal and at warning, with little available, it is
     /// granted at once, asks the room for no share, and a heavy load at warning waits.
     @Test func aDescriptionStartsAtNormalAndAtWarningWhateverIsAvailable() {
@@ -216,6 +225,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.roomNeeds.isEmpty)
     }
 
+    // Validates: ENR-033
     /// A description waits while the room holds its kind — critical memory, heat, Low Power
     /// Mode — and starts in the step that clears it.
     @Test func aHeldDescriptionStartsInTheStepThatClearsTheHold() {
@@ -227,6 +237,7 @@ struct LoadAdmissionMachineTests {
         }
     }
 
+    // Validates: ARC-065
     /// A description that fell is charged to no load: the pressure it raised marks neither it
     /// nor the heavy load granted before it, the next description starts at once, and the heavy
     /// load waits only while the room holds it.
@@ -247,6 +258,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.room(Self.open(available: 40))) == [.grant(3, .people)], "no requirement")
     }
 
+    // Validates: ARC-065
     /// A description's turn yields to the view: the load the view needs is granted beside a
     /// running description in the step it is wanted or asked, while a load nobody waits on
     /// still waits; nothing else starts while the two run, and the next waiting load starts
@@ -271,6 +283,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.runningLoads == [.description, .people])
     }
 
+    // Validates: ARC-065
     /// Only a description yields its turn: with a heavy load running, the view's load waits for
     /// it (ADR 0055, decision 3).
     @Test func aHeavyLoadRunningKeepsItsTurnFromTheView() {
@@ -281,6 +294,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.handle(.release(1)) == [.grant(2, .people)])
     }
 
+    // Validates: ARC-065
     /// A second grant that raised the pressure ratchets the requirement past the share it was
     /// granted at, so it is never retried into the same room; a clean run never lowers it.
     @Test func theRequirementRatchetsAfterASecondRaise() {
@@ -307,6 +321,7 @@ struct LoadAdmissionMachineTests {
         #expect(machine.roomNeeds[.people]?.requiredPercent == 79, "a clean run lowers nothing")
     }
 
+    // Validates: ARC-065
     /// A heavy load that raised the pressure is admitted against what it took; the lowest share
     /// read while it ran counts, not only the warning's; the view's load starts whatever.
     @Test func aHeavyLoadThatRaisedThePressureNeedsWhatItTook() {
@@ -345,6 +360,7 @@ struct LoadAdmissionMachineTests {
 
 @Suite(.testScope)
 struct LoadAdmissionTests {
+    // Validates: ARC-066
     /// The footprint a release logs is read after the release: a read that stalls (`task_info`
     /// under memory pressure) holds back neither the next load's grant nor the owner whose
     /// load ended.
@@ -376,6 +392,7 @@ struct LoadAdmissionTests {
         #expect(await held.arrivalCount == 2)
     }
 
+    // Validates: ARC-065
     @Test func twoLoadsNeverRunTogether() async throws {
         let admission = LoadAdmission(isOpen: true)
         let held = ArrivalGate()
@@ -397,6 +414,7 @@ struct LoadAdmissionTests {
         #expect(admission.snapshot.running == nil)
     }
 
+    // Validates: ARC-065
     /// A window read is never answered behind a description: with a request held in flight at
     /// its suspension, the People view's pass is granted and runs to its end while the request
     /// is still under way, and a duplicates build nobody waits on still waits for the request.
@@ -422,6 +440,7 @@ struct LoadAdmissionTests {
         #expect(admission.snapshot.granted == [.description: 1, .people: 1, .duplicates: 1])
     }
 
+    // Validates: ARC-065
     @Test func theViewsLoadRunsBeforeTheLoadsAskedFirst() async throws {
         let admission = LoadAdmission()
         let order = Mutex<[BackgroundLoad]>([])
@@ -440,6 +459,7 @@ struct LoadAdmissionTests {
         #expect(order.withLock { $0 } == [.searchIndex, .people])
     }
 
+    // Validates: ARC-065
     @Test func aWaiterWhoseTaskEndsStartsNothingAndFreesTheTurn() async throws {
         let admission = LoadAdmission(isOpen: true)
         let held = ArrivalGate()
@@ -462,6 +482,7 @@ struct LoadAdmissionTests {
         #expect(admission.snapshot.running == nil)
     }
 
+    // Validates: ARC-065
     @Test func shutdownDuringAQueuedLoadStartsNothing() async throws {
         let admission = LoadAdmission(isOpen: true)
         let held = ArrivalGate()
@@ -485,6 +506,7 @@ struct LoadAdmissionTests {
         #expect(ran.withLock { $0 } == false)
     }
 
+    // Validates: ARC-065
     /// A duplicates build is a heavy load and waits for the window's admission; the People
     /// gallery's read is the window's own and does not: it runs while the build waits, so
     /// People's first paint never queues behind a heavy load (ADR 0047, ADR 0055).
@@ -529,6 +551,7 @@ struct LoadAdmissionTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-065
     /// The window opens the admission when it applies its first grid: a load asked for before
     /// the window starts runs only once the grid shows the loaded catalog.
     @MainActor
@@ -559,6 +582,7 @@ struct LoadAdmissionTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-065
     /// The derived folder's launch load holds the admission's one turn while it runs, so it runs
     /// at the owners' priority, never below it: a load the system throttles would hold People,
     /// duplicates and the search index behind it (ADR 0055). Started from an owner's task, the

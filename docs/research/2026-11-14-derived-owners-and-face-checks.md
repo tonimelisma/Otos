@@ -23,7 +23,7 @@
 - AVFoundation on synthetic files (`ffmpeg` `testsrc`, MJPEG with and without PCM, H.264
   MP4 and MOV) truncated at 2–90%. A small probe read each file's frames the way
   `VideoFaceReader.frames` does: six samples, zero tolerance. The same probe read the
-  owner's three AVIs, which are local (no `SF_DATALESS`). Nothing else read them.
+  reference library's three AVIs, which are local (no `SF_DATALESS`). Nothing else read them.
 
 ## Findings
 
@@ -115,7 +115,7 @@ pay for either index's cost.
 | Intact H.264 MP4 and MOV | decoded |
 | Truncated MP4 (30, 90%) | -11821 over -12911 |
 | Truncated MOV (30, 90%) | `fileFailedToParse` (-11829) over -12848 |
-| The owner's three AVIs | -11800 over -12344 |
+| The reference library's three AVIs | -11800 over -12344 |
 
 In the installed app's log the pair came only from those three AVIs. They had 9 reads each
 in three hours, never a different answer. The one other `unknown` seen

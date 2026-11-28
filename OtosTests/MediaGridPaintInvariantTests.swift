@@ -13,6 +13,7 @@ extension AppKitWindowTests {
     /// Its tests host real windows, so it is nested in `AppKitWindowTests`.
     @MainActor
     struct MediaGridPaintInvariantTests {
+        // Validates: ARC-023, APP-015, APP-022, ENR-010
         @Test func detailQueryMergeDoesNotBlankPaintedVisibleTile() throws {
             let harness = try PaintInvariantHarness(itemCount: 4)
             let visible = harness.ids[0]
@@ -73,6 +74,7 @@ extension AppKitWindowTests {
             #expect(harness.controller.tileContents.content(for: recycled) == nil)
         }
 
+        // Validates: APP-030
         /// DES-069 regression: an enrichment correcting a capture date moves an asset
         /// between day sections (same membership, same relative order, different
         /// section assignment) — the painted tile must survive exactly like any other
@@ -98,6 +100,7 @@ extension AppKitWindowTests {
             #expect(harness.controller.tileContents.content(for: visible)?.image != nil)
         }
 
+        // Validates: ARC-023
         /// APP-015 regression: a light/dark switch redisplays every view in the window,
         /// and the painted thumbnail must survive it. AppKit updates layers for that
         /// redisplay when the transaction commits, so each switch is flushed before the
@@ -119,6 +122,7 @@ extension AppKitWindowTests {
             #expect(try harness.requireDisplayedThumbnail(for: visible) === painted)
         }
 
+        // Validates: ENR-010
         /// ENR-010: a stored thumbnail decoded through the grid's own path is held once. The
         /// tile's layer shows the very image the tile store holds, at the stored thumbnail's
         /// size, and that image's bytes are its own pixels at most: no second image drawn from
@@ -156,6 +160,7 @@ extension AppKitWindowTests {
             #expect(held.cgImage.bytesPerRow * held.height <= 256 * 4 * 192)
         }
 
+        // Validates: ARC-023
         @Test func repeatedVisibleIDsSkipScrollDetailQuery() throws {
             let harness = try PaintInvariantHarness(itemCount: 4)
             // Four tiles in an 800×600 window are all on screen.
@@ -166,6 +171,7 @@ extension AppKitWindowTests {
             #expect(!harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
         }
 
+        // Validates: ARC-059, APP-015
         /// APP-015 and ADR 0032 rule 4: a visible-detail query that fails merges nothing,
         /// so the painted tile keeps its thumbnail, and it leaves the request outstanding,
         /// so the next scroll flush over the same tiles asks again and merges the rows.

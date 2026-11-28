@@ -238,7 +238,7 @@ rediscover them. None of this is a decision.
   appear). A projection recomputed from the catalog, like Nextcloud and LibrePhotos
   do, keeps a memory consistent with the files; anything stored per memory (a
   dismissal, a hidden date range) would be overlay with the ordinary lifecycle.
-- **No ratings, labels or albums** (owner, 2026-10-31). Two common features cross
+- **No ratings, labels or albums** (2026-10-31). Two common features cross
   that line and are out of scope as stated: Instagram-style Highlights and
   "save/favourite a memory" (Immich `isSaved`) are user albums by another name, and
   Apple and Google rank favourited items higher; Otos's counterpart is the Liked choice, which

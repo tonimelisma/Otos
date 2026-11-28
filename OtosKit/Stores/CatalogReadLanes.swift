@@ -75,7 +75,7 @@ extension CatalogStore {
     }
 
     /// The pool's readers. Four serve background reads at most, so four are always there for
-    /// the window: on a generated owner-size catalog with every owner running, window reads
+    /// the window: on a generated reference-size catalog with every owner running, window reads
     /// waited up to 1.9 s (p95) for one of four shared readers and under 30 ms with lanes
     /// (`docs/research/2026-11-16-window-read-lanes.md`).
     static let readerCount = 8

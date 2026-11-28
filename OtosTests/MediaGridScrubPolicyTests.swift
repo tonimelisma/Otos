@@ -7,6 +7,7 @@ struct MediaGridScrubPolicyTests {
     private static let day: TimeInterval = 86400
     private static let year: TimeInterval = 365 * day
 
+    // Validates: APP-030
     @Test func granularityFollowsWhatOneKnobPointCovers() {
         // Ten years on a 900 pt track: about four days a point, so a month.
         #expect(MediaGridScrubPolicy.granularity(span: 10 * Self.year, trackHeight: 900) == .month)
@@ -28,6 +29,7 @@ struct MediaGridScrubPolicyTests {
         #expect(MediaGridScrubPolicy.span(of: [Date(timeIntervalSince1970: 7)]) == 0)
     }
 
+    // Validates: APP-030
     @Test func theLabelSaysOnlyWhatItsGranularityCanPick() throws {
         let locale = Locale(identifier: "en_US")
         var calendar = Calendar(identifier: .gregorian)

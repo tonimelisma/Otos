@@ -283,7 +283,7 @@ actor ImmichAccounts {
     /// Downloads an account row's original into its staging folder, for work that needs
     /// its bytes: full-resolution zoom, an edit, export, hand-off. Background and device
     /// demand is refused: an account's originals are downloaded only when the user's work
-    /// needs them, never to render a library (owner, 2026-11-09). A download that lands is
+    /// needs them, never to render a library. A download that lands is
     /// handed to enrichment, which makes every product the row still owes from it.
     func downloadOriginal(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
         let started = ContinuousClock.now

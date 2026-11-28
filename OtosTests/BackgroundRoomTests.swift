@@ -20,8 +20,9 @@ struct BackgroundRoomTests {
         return [SearchTextCandidate(id: id, previewPath: "missing.heic", source: "preview")]
     }
 
+    // Validates: ENR-033
     /// What each condition holds, kind by kind: a description only at critical memory, heat
-    /// and Low Power Mode, never at warning (the owner, 2026-11-18).
+    /// and Low Power Mode, never at warning.
     @Test func eachConditionHoldsTheKindsItShould() {
         for work in BackgroundWork.allCases {
             #expect(MachineConditions.roomy.hold(for: work) == nil)
@@ -43,6 +44,7 @@ struct BackgroundRoomTests {
         }
     }
 
+    // Validates: ENR-033
     /// At `warning` no waiter is let start; at `normal` each is let start once, and a second
     /// hold and opening admits nothing more.
     @Test func heldWaitersStartExactlyOnceWhenTheRoomOpens() async throws {
@@ -72,6 +74,7 @@ struct BackgroundRoomTests {
         #expect(room.counts.waiting.isEmpty)
     }
 
+    // Validates: ENR-033
     /// A waiter whose task is cancelled stops waiting and is never let start.
     @Test func aCancelledWaiterWithdraws() async throws {
         let room = BackgroundRoom(conditions: Self.warning)
@@ -84,6 +87,7 @@ struct BackgroundRoomTests {
         #expect(room.counts.admitted[.textReading] == nil)
     }
 
+    // Validates: ENR-033
     /// A kind the conditions do not hold starts at once, beside a held one: at warning a
     /// description starts while text reading waits.
     @Test func anOpenKindDoesNotWaitBesideAHeldOne() async throws {
@@ -93,6 +97,7 @@ struct BackgroundRoomTests {
         #expect(room.hold(for: .textReading) == .memoryWarning)
     }
 
+    // Validates: ENR-033
     /// A held room grants only the load the view needs; the others start, each once, in
     /// their order, in the step that opens it (ADR 0055, ADR 0057).
     @Test func aHeldRoomGrantsOnlyTheWantedHeavyLoad() async throws {
@@ -120,6 +125,7 @@ struct BackgroundRoomTests {
         #expect(admission.snapshot.granted == [.people: 1, .duplicates: 1, .searchIndex: 1])
     }
 
+    // Validates: ARC-065
     /// A held room reopens one load at a time, and the load that was running when the level
     /// rose is not the first started again: the room delivers the hold while a People pass is
     /// under way, and at the reopen a duplicates build asked for later runs first, then the
@@ -154,6 +160,7 @@ struct BackgroundRoomTests {
         #expect(admission.snapshot.roomNeeds[.people]?.raises == 1, "a raise is kept for the session")
     }
 
+    // Validates: ENR-033
     /// A description request under way when the level rises to warning, and again to
     /// critical, is not stopped and raises nothing: it finishes, and the next request at warning
     /// starts at once while a People pass waits in the room; at critical the next one waits.
@@ -194,6 +201,7 @@ struct BackgroundRoomTests {
         #expect(admission.snapshot.granted == [.description: 3, .people: 1])
     }
 
+    // Validates: ARC-065
     /// A heavy load that raised the pressure, on the live path: the kernel's shares at its
     /// grant and at the warning are kept, the room's look goes on after the level is normal
     /// again while the share is below the line plus what it took, and the load starts in the
@@ -230,6 +238,7 @@ struct BackgroundRoomTests {
         try await waitUntil { room.looksAgain == false }
     }
 
+    // Validates: ARC-065
     /// On the live kernel a description needs no headroom: at normal with 20 % available, and
     /// at warning with 25 %, each request starts at once, and none makes the room look for a
     /// share.
@@ -248,6 +257,7 @@ struct BackgroundRoomTests {
         #expect(admission.snapshot.roomNeeds.isEmpty)
     }
 
+    // Validates: ENR-033
     /// A description waits at critical memory, a serious or critical thermal state, and in Low
     /// Power Mode, its hold named for its status; it starts exactly once in the step that
     /// delivers the conditions that clear it.
@@ -279,6 +289,7 @@ struct BackgroundRoomTests {
         }
     }
 
+    // Validates: ENR-033
     /// The text reader starts no helper while the room holds text reading; the page stops
     /// before its first reading, and reads once the room opens.
     @Test func theTextReaderStartsNoHelperWhileHeld() async throws {
@@ -298,6 +309,7 @@ struct BackgroundRoomTests {
         #expect(starts.withLock { $0 } == 1)
     }
 
+    // Validates: ENR-033
     /// A helper idle between pages is let go in the step the hold is delivered: the next page
     /// after the room opens starts a new one.
     @Test func anIdleHelperIsLetGoWhenTheRoomHolds() async throws {
@@ -321,6 +333,7 @@ struct BackgroundRoomTests {
         #expect(closed.withLock { $0 } == 1)
     }
 
+    // Validates: ENR-033
     /// The kernel at `warning` and a source that never says so: every decision reads the
     /// kernel, so no kind a warning holds is let start — a serial waiter waits, and a heavy load
     /// asked for after the kernel rose is not granted though the admission last heard `normal`.
@@ -352,6 +365,7 @@ struct BackgroundRoomTests {
         #expect(room.counts.admitted[.textReading] == 1)
     }
 
+    // Validates: ENR-033
     /// The kernel back at `normal` and a source that stays silent: the room, holding a level
     /// above normal, looks again, and the held waiter starts in the step of that look.
     @Test func aReturnToNormalTheSourceNeverAnnouncedResumesHeldOwnersAtTheNextLook() async throws {
@@ -378,6 +392,7 @@ struct BackgroundRoomTests {
         try await waitUntil { kernel.looks == 3 && kernel.looking }
     }
 
+    // Validates: ENR-033
     /// A rise the source announced: the kernel owes this process the return to normal, so the
     /// room does not look again on time; the source's normal report opens it in its step. A
     /// later rise the room finds by its own read, with no report, is looked at again.
@@ -402,6 +417,7 @@ struct BackgroundRoomTests {
         try await waitUntil { kernel.looks == 1 && kernel.looking }
     }
 
+    // Validates: ENR-033
     /// The source and the kernel disagree: the kernel's current level wins, either way.
     @Test func theKernelsLevelWinsOverTheSourcesReport() {
         let kernel = ScriptedKernel(.normal)
@@ -416,6 +432,7 @@ struct BackgroundRoomTests {
         #expect(room.hold(for: .download) == .memoryWarning)
     }
 
+    // Validates: ENR-033
     /// A source report is a doorbell: a held waiter starts in the report's step when the
     /// kernel's level it reads is normal, with no look on time.
     @Test func aSourceReportReadsTheKernelAndOpensTheRoomInItsStep() async throws {
@@ -431,6 +448,7 @@ struct BackgroundRoomTests {
         #expect(room.counts.admitted[.heavyLoad] == 1)
     }
 
+    // Validates: ENR-033
     /// A kernel that cannot be read changes nothing: the level held stays, and the source's
     /// report is the level then.
     @Test func anUnreadKernelLeavesTheLevelToTheSource() {
@@ -441,6 +459,7 @@ struct BackgroundRoomTests {
         #expect(room.hold(for: .download) == nil)
     }
 
+    // Validates: ENR-033
     /// The look is the room's: once the room is gone, the look waiting is cancelled.
     @Test func aRoomThatEndsStopsLooking() async throws {
         let kernel = ScriptedKernel(.warning)

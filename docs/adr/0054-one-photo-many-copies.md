@@ -5,7 +5,7 @@
 
 ## Context
 
-The owner's Immich server mirrors OneDrive folders that Otos also has as libraries. All
+The test Immich server mirrors OneDrive folders that Otos also has as libraries. All
 Media, Places, People, On This Day and search showed every such photo twice: on 2026-11-14,
 16,670 of the 16,678 photos in the Camera Roll library had an Immich copy. Duplicates (ADR
 0042) never paired them. It groups by Otos's digest, and an account's row had none, because
@@ -16,7 +16,7 @@ from several sources show one item and keep the copies under it: Google Photos a
 upload, Plex's versions, Mylio. Cleanup is a separate tool. A mirror the user keeps on purpose
 is not waste. It is one photo in two places.
 
-The owner decided, on 2026-11-14:
+Decided on 2026-11-14:
 
 - identical copies show as one photo in the views that combine libraries and accounts, whether
   the copies are in two libraries, in a library and an account, or in one folder;
@@ -24,11 +24,10 @@ The owner decided, on 2026-11-14:
 - Duplicates still lists identical copies, so they can be cleaned up — within one library or
   account unless the user asks for copies across them (2026-11-15, ADR 0042).
 
-On 2026-11-15, from the review of #756, #762 and #768 (#775), the owner decided:
+Decided on 2026-11-15, from the review of #756, #762 and #768 (#775):
 
-- a library file and its own Immich mirror are never offered as duplicates ("Never offer
-  them");
-- a Like, Dislike or named face belongs to the photo, not the copy ("The photo");
+- a library file and its own Immich mirror are never offered as duplicates;
+- a Like, Dislike or named face belongs to the photo, not the copy;
 - with three or more copies and the preferred library offline, only the next best reachable
   copy shows ("The next best copy only").
 
@@ -53,13 +52,12 @@ reports later, of the same bytes, takes the place of the missing size in the sta
   with the file by the pair below, not by a digest.
 - A name and size that match are never treated as proof.
 
-**A mirrored library file is its external asset, by the server's path for it** (owner's
-mirror, 2026-11-15; decided by the agent on the owner's delegation, because the other way,
-hashing each original, would download every one of them; made a fact of its own on
+**A mirrored library file is its external asset, by the server's path for it** (2026-11-15,
+because the other way, hashing each original, would download every one of them; made a fact of its own on
 2026-11-17, below).
 - A mirror (`immich_mirror`, schema v80) is the set of server prefixes a library's relative
   paths follow on an account's server: one server can list one library under several paths
-  (an external library per mount of the same folders; on the owner's server, two of the
+  (an external library per mount of the same folders; on the test Immich server, two of the
   library's folders under `/srv/a/…` and the other nine under `/srv/b/…`). A prefix is learned
   from one request: `ImmichCatalogSync` takes the first library file, in path order, that no
   pair holds and that has an unpaired external asset of the same name, size and whole-second
@@ -84,7 +82,7 @@ hashing each original, would download every one of them; made a fact of its own 
   external library read from the server's own filesystem, byte for byte with no normalisation
   (`library.service.ts`, `path:${assetPath}`), so an accented name is in whatever form that
   disk holds it, and a Mac's library file can hold the same name in the other form (on the
-  owner's library, three files in a folder whose name has an `ä`). `ImmichPathChecksum.
+  reference library, three files in a folder whose name has an `ä`). `ImmichPathChecksum.
   everyForm` is the one rule: the checksums of the path as given, composed and decomposed. The
   walk seeks each, the probe's confirmation accepts any, and the prefix is found by comparing
   characters, which are equal in either form. A path of ASCII alone has one form and one seek.
@@ -110,13 +108,12 @@ hashing each original, would download every one of them; made a fact of its own 
   0032 rule 8): the pass's own listing applied a change, or a library's paths, sizes or dates
   changed (`CatalogStore.libraryNamespaceRevision`, moved by every namespace revision of a
   library and by a library coming or going). A pass with neither reads no mirror and asks the
-  server nothing (`op=immich.mirror phase=held`): on the owner's idle session the walk had
+  server nothing (`op=immich.mirror phase=held`): on an idle session of the reference library the walk had
   read 56 pages (1,574 ms) and asked the server three paths every five-minute poll with
   nothing listed. A server or Store failure leaves the walk owed; the server refusing to
   describe an asset (400/404) is an answer and does not.
 
-**A pair is one photo while its versions agree** (decided 2026-11-17, on the owner's
-delegation). The path says the two rows are the same file; whether they hold the same bytes
+**A pair is one photo while its versions agree** (decided 2026-11-17). The path says the two rows are the same file; whether they hold the same bytes
 is the question every copy answers, and the copies' rule is "identical copies are one photo".
 - Both rows have a current digest: they agree when the digests are equal.
 - Otherwise the asset must be listed with the file's current size and whole-second
@@ -124,9 +121,9 @@ is the question every copy answers, and the copies' rule is "identical copies ar
   yet — a cloud-only one, whose download for its digest has not come yet (ADR 0009 §12) — agrees
   this way with no byte read.
 - While the server has not read the asset, it reports no size, and the asset agrees on its
-  whole-second modification time alone (v83, owner, 2026-11-28). An external library's asset
+  whole-second modification time alone (v83). An external library's asset
   is listed when the server's scan finds its file and read only when its metadata job runs,
-  which on the owner's server waited behind 247,640 others; the size check could never pass
+  which on the test Immich server waited behind 247,640 others; the size check could never pass
   for it, and 930 photos already shown from the Camera Roll library showed again, as
   placeholders, from the account. The path makes the file exact, and the time the scan read
   names its version; once the server reports the size, the full check holds again, so an edit
@@ -163,7 +160,7 @@ among the scope's reachable roots.**
 - The rule reads only facts that no curation changes. So liking, editing or un-liking a copy
   never swaps the tile under the pointer.
 - With three or more copies and the best one's library not available, only the next best
-  reachable copy shows (owner, 2026-11-15). When the library is back, its copy shows again.
+  reachable copy shows. When the library is back, its copy shows again.
   Identity is the path, so that is another item: the grid's no-blank rule holds for each
   path, and the returning copy's tile paints its own thumbnail as any newly shown item does.
 
@@ -185,7 +182,7 @@ among the scope's reachable roots.**
 - The window's date indexes, the stack candidates' and On This Day's carry both columns (v60,
   v64), so the common test reads no table row.
 
-**A choice and a face belong to the photo, not the copy** (owner, 2026-11-15: "The photo").
+**A choice and a face belong to the photo, not the copy** (2026-11-15).
 The copies are the same relation the shown copy uses: the same copy key, which a digest group
 and a mirror pair whose versions agree both give.
 - **A choice is written on every copy.** A Like, Dislike or un-choice on any copy is written on
@@ -237,20 +234,20 @@ is never reported as none.
 
 | Alternative | Why rejected |
 | --- | --- |
-| Deciding the shown copy inside each read (`NOT EXISTS` over the digest index) | 17–33 s for All Media on the owner's catalog. The order index does not hold the digest, so every row costs a table read. |
+| Deciding the shown copy inside each read (`NOT EXISTS` over the digest index) | 17–33 s for All Media on the reference catalog. The order index does not hold the digest, so every row costs a table read. |
 | Computing the hidden set once per window pass | 0.6–1.3 s per pass at owner scale, repeated on every catalog change. |
 | A Swift owner that recomputes the column after writes | Every write that moves a digest, a presence or a path would have to call it, and a missed path leaves a photo hidden. The triggers cover every write by construction. |
 | Matching by name and size | A guess. Names repeat every 10,000 iPhone photos, and OneDrive's camera upload renames and converts. |
 | Trusting an external library's checksum as a digest | It is the SHA-1 of `path:<path>`, which no library file's bytes can match. It names the asset a mirrored file's path points at instead. |
-| Downloading every external-library original to hash it | About 147k downloads on the owner's account, against ADR 0046 §4: an account's original is downloaded only for the user's own work. |
+| Downloading every external-library original to hash it | About 147k downloads on the test Immich account, against ADR 0046 §4: an account's original is downloaded only for the user's own work. |
 | Matching a mirror by name, size and date alone | A guess across folders. The path checksum makes the path exact, and the size and date only say the bytes are the same version. |
-| Pairing a mirror through the file's digest (the asset taking the file's digest, v61 to v78) | The pair waited for the file's bytes, read only after a cloud-only file's download, and the walk read only files with a digest: on the owner's catalog on 2026-11-17, of the 982 files the stored prefix named, 968 had no digest and only 14 were one photo with their asset. The path checksum already names the asset. |
+| Pairing a mirror through the file's digest (the asset taking the file's digest, v61 to v78) | The pair waited for the file's bytes, read only after a cloud-only file's download, and the walk read only files with a digest: on the reference catalog on 2026-11-17, of the 982 files the stored prefix named, 968 had no digest and only 14 were one photo with their asset. The path checksum already names the asset. |
 | A second key beside the digest (rows are copies by digest or by pair) | Every rule of the photo — the shown copy, `has_copies`, the choice, faces, Info, the held choice — would ask two relations and close over both; one key makes them one relation. |
 | Writing a stand-in digest on the library file | The file's digest says what its bytes are, and Duplicates and enrichment read it so; a path checksum there would be a false fact. |
 | Showing a pair as one photo whatever its versions | A file edited and not yet read again by the server is not the photo the account holds. The copies' rule is identical copies; the pair waits for its versions to agree. |
-| One prefix per library (v61 to v79) | The owner's server lists his library under two prefixes: 982 files under the stored one, and, of the other 15,955, 15,942 under a second exactly, 3 more once the path's normal form is matched, and 10 not on the server yet (read on 2026-11-17 from the catalog's path checksums and one asset's `originalPath`). With one prefix, a prefix that paired any file was kept and the second was never asked. |
+| One prefix per library (v61 to v79) | The test Immich server lists its library under two prefixes: 982 files under the stored one, and, of the other 15,955, 15,942 under a second exactly, 3 more once the path's normal form is matched, and 10 not on the server yet (read on 2026-11-17 from the catalog's path checksums and one asset's `originalPath`). With one prefix, a prefix that paired any file was kept and the second was never asked. |
 | Asking up to three candidates every owed walk | The same three paths were asked every walk when none confirmed. One request per library per round, with every unanswered candidate remembered, asks each path once. |
-| Comparing server and library paths as bytes | A name with an accented letter can be in either normal form on either disk; three of the owner's files never paired. |
+| Comparing server and library paths as bytes | A name with an accented letter can be in either normal form on either disk; three of the reference library's files never paired. |
 | Normalising paths when the catalog stores them | The checksum is of the server's own bytes, which Otos does not choose, and a library path names a file on disk as it is; the one rule belongs where the two are compared. |
 | The asset's path checksum as a pair's copy key (v79) | Not unique across servers: two accounts with one server path for different files made them one photo. |
 | Listing every asset's `originalPath` (`POST /api/search/metadata`) | It is about 150 requests per resync, and a second record of a path the stream's checksum already names. One path per prefix teaches it. |
@@ -260,10 +257,10 @@ is never reported as none.
 | Reading faces from one copy per photo | The copies are not the same pixels: a library's file is read from Otos's 2560 px rendering, its Immich copy from a 1440 px short-edge preview drawn by libvips, which find different faces and boxes (ADR 0047). The face read from one copy cannot be outlined on the other's pixels, the copy read would change with availability, and the user's acts would have to be carried between readings of different pixels. |
 | Showing another copy's unidentified faces on the shown copy | They are the shown copy's own faces detected again from other pixels; listing both would show each unnamed face twice. |
 | A wall-clock time for each choice | Which act came last is a fact the catalog can hold as an order; a clock can step back (ADR 0033). |
-| Storing the shown copy per scope's reachable roots | Every mount or unmount would rewrite every copied row of the library (16,000 on the owner's catalog). |
+| Storing the shown copy per scope's reachable roots | Every mount or unmount would rewrite every copied row of the library (16,000 on the reference catalog). |
 | Electing the shown copy in every read | The 17–33 s per-row read above. The stored best copy answers every row whose best copy is reachable. |
 | Keeping XXH3 and adding SHA-1 beside it | Two digests answering one question. Immich speaks SHA-1, so one digest serves both. |
-| Collapsing copies in one library's or folder's view | The owner wants that view to show exactly what is on disk (2026-11-14). |
+| Collapsing copies in one library's or folder's view | That view shows exactly what is on disk (2026-11-14). |
 | Taking identical copies out of Duplicates | Duplicates is where copies are cleaned up; only an external library's asset, which holds no bytes of its own, is left out (ADR 0042). |
 
 ## Consequences
@@ -279,7 +276,7 @@ is never reported as none.
 - Migration v79 adds `immich_mirror_pair`, `copy_key` and its index, and the copy triggers
   over the key; clears the digests v61's pairing wrote on external assets; and gives
   `person_photo` the key in place of the digest. Pairs are recorded at the account's next walk,
-  which every launch owes. Its cost on a generated owner-shaped catalog is in
+  which every launch owes. Its cost on a generated reference-shaped catalog is in
   `docs/research/2026-11-17-mirror-pairs-by-path.md`.
 - A walk reads every mirrored file again, a checksum and an index seek each, and writes only
   the pairs that are owed, so a walk over pairs that all stand opens no write transaction
@@ -290,34 +287,34 @@ is never reported as none.
   listing or the library's namespace that moves owes the walk (`ImmichMirrorHoldTests`).
 - Migration v80 rebuilds `immich_mirror` with the prefix in its key (its one row per library
   becomes the first of the set), adds `immich_mirror_asked`, makes the copy triggers that spell
-  the key again, and rekeys every pair's rows. On the owner's library the account's next owed
+  the key again, and rekeys every pair's rows. On the reference library the account's next owed
   walk — the first pass of every launch — asks the server one path, learns the second prefix
   and pairs about 15,945 more files, so All Media shows about that many fewer items; a further
   request is made only if a file no prefix explains still has a candidate asset, and that one
-  is remembered. Its cost on a generated owner-shaped catalog is in
+  is remembered. Its cost on a generated reference-shaped catalog is in
   `docs/research/2026-11-17-mirror-pairs-by-path.md`.
 - Migration v81 makes `copy_key_touched` again with no key and the face triggers again with
   `NOT EXISTS` in place of `OR IGNORE`. Before it, an Immich asset listed before the server read
   its size, paired, and listed again with its size aborted its batch in the copy trigger; the
   batch was never acknowledged, so every later pass failed on it and the pair stayed two photos
-  (owner's catalog, 2026-11-19: 151 assets). It rewrites one empty table and two triggers.
-- Duplicates never lists a file and its mirror (ADR 0042, owner 2026-11-15): an external
+  (the reference catalog, 2026-11-19: 151 assets). It rewrites one empty table and two triggers.
+- Duplicates never lists a file and its mirror (ADR 0042, 2026-11-15): an external
   library's asset is never a copy there, so nothing can keep it and send the only bytes to the
   Trash.
 - Migration v64 adds `has_copies`, `media_choice_sequence` and `choice_sequence`, rebuilds the
   digest index and the six indexes that carry the tested columns, recomputes every row with a
   digest, and gives each photo whose copies disagree one choice. Its cost on a generated
-  owner-shaped catalog is in `docs/research/2026-11-15-photo-level-copies.md`.
+  reference-shaped catalog is in `docs/research/2026-11-15-photo-level-copies.md`.
 - Faces are read from every copy, so a mirrored photo's faces are read and assigned twice: on
-  the owner's shape, 16,000 more preview readings than photos, once each (the readings are
+  the reference shape, 16,000 more preview readings than photos, once each (the readings are
   stamped and never repeat). The photo counts once in every count People shows.
-- A digest write recomputes its group in the same transaction, about 0.7 ms on the owner's
+- A digest write recomputes its group in the same transaction, about 0.7 ms on the reference
   catalog. It notifies `.copies`, which the combined scopes, People and Duplicates are built
   from, only when it changed which files are copies: where the written row stood before and
   after the write (`DigestStanding`, read in the same transaction) says whether it joined or
   left a copy key another row holds, or its pair's asset took its digest as their key. A digest no other
   copy holds — most of a library's backlog — notifies only `.detail` (the tile's copy digest,
-  Info's `Copies` row), and a digest written again unchanged notifies nothing. On the owner's
+  Info's `Copies` row), and a digest written again unchanged notifies nothing. On the reference
   library a read-only session that imported and edited nothing announced `.copies` for 226 of
   its 277 changes, one per digest read, and each woke All Media's order, People and Duplicates
   (2026-11-16 scorecard). It notifies `.choices` too when a copy that joined a photo took its

@@ -11,6 +11,7 @@ import Testing
 /// `theSweepLeavesATreeALiveInstanceHolds`, which had passed in the preceding runs.
 @Suite(.serialized, .testScope)
 struct DeviceStagingRegistryTests {
+    // Validates: APP-018
     /// `stagingRootURL` is a directory URL, so its path already ends in "/". Appending
     /// another produced a "…/root//" prefix that no requested path could match, so
     /// every camera file fell through to the cloud materialization path and failed
@@ -25,6 +26,7 @@ struct DeviceStagingRegistryTests {
         #expect(relative == "2026-08-20/DSC08809.ARW")
     }
 
+    // Validates: APP-018
     @Test func aPathOutsideTheRootDoesNotMatch() {
         let root = URL(fileURLWithPath: "/tmp/Staging/camera-1", isDirectory: true)
         let outside = URL(fileURLWithPath: "/tmp/Staging/camera-2/2026-08-20/DSC08809.ARW")
@@ -167,6 +169,7 @@ struct DeviceStagingRegistryTests {
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
     }
 
+    // Validates: APP-064
     /// An Immich account's tree is claimed while this process holds the account, signed in
     /// or not, so another instance's sweep never deletes the originals it staged; forgetting
     /// the account releases the claim, and the sweep then collects the tree.
@@ -222,6 +225,7 @@ struct DeviceStagingRegistryTests {
         )
     }
 
+    // Validates: APP-062
     /// One owner answers where a source stages (`CatalogStore.stagingContainers`): a camera
     /// monitor given a catalog's containers names each camera's tree inside them, never the
     /// app's own Caches container, so the camera's root and the Store's are one path.
@@ -236,6 +240,7 @@ struct DeviceStagingRegistryTests {
         #expect(!StagingLocation.isInsideStaging(root, inContainers: app.urls))
     }
 
+    // Validates: APP-062
     /// A catalog's staging containers follow its location when none is given: the app's
     /// under Caches by its bundle identifier, a catalog file's beside it, and each in-memory
     /// catalog's a temporary folder of its own; a given value wins.

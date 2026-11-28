@@ -16,6 +16,7 @@ struct CatalogPlacesScopeTests {
         south: helsinki.latitude, north: helsinki.latitude, west: helsinki.longitude, east: helsinki.longitude
     )
 
+    // Validates: APP-057, APP-058
     @Test func placesHoldsLocatedItemsWithCoordinatesAndAnAreaHoldsWhatLiesInIt() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -120,6 +121,7 @@ struct CatalogPlacesScopeTests {
         #expect(imagesInLibrary == 3)
     }
 
+    // Validates: APP-057
     @Test func placesResolvesAwayOnlyWhenNoFixedLibraryRemains() {
         let pictures = library("/Users/example/Pictures")
         let card = removable("/Volumes/CARD")
@@ -139,6 +141,7 @@ struct CatalogPlacesScopeTests {
         #expect(CatalogWindowPolicy.title(for: .mapStack(MapStack(members: [])), libraries: [pictures]) == "Places")
     }
 
+    // Validates: APP-057
     @Test func mapStatePairsScopedIDsWithCoordinatesAndCountsWhatIsLeftOff() {
         let root = LibraryRootPath(rawValue: "/Users/example/Pictures")
         let ids = ["a.jpg", "b.jpg"].map { MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: $0)) }
@@ -159,6 +162,7 @@ struct CatalogPlacesScopeTests {
         #expect(notPlaces == nil)
     }
 
+    // Validates: APP-057
     /// The scope pass that drops unavailable roots keeps coordinates paired with IDs
     /// the same way it keeps day buckets paired (DES-069's rule, applied to the map).
     @Test func scopePassKeepsCoordinatesPairedWithSurvivingIDs() {
@@ -185,6 +189,7 @@ struct CatalogPlacesScopeTests {
         #expect(scoped.dayBuckets.isEmpty)
     }
 
+    // Validates: APP-057
     @Test func anEmptyMapWithReachableLibrariesSaysNoLocatedMedia() {
         let pictures = library("/Users/example/Pictures")
         let descriptor = CatalogQueryDescriptor(scope: .places)

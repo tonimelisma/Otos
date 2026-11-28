@@ -649,8 +649,8 @@ def description_spans(events, end):
 def pressure_attribution(launch_line, changes, events, end):
     """The seconds above normal that description requests account for, and the rest.
 
-    The owner accepts the pressure description writing causes (2026-11-18: "Descriptions should
-    run when the app is foregrounded. OS will swap running apps"; ADR 0015, ADR 0057). An
+    The pressure description writing causes is accepted: descriptions run while the app is in
+    front, and the OS swaps running apps out (ADR 0015, ADR 0057). An
     episode above normal — from a read that left normal to the read that found it again — is
     the descriptions' whole when the room's memory hold began with a description request
     running (`op=load.admission phase=memoryHold held=true running=…description…`, logged in
@@ -698,7 +698,7 @@ def machine(start, events):
     to the session's last event. The judgement (`pressureCaused`) holds only when the machine
     was at `normal` at launch: then a level that stayed is `normal`; one that left `normal`
     came while Otos was the new workload, and is `descriptions` when description writing
-    accounts for every second of it (`pressure_attribution`: pressure the owner accepts),
+    accounts for every second of it (`pressure_attribution`: pressure that is accepted),
     else `caused`; a launch at another level is `notJudged`, since the machine was not quiet
     before Otos. Whether another workload started during the session is not in the app's log,
     so a caused level is Otos's or a neighbour's started after it; a quiet machine (nothing
@@ -1260,7 +1260,7 @@ def verdicts(report, targets):
     add("disk.derivedFolderMB", "derived folder MB", (report.get("disk") or {}).get("folderMB"))
     caused = (report.get("machine") or {}).get("pressureCaused")
     # Not a number against a limit: the level is judged only from a quiet start (`machine`).
-    # Pressure description writing accounts for is the owner's to accept (2026-11-18), not a fail.
+    # Pressure description writing accounts for is accepted, not a fail.
     verdict = {"normal": "PASS", "descriptions": "ACCEPTED", "caused": "FAIL",
                "notJudged": "NOT-JUDGED"}.get(caused, "NO-DATA")
     # The value is the seconds above `normal` that descriptions do not account for; the state

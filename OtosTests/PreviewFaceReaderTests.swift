@@ -24,6 +24,7 @@ struct PreviewFaceReaderTests {
 
     private static let server = URL(string: "https://photos.example.com")!
 
+    // Validates: ENR-026
     /// An Immich still with a stored preview owes faces once; a new version of the asset,
     /// with its new preview, owes them again. A video never does.
     @Test func anImmichStillOwesFacesFromEachPreview() async throws {
@@ -46,6 +47,7 @@ struct PreviewFaceReaderTests {
         await account.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A reading of a preview the row no longer has is not written.
     @Test func aReadingOfAnOlderPreviewIsNotWritten() async throws {
         let account = try await ImmichAccount.make(in: makeTestDirectory())
@@ -60,6 +62,7 @@ struct PreviewFaceReaderTests {
         await account.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// The reader reads the stored preview, hands it upright to the analyser, and stores the
     /// faces.
     @Test func theReaderStoresThePreviewsFaces() async throws {
@@ -89,6 +92,7 @@ struct PreviewFaceReaderTests {
         await account.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A library still owes faces once it has a stored preview, and once read, not again: an
     /// edit and its new rendering are not a new source. A video never owes them, and a still
     /// still waiting for its rendering counts as unchecked.
@@ -113,6 +117,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A preview is read through the edit it shows: the unedited photo until the rendering of
     /// a new edit lands, then that edit; a reading of a preview whose edit has since changed
     /// is not written.
@@ -135,6 +140,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A face tile is cut from the stored preview through the edit that preview shows: the
     /// unedited photo until the rendering of a new edit lands, then that edit, and no preview
     /// at all while a rendering of a newer edit is owed.
@@ -160,6 +166,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A face read from a cropped preview lies on the upright photo where the crop shows it;
     /// one read from a preview turned a quarter clockwise lies where the turn took it from.
     @Test func aFaceReadThroughAnEditLandsOnTheUprightPhoto() {
@@ -187,6 +194,7 @@ struct PreviewFaceReaderTests {
         #expect(PreviewFaceReader.upright(face, readFrom: CGSize(width: 600, height: 800), recipe: EditRecipe(exposure: 1)) == face)
     }
 
+    // Validates: ENR-026
     /// A still whose analysis fails is passed over, not waited on: the stills after it are
     /// read in the same drain. It is not read again at the next ring, only once its pacing
     /// passes: a still that keeps failing is not analysed on every catalog change.
@@ -226,6 +234,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A preview whose file cannot be read, and one whose bytes are not an image, leave their
     /// stills owed: nothing is known of their faces, so neither is stamped with none (ENR-026).
     /// Neither reaches the analyser.
@@ -256,6 +265,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// A model that cannot be loaded stops the drain at the first still, which stays owed with
     /// every other, and a catalog change does not start reading again: only the pacing does.
     @Test func aMissingModelStopsTheReadUntilItsPacingPasses() async throws {
@@ -291,6 +301,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// Starting the reader twice starts one loop: a still is analysed once.
     @Test func startingTwiceStartsOneLoop() async throws {
         let directory = try makeTestDirectory()
@@ -320,6 +331,7 @@ struct PreviewFaceReaderTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-026
     /// The retry ledger, driven by the instants it covers: a failed still waits out its pacing
     /// unless its preview changes, a missing model holds every still, and a read clears both.
     @Test func aFailedStillWaitsOutItsPacingUnlessItsPreviewChanges() {

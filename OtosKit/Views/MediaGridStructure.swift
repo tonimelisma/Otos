@@ -16,13 +16,13 @@ import Synchronization
 /// `IndexPath(item: headerItem, section: 0)` (`MediaGridStructure.Headers`). The day sections are
 /// the layout's (`MediaGridLayout`), not AppKit's: AppKit re-asks every section's count,
 /// walks every section's supplementaries and maps every section on each update, which at the
-/// owner's 5,000 days made a one-photo batch cost about 93 M instructions on the main thread
+/// reference library's 5,000 days made a one-photo batch cost about 93 M instructions on the main thread
 /// against about 17 M for one section
 /// (`docs/research/2026-11-15-grid-removal-without-a-reload.md`).
 ///
 /// It is Otos's own value rather than `NSDiffableDataSourceSnapshot` because AppKit's
 /// snapshot copies its whole item set on every mutating call, so a grid of D days and N
-/// items cost D × N to describe: 13–15 seconds for the owner's 158,000 items over about
+/// items cost D × N to describe: 13–15 seconds for the reference library's 158,000 items over about
 /// 5,000 days. This is built in one linear pass, off the main actor, inside the mutation
 /// gate's exclusive slot (`docs/research/2026-11-14-grid-structure-without-diffable-snapshot.md`).
 /// A structure following edits of the order on screen (a Move to Trash, a Put Back, a stack

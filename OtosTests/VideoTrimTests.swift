@@ -12,6 +12,7 @@ struct VideoTrimTests {
         SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
     }
 
+    // Validates: APP-050
     @Test func thePlayerPlaysTheTrimAndReportsItBack() {
         let player = AVPlayer(playerItem: AVPlayerItem(url: fixture))
         var state = LoupeVideoState(
@@ -31,6 +32,7 @@ struct VideoTrimTests {
         #expect(state.currentTrim.end == nil)
     }
 
+    // Validates: APP-050
     /// A video's thumbnail does not carry its trim, so saving a trim marks its products
     /// current: no render, and no download at the next launch.
     @Test func savingAVideosTrimMarksItsProductsCurrent() async throws {

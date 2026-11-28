@@ -2,14 +2,14 @@
 
 ## Question
 
-The owner, looking at the Info pane: "jesus, these photo descriptions are something else! what
-is the correct approach in terms of evals here? can Apple Intelligence do better?", and then:
-"just an extremely simple, matter of fact description of the image", "how do we hill climb".
+The photo descriptions shown in the Info pane were far off. What is the right eval for them, can
+Apple Intelligence do better, and how does a revision climb toward an extremely simple,
+matter-of-fact description of the image?
 
 Revision 4 asked the on-device model for "two or three lively, playful sentences … what makes it
 fun to look at". It wrote, among others, "a superhero car ready for action", "numbers and letters
 dancing across the screen … secret message" for a bank-transfer screenshot, "mischievous vines"
-for a string of lights, a fork read as "a cigarette", the owner's own age, and ages of its own
+for a string of lights, a fork read as "a cigarette", a pictured person's real age, and ages of its own
 for unnamed children ("Baby, 4"). The eval of ADR 0053 flagged none of it: it scored invented
 names, ages when no age was given, and memory remarks, and never looked at the picture.
 
@@ -25,8 +25,8 @@ revision is scored two ways:
   `clean` counts answers with no flag.
 - **Grounded**: the agent looked at each sampled preview once and wrote reference facts (main
   subject, setting, people, likely misreads); each answer is graded true when every claim it
-  makes is visible and its main subject is right. The answers and references name the owner's
-  family and stay out of the repository.
+  makes is visible and its main subject is right. The answers and references name real
+  people and stay out of the repository.
 
 One change per candidate, compared on both halves; a candidate is kept only when the held-out
 half does not get worse.
@@ -62,7 +62,7 @@ half does not get worse.
 
 ## Follow-up: counting the unnamed (revisions 6 and 7)
 
-The owner: "why does it say Ian and two children?" of Ian beside one other, unnamed child.
+One description put Ian with two children in a photo of Ian beside one other, unnamed child.
 The model was told the named faces by place and only that "everyone else in the photo is
 unnamed", so it guessed how many others there were. Same 60 photos, while the installed app was
 re-reading text (text facts partly missing, equally for every candidate):

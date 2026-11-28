@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreMediaEligibilityTests {
+    // Validates: ARC-040
     @Test func scanCatalogsImageAndVideoMediaAndSkipsNonMedia() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

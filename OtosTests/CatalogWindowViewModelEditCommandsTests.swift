@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelEditCommandsTests {
+    // Validates: APP-053
     @Test func showOriginalRendersTheUneditedPhotoUntilTheEditChanges() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -52,6 +53,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }
     }
 
+    // Validates: APP-053
     @Test func revertToOriginalRemovesTheWholeEditAsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -80,6 +82,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }
     }
 
+    // Validates: APP-053
     @Test func revertToOriginalUntrimsTheVideoInTheLoupe() async throws {
         let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")
         try await withEditableLibrary(fileCount: 1, fileExtension: "mov", write: { url in
@@ -101,6 +104,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }
     }
 
+    // Validates: APP-054
     @Test func theKeyboardSelectsAnAdjustmentAndMovesItByItsStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -132,6 +136,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }
     }
 
+    // Validates: APP-054
     @Test func resettingOneControlLeavesTheOthers() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -150,6 +155,7 @@ struct CatalogWindowViewModelEditCommandsTests {
         }
     }
 
+    // Validates: APP-055
     /// The histogram follows the render: the saved edit's when the photo opens, then each
     /// live render's.
     @Test func theHistogramFollowsTheRenderedPhoto() async throws {

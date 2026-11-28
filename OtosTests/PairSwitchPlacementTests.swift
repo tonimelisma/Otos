@@ -3,10 +3,11 @@ import Foundation
 import Testing
 
 /// DES-117, APP-076: a RAW+JPEG pair's `JPG`/`RAW` switch is in the inspector's header, Info's
-/// and Edit's alike, for the file shown; the loupe carries none (owner, 2026-11-19).
+/// and Edit's alike, for the file shown; the loupe carries none.
 @Suite(.testScope)
 @MainActor
 struct PairSwitchPlacementTests {
+    // Validates: APP-076
     @Test func theInspectorsSwitchIsForThePairShown() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Photos", directoryHint: .isDirectory)

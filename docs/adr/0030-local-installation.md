@@ -30,10 +30,10 @@ catalog would also give one database two `CatalogStore` owners.
   debuggable app. It compiles with `SWIFT_OPTIMIZATION_LEVEL=-O`. That is still the Debug
   configuration, so `get-task-allow` (checked by the install) and every `#if DEBUG` path
   stay; only the code is optimized. Unoptimized, the window's own Swift work was most of
-  a click. On a generated owner-shaped catalog, All Media's order read took about
+  a click. On a generated reference-shaped catalog, All Media's order read took about
   1.8 s unoptimized and 0.2 s at `-O`: the rows 0.65–0.76 s against 0.07 s, the stack rule
   0.25–0.39 s against 0.02 s, the collapse 0.2–0.55 s against 0.04 s, the position index
-  0.23–0.33 s against 0.02 s (`docs/research/2026-11-16-window-reads-owner-catalog.md`). Dev builds and
+  0.23–0.33 s against 0.02 s (`docs/research/2026-11-16-window-reads-reference-catalog.md`). Dev builds and
   the tests stay unoptimized: the Swift 6 compiler crashed compiling the test target at
   `-O`. The build disables code coverage (Xcode 27 enables it for Debug
   by default; the instrumented binary writes `default.profraw` into its working
@@ -60,7 +60,7 @@ catalog would also give one database two `CatalogStore` owners.
   Sep 22 Xcode build did, and its import failed with `database is locked` beside
   the running installed app.
 - **The installed app updates itself.** Every `main` commit whose CI passed is built by
-  the same recipe on CI, signed with the owner's development certificate, and installed by
+  the same recipe on CI, signed with the maintainer's Apple Development certificate, and installed by
   Sparkle within the hour (ADR 0059). `script/install.sh` (one recipe with CI's,
   `script/lib/installed-build.sh`) stays for an install made on the Mac: the first one, and a
   build of a commit CI has not published.

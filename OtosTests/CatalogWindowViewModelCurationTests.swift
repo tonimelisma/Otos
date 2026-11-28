@@ -28,6 +28,7 @@ struct CatalogWindowViewModelCurationTests {
         }
     }
 
+    // Validates: APP-026
     @Test func acceptedSameValueChoiceAdvancesOnlyWhenEnabled() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let model = makeCurationModel()
@@ -46,6 +47,7 @@ struct CatalogWindowViewModelCurationTests {
         }
     }
 
+    // Validates: APP-026
     @Test func acceptedChoiceAtEndDoesNotWrap() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let model = makeCurationModel()
@@ -64,6 +66,7 @@ struct CatalogWindowViewModelCurationTests {
         }
     }
 
+    // Validates: APP-013
     @Test func toolbarChoiceReflectsTheTargetsSharedValue() async throws {
         try await withCatalogedLibrary(fileCount: 3) { library in
             let model = CatalogWindowViewModel(
@@ -102,6 +105,7 @@ struct CatalogWindowViewModelCurationTests {
         }
     }
 
+    // Validates: APP-086
     /// A choice on items the catalog no longer holds is shown and advances, then the Store
     /// finds no row: the choice is withdrawn and its undo taken off the stack, with no alert,
     /// since the items left the catalog and its next read shows it.

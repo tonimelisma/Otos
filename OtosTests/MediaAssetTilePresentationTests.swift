@@ -38,6 +38,7 @@ struct MediaAssetTilePresentationTests {
 
     // MARK: - Kind badge content table (APP-009)
 
+    // Validates: APP-009, ENR-002
     @Test func placeholderTilesNeverShowLowerRightBadge() {
         #expect(MediaAssetTilePresentation.badgeContent(
             detail: makeDetail(path: "movie.mp4", kind: .video, durationSeconds: 42),
@@ -92,6 +93,7 @@ struct MediaAssetTilePresentationTests {
         ) == .rawLabel)
     }
 
+    // Validates: APP-056
     @Test func accessibilityLabelCoversBrokenLoadingAndPaintedStates() {
         let brokenImage = makeDetail(path: "x.jpg", kind: .image, enrichedMTime: 1)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
@@ -227,6 +229,7 @@ struct MediaAssetTilePresentationTests {
         )
     }
 
+    // Validates: APP-024
     /// DES-066: the group rides the *thumbnail face* — the aspect-fit image the
     /// user sees — at its corner plus one margin, so it sits on the photo rather
     /// than out in the cell's letterbox, and it moves with the face instead of

@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreEnsureLibraryTests {
+    // Validates: ARC-029
     @Test func ensureLibraryAddsMissingRootAndNoOpsExistingRoot() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

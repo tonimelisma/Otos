@@ -6,6 +6,7 @@ import Testing
 struct MediaGridBridgeTests {
     // MARK: - Structural apply arbitration (migrated to MediaGridMutationGate)
 
+    // Validates: ARC-023
     @Test func mutationGateKeepsOnlyNewestPendingGrid() {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
@@ -21,6 +22,7 @@ struct MediaGridBridgeTests {
         )
     }
 
+    // Validates: ARC-023
     @Test func identicalIDsRefreshVisibleWithoutStructuralApply() {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
@@ -33,6 +35,7 @@ struct MediaGridBridgeTests {
         )
     }
 
+    // Validates: ARC-023
     /// The same order over the same days builds the same structure, so a republished grid
     /// (the enrichment trickle re-sending an order) is a detail refresh with no apply; a
     /// photo moving to another day without moving in the order is a structural change.
@@ -55,6 +58,7 @@ struct MediaGridBridgeTests {
         #expect(gate.inFlight == .structuralApply)
     }
 
+    // Validates: APP-006
     @Test func descriptorChangeResetsScrollAndSelectionAndSameDescriptorStructurePreservesThem() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
@@ -71,6 +75,7 @@ struct MediaGridBridgeTests {
 
     // MARK: - Scroll hold
 
+    // Validates: ARC-023
     @Test func scrollHoldParksSameDescriptorAndDrainsNewestOnRelease() {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
@@ -208,6 +213,7 @@ struct MediaGridBridgeTests {
         #expect(gate.requestedColumnCount == 6)
     }
 
+    // Validates: APP-006
     @Test func zoomRequestedDuringApplyConvergesExactlyOnce() {
         let gate = MediaGridMutationGate(columnCount: 6)
         let grid = makeGrid(scope: .allMedia, paths: ["a.jpg"])
@@ -289,6 +295,7 @@ struct MediaGridBridgeTests {
 
     // MARK: - Structural apply policy truth table (ARC-023)
 
+    // Validates: ARC-023
     @Test func structuralApplyPolicyAnimatesSmallInserts() {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
         let smallInsert = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]).orderedAssetIDs
@@ -357,6 +364,7 @@ struct MediaGridBridgeTests {
         #expect(policy.usesReloadDataFallback)
     }
 
+    // Validates: ARC-023
     /// Leaving a large grid for a small one is as large an apply as the reverse: the
     /// animated diff would remove every item of the grid on screen.
     @Test func structuralApplyPolicyFallsBackWhenALargeGridShrinksToASmallOne() {
@@ -376,6 +384,7 @@ struct MediaGridBridgeTests {
         #expect(policy.usesReloadDataFallback)
     }
 
+    // Validates: APP-042
     @Test func gateApplyCarriesQueryChangeFact() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])

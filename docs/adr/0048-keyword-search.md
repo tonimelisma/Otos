@@ -2,20 +2,20 @@
 
 ## Status
 
-Accepted, 2026-11-10. Measured on the owner's library with the shipped code
+Accepted, 2026-11-10. Measured on the reference library with the shipped code
 (`docs/research/2026-11-09-keyword-search.md` §7–8): the app as built finds 82% of the
 findable relevant photos in its top 10 for English queries and 74.4% across 16 other
 languages, every result judged.
 
 ## Context
 
-The owner wants to find photos by typing what is in them, in many languages, not only
-Finnish and English (owner, 2026-11-09). Their library holds no keywords or captions, so
+The user wants to find photos by typing what is in them, in many languages, not only
+Finnish and English. The reference library holds no keywords or captions, so
 search has to read the pictures themselves. No Apple API returns a picture's embedding,
-and Vision's classifier knows 1,303 English labels. The owner set two bounds: a model of
-about 500 MB at most, and the eval is what works on their own photos.
+and Vision's classifier knows 1,303 English labels. Two bounds are set: a model of
+about 500 MB at most, and the eval is what works on the reference library's own photos.
 
-**Measured on 19,221 of the owner's photos:** 52 queries in 17 languages, every model's
+**Measured on 19,221 of the reference library's photos:** 52 queries in 17 languages, every model's
 top 10 judged. SigLIP 2 B/16-256 with Apple Translation led nine candidates. In English it
 put 85% of the findable relevant photos in its top 10. The best untranslated multilingual
 model reached 68%, and a multilingual text encoder distilled into CLIP's space reached 44%.
@@ -109,14 +109,14 @@ The projection publishes which state the shown query is in
     With the tower prepared the two readings race: both start, and the words answer is
     published only when no tower answer for the query has landed by the time it is ready, a
     fact the reader holds, never a timer. A prepared tower is not always quick: on the
-    owner's Mac, with 91 MB free and 5.8 GB swapped, the first query two minutes after the
+    test Mac, with 91 MB free and 5.8 GB swapped, the first query two minutes after the
     warm-up took 1.1 s in its embedding and the next 26 ms, so a rule that asked "is it
     prepared?" to skip the words showed nothing for 1.5 s. A quick tower lands first and the
     grid changes once (`op=search.words phase=dropped reason=towerFirst`); a slow one shows the
     words' matches first (`phase=shown`), then its own. The words reading matches
     the words read in photos through the catalog's text index ("Text in the photo"), which no
     pass loads, so its answer is ready as soon as the catalog is open; when the index held
-    them in memory, its first pass read them in for 4.5 s on the owner's library before the
+    them in memory, its first pass read them in for 4.5 s on the reference library before the
     first query of a tour could match them (`docs/research/2026-11-16-search-text-index.md`). A query
     whose words match nothing keeps what the window shows, still searching, and its pass
     reads nothing more: not the count of photos search has not read, which only an empty
@@ -149,7 +149,7 @@ The projection publishes which state the shown query is in
   holds no embedding for — owed one, or waiting for the thumbnail it is read from — but for
   those that will get no thumbnail (rendering found none, or the source holds none), which
   search never reads. The index knows the first of the scope it just searched; the second is
-  one read of a partial index over only those rows (v77, 221 of 167,250 on the owner's
+  one read of a partial index over only those rows (v77, 221 of 167,250 on the reference
   catalog). The empty state is the search's own, so the scope's cataloged and unfiltered
   counts, which the other empty states are told by, are not read. Rejected: counting every
   owed row of the available roots per empty answer (about 320 ms at 160,000 photos, and a
@@ -222,7 +222,7 @@ against 77.3, 85 in English for both), and every asset has one.
   a picture nothing had read (ADR 0050). A preview that does not decode for text is the same.
   The readings recorded that way before this rule cannot be told from a preview that holds
   no text, so schema v53 drops every empty text reading of an asset with a stored preview,
-  and each is read once more from that preview (1,498 of 1,930 readings on the owner's
+  and each is read once more from that preview (1,498 of 1,930 readings on the reference
   catalog; at about 0.15 s each, some four minutes of reading, and nothing downloads).
 
 ### The index: one owner, one mapped file
@@ -243,15 +243,15 @@ against 77.3, 85 in English for both), and every asset has one.
     rewrite). Which embeddings are current is read from indexes alone (v65): the walk goes over
     the product stamps index (every asset's thumbnail identity) and seeks each asset's
     embedding source in `idx_search_embedding_source`, never the 680 MB table. That is 12k pages
-    against 251k on the owner-shaped catalog, 0.39 s against 14 s, and 3 to 5 s cold on the
-    owner's: an enrichment sync on bc159591 ran it 11 times for 40 s of reader time before
+    against 251k on the reference-shaped catalog, 0.39 s against 14 s, and 3 to 5 s cold on the
+    reference catalog: an enrichment sync on bc159591 ran it 11 times for 40 s of reader time before
     changes named their rows.
   - **The backlog** is walked newest capture first through the same two indexes, and the walk
     keeps its place across passes. A pass for a change takes the change's rows first, then goes
     on where the walk stopped. A change during the walk stops it at its next page. Only a
     whole-library reconcile starts the walk again from the newest. An asset a pass paged past
     is asked by key at the backoff's retry.
-- **Memory is a mapped file** (`SearchVectorFile`), not the heap. Measured on the owner's library,
+- **Memory is a mapped file** (`SearchVectorFile`), not the heap. Measured on the reference library,
   a heap matrix added about 640 MB to the footprint (973 MB with search the only owner, 336 MB
   with none), against a whole-app target of 700 MB, and its first load read 650 MB of rows for
   16.5 s at every launch. So the vectors are kept as one file pair in Application Support
@@ -263,7 +263,7 @@ against 77.3, 85 in English for both), and every asset has one.
     `<id>.keys` holds each slot's asset and loose scene labels. Labels are stored as numbered
     names with the exact Float32 confidence the stored text gives, so the label gate decides
     exactly as over the parsed text (`SearchVectorFileTests`).
-  - **Float16, not Float32:** measured on the owner's 165,653 embeddings against Float32
+  - **Float16, not Float32:** measured on the reference library's 165,653 embeddings against Float32
     (`docs/research/2026-11-16-search-vector-file.md`): top-10 overlap 99.88% for 1,303 text
     queries and 99.72% for 500 image queries. 294 of 352,147 shown memberships move (0.08%),
     each within 5.1e-5 of the cut. That is far below the 0.01 the cut was calibrated in. The
@@ -329,7 +329,7 @@ against 77.3, 85 in English for both), and every asset has one.
   - A deletion names the Live Photo partners it leaves (`AssetRowDeletion`), so a movie whose
     still went is asked for by key.
 - **A scope searched again** is not hashed again: the index keeps the last scope as slots
-  until the scope or its memory moves. On the owner's library, hashing 165,000 assets twice a
+  until the scope or its memory moves. On the reference library, hashing 165,000 assets twice a
   query was about 180 ms of each match.
 - **One way memory changes:** the mapped file lives in `SearchIndexMemory`, whose every
   method moves the revision in the same synchronous step as its change: replacing the file (a
@@ -340,7 +340,7 @@ against 77.3, 85 in English for both), and every asset has one.
   copied. Rejected: keying the kept scope on the file's identity and slot count as well, which
   guards that one cache but leaves an answer's revision unmoved by a change, so a projection
   holding the answer would not ask again.
-- **The first query** of a session paid a cold start that later ones did not. On the owner's
+- **The first query** of a session paid a cold start that later ones did not. On the reference
   library, the first search took 2,851 ms and the second 194 ms. The encode took 1,863 ms
   against 17 ms: the text model's Core ML load and first prediction, and the list of
   Translation's languages. The match took 832 ms against 62 ms: the first pass over 241 MB of
@@ -355,7 +355,7 @@ against 77.3, 85 in English for both), and every asset has one.
       prediction** (`SearchTextTower.warm`, below);
     - asks the kernel to read the mapped vectors ahead (`MADV_WILLNEED`).
     - It reads no scope ahead. A query is matched among the projection's scope, its stacks'
-      members included, which the window's grid does not hold: on the owner's library the
+      members included, which the window's grid does not hold: on the reference library the
       preparation read 159,130 slots and every query matched among 164,979, so it was never
       reused. A query's slots are read with its first match, 7 ms over 164,979 photos on that
       catalog, and reused while the scope and memory hold
@@ -365,7 +365,7 @@ against 77.3, 85 in English for both), and every asset has one.
     prediction. With its pages resident that is about 40 ms. When macOS has evicted them
     under memory pressure it reads about 330 MB back from disk: 860 and 1,175 ms on two tours
     (`op=search.tower phase=predicted pageIns=21058 diskReadMB=332`,
-    `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`). The focus comes well
+    `docs/research/2026-11-17-a-new-library-at-the-reference-size.md`). The focus comes well
     before the query, so on a prepared tower it starts one prediction whose answer nobody
     reads, and the page-in happens while the person types
     (`op=search.tower phase=warmed cause=focus ms= pageIns= diskReadMB=`).
@@ -482,7 +482,7 @@ what is shown can be told from what is searched: search matches every line from 
 Info pane and a description show `SearchTextReading.shown` (ADR 0050). The v74 migration
 decodes the readings it indexed with its own frozen line type, so it does what it always did.
 
-Searched for a word Vision reads in the owner's photos, SigLIP alone put a photo holding it in
+Searched for a word Vision reads in the reference library's photos, SigLIP alone put a photo holding it in
 its top 10 for 21% of them. So each still's stored preview is read for text (`search_text`,
 `SearchTextReading`), and a photo whose text holds every typed word, at the start of a word,
 ignoring case and diacritics, matches whatever the cut. It ranks first only for a query that
@@ -524,7 +524,7 @@ ends there, every still not read stays owed, `op=search.text phase=sessionEnded`
 the index's retry after its backoff (30 s doubling to 15 minutes) starts a new child, which
 recompiles what the purge removed (4 s for a file, minutes for an emptied cache) and reads the
 rest. The backoff bounds the recompiling a disk purged every few minutes would cause to one
-child a backoff, where a reader lost for the app's process read nothing until the owner
+child a backoff, where a reader lost for the app's process read nothing until the user
 relaunched. A child that exits while reading a picture, without answering, may have been ended by that picture (a decoder or recognizer crash), so the picture is paged past for the pass like a failed reading (`phase=sessionExited`) and the rest of the page is read by a new child: one such picture would otherwise come first in every page and stop every other still from being read. A child that neither answers nor exits is ended after 20 minutes and its picture is paged past the same way (`phase=sessionOverran`): nothing reports a reading that will never finish — the child's output stays open, and a heartbeat from it would beat on while Vision is stuck in another of its threads — so this is a deadline (ADR 0033), set at about twice the slowest reading measured, a cold first one under parallel load at 649 s, where a warm one takes 0.15–3.4 s (`docs/research/2026-11-14-vision-text-reading-breaks-for-its-process.md`). A child never
 outlives the Otos that started it: its requests pipe has one writer, Otos (`Process` closes
 every other descriptor in a child it starts), so the pipe ends when Otos ends the session,
@@ -536,7 +536,7 @@ teardown ends the live child and waits for its exit (`SearchTextReader.shutdown`
 no step of its own. The still whose reading was cut short is stamped nothing, so it stays owed
 (`docs/research/2026-11-15-text-reading-child-outlived-otos.md`). One serial queue reads every
 preview, so Otos never starts two first readings at once. A child's first reading loads the system's text model, 0.2 s warm and minutes cold, so its wait is logged as a fact (`phase=firstReading waitMs=`): a survey tells a cold load from a stall by it. A test starts the child with `--answering <text>` after `--read-text`, and the child answers every picture that decodes with that line instead of asking Vision, so its pipe protocol, deadline and end are tested without a cold model load; Vision's own reading is a live test (`OTOS_TEXT_READING_LIVE=1`). At 512 px the fast level read noise, so the full preview is read; an original
-is not, since nearly every original in the owner's library is a cloud placeholder. Text is read
+is not, since nearly every original in the reference library is a cloud placeholder. Text is read
 after every embedding is made.
 
 ### Facts in the query: when, where, who
@@ -610,7 +610,7 @@ queries, Estonian rose from 56 to 86 and the total from 0.832 to 0.847.
 ### Reading while hidden
 
 Otos holds one process activity for the session (`BackgroundReading`,
-`.userInitiatedAllowingIdleSystemSleep`): with the owner away, App Nap had every Otos thread at
+`.userInitiatedAllowingIdleSystemSleep`): with the user away, App Nap had every Otos thread at
 priority 4 and indexing stopped. It does not keep the Mac awake, and an idle Otos does no work.
 
 A pass that leaves work owed it could not do rings the index's loop again after a backoff, 30 s

@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreFilesystemEventTests {
+    // Validates: APP-005
     @Test func eventRescansOnlyAffectedRoot() async throws {
         let temp = try makeTestDirectory()
         let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
@@ -43,6 +44,7 @@ struct CatalogStoreFilesystemEventTests {
         #expect(!newInvocations.contains(pathB))
     }
 
+    // Validates: ARC-041
     /// ARC-041: Otos's own `.otos-import-staging` files are written into the watched
     /// destination root while importing and must not schedule reconciliation, record
     /// namespace mutations, or bump occupancy — that self-inflicted churn would fire a
@@ -82,6 +84,7 @@ struct CatalogStoreFilesystemEventTests {
         )
     }
 
+    // Validates: ARC-041
     /// Events are acted on as they arrive, and a burst that lands while a rescan runs
     /// is coalesced by that work: five events cost the rescan they started plus one
     /// follow-up, with no quiet period waited out.
@@ -153,6 +156,7 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == 1)
     }
 
+    // Validates: ARC-041
     @Test func subtreeDirectoryEventReconcilesWithoutSiblingMutation() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -251,6 +255,7 @@ struct CatalogStoreFilesystemEventTests {
         try await expectNoRescan(store: store, recorder: recorder, baseline: baseline, handledEvents: handled + 1)
     }
 
+    // Validates: ARC-041
     @Test func targetedFileEventReconcilesWithoutFullScan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -292,6 +297,7 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline)
     }
 
+    // Validates: ARC-033
     /// ADR 0008 move witness: a rename seen as file events moves the row, with its like, to
     /// the new path without a full scan — the old path's event finds nothing to delete.
     @Test func aRenameEventMovesTheRowWithItsOverlay() async throws {
@@ -331,6 +337,7 @@ struct CatalogStoreFilesystemEventTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-033
     @Test func targetedFileRemovalDeletesWithoutFullScan() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -368,6 +375,7 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline)
     }
 
+    // Validates: ARC-041
     /// ARC-041: a file reconcile that observed a path missing does not delete a row the
     /// path's owner restored while the reconcile was suspended. The reconcile is held
     /// right after its observation; undo puts the file back and shows the row again; the
@@ -492,6 +500,7 @@ struct CatalogStoreFilesystemEventTests {
         #expect(names.contains("seed.jpg"))
     }
 
+    // Validates: ARC-041
     @Test func removedDirectoryPurgesSubtreeRowsAndCompanions() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

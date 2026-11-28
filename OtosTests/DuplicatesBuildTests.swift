@@ -22,6 +22,7 @@ struct DuplicatesBuildTests {
         try await DuplicatesProjection.build(store: library.store, libraries: library.libraries, memory: memory)
     }
 
+    // Validates: APP-061, APP-083
     @Test func aBuildFromWhatTheLastOneHeldIsTheBuildFromNothing() async throws {
         let library = try await BenchmarkLibrary.make(in: makeTestDirectory(), stills: Self.stills)
         let store = library.store
@@ -94,10 +95,11 @@ struct DuplicatesBuildTests {
         await store.shutdown()
     }
 
+    // Validates: APP-061, APP-083
     /// The candidate read is answered from the two indexes that hold exactly the compared
     /// stills and their pairing columns, never from the wide asset or record rows.
-    @Test func theComparedStillsAreReadFromTheirCoveringIndexesOnAnOwnerShapedCatalog() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
+    @Test func theComparedStillsAreReadFromTheirCoveringIndexesOnAReferenceShapedCatalog() async throws {
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         await store.shutdown()

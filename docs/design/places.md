@@ -1,5 +1,7 @@
 # Places — Spec
 
+GOVERNS: `OtosKit/Views/PlacesMapView.swift`
+
 The Places scope: a sidebar row whose detail is a map of thumbnail stacks, and an
 area of the map under it in the ordinary view modes. Cites `docs/design/design-system.md` by ID; rules are not
 restated. Decision record: `docs/adr/0040-places-scope-and-map-clustering.md`.
@@ -31,8 +33,7 @@ Terms are Apple's: *location*, never *GPS* or *geotag*.
 
 ## Sidebar
 
-`Places`, SF Symbol `map`, a top-level row after `On This Day` and `People` (owner
-decision, 2026-11-12): browsing by place sits with the other ways to browse the whole
+`Places`, SF Symbol `map`, a top-level row after `On This Day` and `People`: browsing by place sits with the other ways to browse the whole
 library. Present whenever one fixed library exists. No
 trailing count, because library rows carry none. While an area is open the row stays
 highlighted: the area has no row of its own.
@@ -62,7 +63,7 @@ every state (DES-053):
 | --- | --- | --- |
 | L1 | `1,204 items on the map` / `1 item on the map` | `.title3` semibold, tabular digits (DES-005) |
 
-The bar carries no count of the items left off the map (owner decision, 2026-11-12). The
+The bar carries no count of the items left off the map. The
 count moves while enrichment finds locations; nothing else on the bar does.
 
 ## Map
@@ -72,12 +73,12 @@ DES-104]**; pan and zoom only; `MapZoomStepper` and `MapScaleView` as the only c
 No user-location control and no permission prompt. The map pans north and south only
 to 75°, or to the farthest located item plus 2° when one lies beyond, never past the
 map's own edge: Web Mercator stretches the polar regions many times over, so they stay
-off screen, and no item is ever out of reach (owner decision, 2026-11-13). A pan or zoom
+off screen, and no item is ever out of reach. A pan or zoom
 that settles past the band eases back to its edge at the same zoom (0.25 s ease-out,
 DES-070; a snap under Reduce Motion, DES-075), as a scroll view springs back from its
 end; east–west it wraps freely. MapKit's own camera bounds are not used: with any bound,
 its pan stops at the antimeridian going east. Zoom-out stops where MapKit's flat map does; only its satellite globe shows the
-whole world undistorted, and the owner chose the standard map
+whole world undistorted, and Places uses the standard map
 (`docs/research/2026-11-13-mapkit-zoom-out-and-poles.md`).
 
 Camera: on entering Places, center on the located items' average location (the circular
@@ -86,8 +87,8 @@ farthest item on each axis with a margin, in map points so a library shot on two
 continents (more than 180° of longitude) does not wrap (a single point gets a 2 km
 square). Zoomed far out is fine; a view of no items is not: MapKit clamps a camera wider
 than it can show about its center, so a library mostly in one place opens on that place
-(owner decision, 2026-11-12, after a California library with a few Sydney and Helsinki
-photos opened on an empty Africa). The map wraps at the antimeridian, and stacks and the
+(a California library with a few Sydney and Helsinki photos would otherwise open on an
+empty Africa). The map wraps at the antimeridian, and stacks and the
 fit check take each item's copy in the viewport. MapKit refuses a camera past its zoom-out (about 153° of
 longitude at a 1232 pt map), so when the viewport that follows a fit leaves an item
 outside, the fit is asked once more without margin but grown to the camera the map
@@ -118,7 +119,7 @@ gutter). Only cells touching the viewport, padded by one cell, are drawn.
 
 **[deviation]** from Photos, whose click does nothing and whose double-click zooms. A
 click drills in, as a click on a cluster does on nearly every map, and the double-click
-that ends the drilling opens the photos (owner decision, 2026-11-12). A double-click's
+that ends the drilling opens the photos. A double-click's
 first click has already started the zoom, which moves an off-centre stack out from under
 the pointer, so a double-click is one gesture, decided by AppKit's click count and not by
 what lies under the pointer: its second click is taken before MapKit or any stack sees it
@@ -187,4 +188,4 @@ filter's reach).
 ## Not in this spec
 
 Place names on the map (the Info pane names one item's place, ADR 0050), assigning or moving a location, a filmstrip under the
-map, a map of a card or an import batch, Satellite imagery. Each is on the roadmap.
+map, a map of a card or an import batch, Satellite imagery. Each is in the idea pile (issue #52).

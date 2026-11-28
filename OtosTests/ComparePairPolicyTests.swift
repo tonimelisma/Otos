@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct ComparePairPolicyTests {
+    // Validates: APP-021
     @Test func entryUsesFirstTwoSelectedAsLeftRight() {
         let ids = makeIDs(5)
         var selection = GridSelection.empty.plainClick(ids[1])
@@ -28,6 +29,7 @@ struct ComparePairPolicyTests {
         #expect(pair.right == ids[1])
     }
 
+    // Validates: APP-021
     @Test func clickReplacesNamedPane() {
         let ids = makeIDs(5)
         var pair = ComparePair(left: ids[0], right: ids[1])
@@ -49,6 +51,7 @@ struct ComparePairPolicyTests {
         #expect(pair.right == ids[3])
     }
 
+    // Validates: APP-028
     @Test func clickOnOtherSlotSwapsInsteadOfDuplicating() {
         let ids = makeIDs(4)
         let pair = ComparePair(left: ids[0], right: ids[1])
@@ -62,6 +65,7 @@ struct ComparePairPolicyTests {
         #expect(swapped.right == ids[0])
     }
 
+    // Validates: APP-021
     @Test func slideRightAdvancesWindow() {
         let ids = makeIDs(5)
         let pair = ComparePair(left: ids[0], right: ids[1])

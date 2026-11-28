@@ -47,7 +47,7 @@ func freshString(_ s: String) -> String {
 
 @MainActor
 func makeIDs(_ n: Int) -> [BenchID] {
-    let rootBase = "/Users/example/Library/CloudStorage/OneDrive-Personal/Pictures"
+    let rootBase = "~/Library/CloudStorage/OneDrive/Pictures"
     return (0 ..< n).map { i in
         BenchID(
             root: freshString(rootBase),

@@ -4,7 +4,7 @@ import Synchronization
 import Testing
 
 /// ENR-034, ADR 0009 §12: a cloud-only original is downloaded for whatever its row owes, its
-/// digest alone included (owner, 2026-11-21: "yes, download them"), so every photo is checked
+/// digest alone included, so every photo is checked
 /// for duplicates. A row that owes more is downloaded once and its digest taken from that copy.
 @Suite(.testScope)
 struct DigestDownloadsTests {
@@ -111,6 +111,7 @@ struct DigestDownloadsTests {
         }
     }
 
+    // Validates: ENR-034
     /// A row whose original is not local and whose only owed product is its digest is
     /// downloaded, and its digest read from that copy.
     @Test func aDatalessRowOwingOnlyItsDigestIsDownloadedAndHashed() async throws {
@@ -130,6 +131,7 @@ struct DigestDownloadsTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-034
     /// A row that owes a rendering is downloaded once, and its digest is taken in the same read.
     @Test func aDatalessRowOwingARenderingIsDownloadedOnceAndHashedFromThatCopy() async throws {
         let library = try await Self.library()

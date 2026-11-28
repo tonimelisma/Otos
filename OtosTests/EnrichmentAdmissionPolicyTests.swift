@@ -18,6 +18,7 @@ struct EnrichmentAdmissionPolicyTests {
         }
     }
 
+    // Validates: ENR-009
     @Test func aVideoOnScreenIsNeverHeldByTheVideoCap() {
         let candidate = EnrichmentAdmissionPolicy.Candidate(sourceSize: 1024 * 1024, isVideo: true, isViewportOrDevice: true)
         let admission = EnrichmentAdmissionPolicy.production.canDispatchEnrichment(candidate: candidate, inFlight: busyWithTwoVideos)

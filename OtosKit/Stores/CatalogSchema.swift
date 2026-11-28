@@ -731,7 +731,7 @@ nonisolated enum CatalogSchema {
 
     /// The stack candidates' read (`PhotoStackSQL`, ADR 0052) finds the folders holding a RAW
     /// and then each one's stills by kind and folder. Without this index each folder was a scan
-    /// of its whole root: on the owner's library, 10,917 RAW folders over 166,528 rows held the
+    /// of its whole root: on the reference library, 10,917 RAW folders over 166,528 rows held the
     /// window's first publication for minutes. With it the read measured 65 ms there.
     static let stackCandidateIndexMigrationIdentifier = "v33_stack_candidate_index"
 
@@ -1218,7 +1218,7 @@ nonisolated enum CatalogSchema {
     /// reading of an asset with a stored preview goes, so each is owed and read once more by
     /// the index from that preview in Application Support: nothing downloads, and a preview
     /// that holds no text is recorded empty again. The statement visits each reading once and
-    /// finds its asset by the asset's key (`CatalogStoreQueryPlanTests`); on the owner's
+    /// finds its asset by the asset's key (`CatalogStoreQueryPlanTests`); on the reference
     /// catalog it removed 1,498 of 1,930 readings.
     static let unreadTextPreviewsMigrationIdentifier = "v53_search_unread_text_previews"
 
@@ -1235,11 +1235,11 @@ nonisolated enum CatalogSchema {
     /// A person's photos are read as "this row holds a face of this person": the order of
     /// `SidebarSelection.person`, the People filter, a person named in a search and the
     /// likeness sort each ask it once per row of the scope. v19's index on `person_id` alone
-    /// answered it by walking every face of the person for every row — on the owner's catalog
+    /// answered it by walking every face of the person for every row — on the reference catalog
     /// (147,024 rows, 14,614 faces of one person) the person's photos never finished
     /// opening. The index keyed by person and photo, with `is_not_face`, answers it with one
     /// seek, and still serves every read of a person's faces by its prefix
-    /// (`docs/research/2026-11-14-owner-scale-query-plans.md`).
+    /// (`docs/research/2026-11-14-reference-scale-query-plans.md`).
     static let facePersonPhotoIndexMigrationIdentifier = "v54_face_person_photo_index"
 
     static let facePersonPhotoIndexStatements: [String] = [
@@ -1253,7 +1253,7 @@ nonisolated enum CatalogSchema {
     /// The window's reads walk an index and test every row they reach for whether it is
     /// shown (`CatalogVisibilitySQL`) and whether it is a Live Photo's movie
     /// (`LivePhotoSQL`). Their indexes held the order alone, so each row reached cost a read
-    /// of its table row: on the owner's catalog (166,555 rows of about 3.3 KB, a 542 MB table)
+    /// of its table row: on the reference catalog (166,555 rows of about 3.3 KB, a 542 MB table)
     /// the All Media order took 13–34 s cold and 2–4 s warm, the filter's types 18 s cold,
     /// one random page read per row (`docs/research/2026-11-14-window-reads-and-launch.md`).
     /// These indexes carry the columns those tests read, so a row is tested in the index
@@ -1346,7 +1346,7 @@ nonisolated enum CatalogSchema {
     /// The local capture time is whole seconds in both of its branches (ADR 0039). Before
     /// v56 an item without a wall clock kept its absolute time's fraction: an unread Immich
     /// still sorted by the server's date with milliseconds, and the read's wall clock, whole
-    /// seconds, moved it by under a second. On the owner's catalog 41,048 of 51,327 read
+    /// seconds, moved it by under a second. On the reference catalog 41,048 of 51,327 read
     /// Immich stills had moved that way, each read a change of the sort date and a read of
     /// the window's order for no reorder a user could see
     /// (`docs/research/2026-11-14-whole-second-capture-time.md`). The generated column is
@@ -1356,7 +1356,7 @@ nonisolated enum CatalogSchema {
 
     /// The People scope holds every photo with a face given a person: an `EXISTS` over `face`
     /// per row of the order. By the face table's key it read each face's row to test its
-    /// person and whether it is a face, and those rows carry the embeddings: on the owner's
+    /// person and whether it is a face, and those rows carry the embeddings: on the reference
     /// catalog (98,359 faces, 147,024 rows) the check over every row took 4.8 s cold, 0.44 s
     /// warm. A partial index of exactly the faces it accepts answers it from the index:
     /// 0.13–0.15 s, cold or warm (`docs/research/2026-11-14-derived-owners-and-face-checks.md`).
@@ -1365,7 +1365,7 @@ nonisolated enum CatalogSchema {
     /// The filter's types for the People row walk `idx_media_asset_stack_candidate` and test
     /// each row for an assigned face by its key (`idx_face_assigned_photo`). The index held no
     /// `relative_path`, so every row reached cost a read of its table row to find the key: on
-    /// the owner's catalog the People row's options took 17–41 s on a copy (8–12 s in the
+    /// the reference catalog the People row's options took 17–41 s on a copy (8–12 s in the
     /// installed app, rerun on every lap of the window during enrichment). With the path in
     /// the index the key is in the index and the read took 0.18–0.31 s; the index grows from
     /// about 10 MB to 19 MB (`docs/research/2026-11-14-scope-switch-and-background-laps.md`).
@@ -1422,7 +1422,7 @@ nonisolated enum CatalogSchema {
     ///   root and path; NULL for the copy that is shown, and for a row with no current digest
     ///   or the digest of no bytes. Three triggers keep it in the transaction of every write
     ///   that can move it, so no write path can leave it stale. Deciding it inside each read
-    ///   took 17–33 s on the owner's catalog (`docs/research/2026-11-14-one-photo-many-copies.md`).
+    ///   took 17–33 s on the reference catalog (`docs/research/2026-11-14-one-photo-many-copies.md`).
     ///   Every digest is cleared here, so it starts NULL everywhere and fills as digests arrive.
     /// - The window's date indexes and the stack candidates' carry it with the other
     ///   columns a row is tested by (v55).
@@ -1610,7 +1610,7 @@ nonisolated enum CatalogSchema {
     /// v63: the Places scope reads every located row's coordinate with its order (ADR 0040).
     /// Joined by key, each coordinate was read from its `asset_metadata` row, which also holds
     /// the metadata record, so the order read nearly the whole table: 59,151 pages for 50,000
-    /// located rows of an owner-shaped catalog of 166,000. `idx_asset_metadata_location` holds
+    /// located rows of a reference-shaped catalog of 166,000. `idx_asset_metadata_location` holds
     /// the key and the coordinate of exactly the located rows, so the join is answered from
     /// the index: 2,778 pages (`docs/research/2026-11-15-places-first-paint.md`).
     static let locationIndexMigrationIdentifier = "v63_asset_metadata_location_index"
@@ -1624,7 +1624,7 @@ nonisolated enum CatalogSchema {
     ]
 
     /// v64: what the user says of a photo is said of all its copies, and a mirror is never a
-    /// duplicate (ADR 0054, ADR 0042; owner, 2026-11-15):
+    /// duplicate (ADR 0054, ADR 0042):
     /// - `media_asset.has_copies` is 1 when another present copy shares the row's current
     ///   digest, in a library or an account. A face on any copy is the photo's, and a read
     ///   asks for a copy's faces only of a row that has one (`PhotoFaceSQL`). The window's
@@ -2018,7 +2018,7 @@ nonisolated enum CatalogSchema {
 
     /// v66 a face's embedding moves out of its row into `face_embedding` (ADR 0047, Storage).
     /// A face row was 2.1 KB, its 2,048-byte embedding most of it, so one row filled a page
-    /// and every People read of who the faces are read 403 MB on the owner's catalog to learn
+    /// and every People read of who the faces are read 403 MB on the reference catalog to learn
     /// 100 bytes a face. The face row keeps everything but the vector; the vector's row
     /// carries the face's key, with cascades from it, and `id`, the reading's number: a new
     /// reading of a face inserts a new vector row, and `AUTOINCREMENT` never gives a number
@@ -2109,7 +2109,7 @@ nonisolated enum CatalogSchema {
     /// `idx_media_asset_same_photo_candidate` holds exactly the stills the rule
     /// compares (`SamePhotoSQL.candidatePredicate`) with every column the read names, and
     /// `idx_asset_metadata_same_photo` the record columns pairs are proposed from. On the
-    /// owner's catalog the read walked every row of every root, 545 MB of asset rows and the
+    /// reference catalog the read walked every row of every root, 545 MB of asset rows and the
     /// 190 MB record table, for 144,410 stills, 128,671 of them an Immich external library's
     /// assets the rule now leaves out; 15,737 remain.
     static let samePhotoIndexesMigrationIdentifier = "v67_same_photo_indexes"
@@ -2159,9 +2159,9 @@ nonisolated enum CatalogSchema {
     /// Schema v69: the name and size order indexes carry what the window's reads test a row
     /// by (`photoTestedColumns`), as the date order indexes have since v55, so a walk of All
     /// Media by name or size tests each row's visibility from its index entry instead of its
-    /// table row. On the owner's catalog the name order read 152,822 pages, 9.1 s with the
-    /// file's pages in the OS cache and 25.9 s in his tour, where the date order reads 3,578
-    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`). Each index is dropped and
+    /// table row. On the reference catalog the name order read 152,822 pages, 9.1 s with the
+    /// file's pages in the OS cache and 25.9 s in a tour, where the date order reads 3,578
+    /// (`docs/research/2026-11-16-window-reads-reference-catalog.md`). Each index is dropped and
     /// made again with its own leading columns.
     static let sortOrderTestedColumnsMigrationIdentifier = "v69_sort_order_tested_columns"
 
@@ -2234,7 +2234,7 @@ nonisolated enum CatalogSchema {
     ]
 
     /// v71: `media_asset` is rebuilt as a narrow table (ADR 0002,
-    /// `docs/research/2026-11-16-media-asset-split-study.md`). On the owner's catalog the row was
+    /// `docs/research/2026-11-16-media-asset-split-study.md`). On the reference catalog the row was
     /// about 2 KB and the table 545 MB, so every read that tests rows outside a covering index
     /// (the choices filter, the filter options, People's photos, the stacks) read about 140k
     /// pages. Three columns made most of it:
@@ -2419,7 +2419,7 @@ nonisolated enum CatalogSchema {
     /// (`RenderSignatureSQL.owedPredicate`, `SamePhotoSQL.candidatePredicate`); On This Day's
     /// without the tested columns it carried since v62, since a day's few hundred rows read
     /// from the narrow table cost the pages their entries did (587 against 590 on the
-    /// owner-shaped catalog) and the index shrinks by most of its 13 MB; and the chosen rows'
+    /// reference-shaped catalog) and the index shrinks by most of its 13 MB; and the chosen rows'
     /// (`ChosenRowsSQL`).
     static let hotAssetTableNewIndexes = [
         """
@@ -2549,7 +2549,7 @@ nonisolated enum CatalogSchema {
 
     /// v73: what the People gallery paints from (ADR 0047, "What the People UI reads"), so its
     /// read is of the people and the faces that define them, never of every face joined to its
-    /// photo (7.5–7.9 s of the 10.6 s gallery read on the owner's catalog, cold).
+    /// photo (7.5–7.9 s of the 10.6 s gallery read on the reference catalog, cold).
     /// - `person_summary`: each person's photo and video counts and newest face, which
     ///   `PeopleAssignment` computes from its read and writes when they change. The newest
     ///   face follows its face's moves and is cleared when the face is deleted, until the next
@@ -2557,7 +2557,7 @@ nonisolated enum CatalogSchema {
     /// - `idx_person_summary_cover`: the face side of that foreign key, so deleting or moving a
     ///   face seeks the summary naming it.
     /// - `idx_face_anchor`: the faces on the user's word or a seed (`FaceAssignmentColumn`
-    ///   3 and 2), the hard rules' facts, about 5,700 of the owner's 103,135 faces, covering
+    ///   3 and 2), the hard rules' facts, about 5,700 of the reference library's 103,135 faces, covering
     ///   what the gallery reads of them, so only their photos' rows are sought.
     ///
     /// Frozen as literals: what this migration did never changes with later code.
@@ -2657,7 +2657,7 @@ nonisolated enum CatalogSchema {
     /// choices filter that holds Not Rated (`media_choice`, which no chosen-rows seek serves)
     /// test each row they walk from its index entry. Without them each walked row's 2 KB table
     /// row was read: 21,500–29,000 pages for All Media by any order on a generated catalog of
-    /// the owner's shape, where the same walk with no filter reads 3,500–6,400
+    /// the reference shape, where the same walk with no filter reads 3,500–6,400
     /// (`docs/research/2026-11-17-every-order-the-window-asks-for.md`). Each index is dropped and
     /// made again with its own leading columns, as v69 made them, and the two columns after.
     static let orderFilterColumnsMigrationIdentifier = "v76_order_filter_columns"
@@ -2744,7 +2744,7 @@ nonisolated enum CatalogSchema {
     /// them, so an empty search answer leaves them out of the items it says it is still
     /// reading (`PhotoSearchIndex.unreadCount`), and that read visits only these rows' index
     /// entries, which carry the columns its condition tests (so no table row is read): 221 of
-    /// 167,250 on the owner's catalog. A new partial index over existing rows: the migration
+    /// 167,250 on the reference catalog. A new partial index over existing rows: the migration
     /// reads the table once and writes no row.
     static let noThumbnailComingMigrationIdentifier = "v77_media_asset_no_thumbnail_coming"
 
@@ -2760,9 +2760,9 @@ nonisolated enum CatalogSchema {
     /// Schema v78: `person_photo`, the photos each person is in, each with what the window
     /// orders and tests a photo by, held together by person (ADR 0047, "A person's photos"). A
     /// person's order reads their own rows, a contiguous range of the table, and sorts them: on
-    /// a generated catalog of the owner's shape, 803 pages cold for the 17,284 photos
+    /// a generated catalog of the reference shape, 803 pages cold for the 17,284 photos
     /// of the most photographed person, where the walk of the catalog's date index read 7,881
-    /// pages in 907 ms and a seek of each photo's table row 15,305 on the owner's
+    /// pages in 907 ms and a seek of each photo's table row 15,305 on the reference catalog
     /// (`docs/research/2026-11-17-a-persons-photos-in-order.md`).
     ///
     /// A row is a photo holding a face of the person that is a face (`is_not_face = 0`), with
@@ -3495,7 +3495,7 @@ nonisolated enum CatalogSchema {
     /// v83: a pair whose account asset the server has not read yet agrees on its modification
     /// time alone (ADR 0054). An external library's asset is listed when the server's scan finds
     /// its file, before the server reads it: it has no metadata, so no size, until its metadata
-    /// job runs, which on the owner's server waited behind 247,640 others
+    /// job runs, which on the test Immich server waited behind 247,640 others
     /// (`docs/research/2026-11-28-immich-unprocessed-assets.md`). The size-and-time check could
     /// never pass for it, so 930 photos already shown from the Camera Roll library showed again,
     /// as placeholders, from the account. The path proves the pair is one file, and the
@@ -3603,7 +3603,7 @@ nonisolated enum CatalogSchema {
     ///   writes both (`sourceHiddenSQL`, `writeSourceByteSizeSQL`), and the order indexes keep
     ///   covering the one they test.
     /// - `idx_media_asset_source_unread` holds those rows alone, for the account's count of
-    ///   them (`unreadSourceItemCount`): 943 of the owner's 149,581 on 2026-11-28.
+    ///   them (`unreadSourceItemCount`): 943 of the reference library's 149,581 on 2026-11-28.
     /// Rows are written before the index that holds them.
     static let sourceUnreadHiddenMigrationIdentifier = "v84_source_unread_hidden"
 

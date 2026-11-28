@@ -11,7 +11,7 @@ The two files are linked by Apple's content identifier, which both carry: the st
 Apple MakerNote (tag `0x0011`), the movie as `com.apple.quicktime.content.identifier`.
 MediaMetadata reports it as `MediaMetadataResult.contentIdentifier` from 0.8.2 (ADR 0039).
 
-A file name does not link them. The owner's Google Takeout folder holds `IMG_0002.HEIC` and
+A file name does not link them. A Google Takeout folder of the reference library holds `IMG_0002.HEIC` and
 `IMG_0002.MP4`, one Live Photo sharing identifier `66E9019A-…`, beside an unrelated
 `IMG_0002.JPG` from an iPad. Read with 0.8.2, the HEIC and MP4 report the identifier and the
 JPG reports none.
@@ -51,7 +51,7 @@ identifier.
 stored extraction revision of HEIF, JPEG and ISO BMFF records, as v7 did for 0.7.1, so
 `MetadataRefresher` re-reads them from local bytes.
 
-**A cloud-only original that may be half of a Live Photo is downloaded** (owner's decision,
+**A cloud-only original that may be half of a Live Photo is downloaded** (decided
 2026-10-31): its pair cannot form without its bytes. That is a record of a family that can
 carry the identifier, read before 0.8.2 (a NULL revision after v7 and v9), made by Apple.
 `MetadataRefresher` reads nothing for it and hands it to enrichment
@@ -73,7 +73,7 @@ cloud-only record is still not downloaded for a parser fix (ADR 0039).
 
 ## Rejected
 
-- **Pairing by stem**, as companions do (ARC-045). Proven wrong on the owner's own data
+- **Pairing by stem**, as companions do (ARC-045). Proven wrong on the reference library's data
   above, and it would fabricate a domain fact (MED-002).
 - **A stored `paired_still` column.** It answers the same question as the facts it is
   derived from, and every rename, move witness and reorganization settlement would have to

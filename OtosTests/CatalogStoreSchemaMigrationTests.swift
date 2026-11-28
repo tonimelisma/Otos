@@ -6,6 +6,7 @@ import Synchronization
 import Testing
 
 struct CaptureWallClockTests {
+    // Validates: ARC-030, ENR-012
     @Test func selectsLocalFloatingOriginalOverAbsoluteQuickTime() {
         let records = [
             CaptureTimestampRecord(
@@ -39,6 +40,7 @@ struct CaptureWallClockTests {
         #expect(wall?.precision == "localFloating")
     }
 
+    // Validates: ENR-012
     /// ADR 0039: the wall clock follows the library's `wallClockPrecedence`, so an AVI's
     /// RIFF recording date (ICRD/IDIT) names it when no earlier role is local, rather than
     /// the mtime-less-duration fallback. A later role never outranks an earlier one.
@@ -55,6 +57,7 @@ struct CaptureWallClockTests {
         #expect(CaptureWallClock.select(from: [riff, original])?.compact == 20_110_102_030_405)
     }
 
+    // Validates: ENR-012
     /// A local record whose components are not a real wall clock is left out, so the next
     /// role in `wallClockPrecedence` names the file.
     @Test func anInvalidLocalRecordFallsToTheNextRole() {
@@ -102,6 +105,7 @@ struct CaptureWallClockTests {
 
 @Suite(.testScope)
 struct CatalogStoreSchemaMigrationTests {
+    // Validates: APP-090
     /// The open applies a catalog's pending migrations one at a time, saying which of how
     /// many runs before each starts, and applies nothing to a current catalog (DES-121).
     @Test func pendingMigrationsRunOneAtATimeAndSayWhichOfHowMany() async throws {
@@ -189,6 +193,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(try schema(CatalogStore.emptyCatalogAtCurrentSchema.get()) == opened)
     }
 
+    // Validates: APP-090
     /// The open reports the libraries and accounts it holds, read before any migration runs,
     /// and finishes its reports when the catalog has opened (DES-121).
     @Test func theOpenReportsTheLibrariesItHoldsBeforeUpdating() async throws {
@@ -217,6 +222,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(newCatalogRoots == 0, "a new catalog holds none")
     }
 
+    // Validates: ARC-043, ENR-004
     /// ARC-043: a catalog whose migration history this build does not know — one a newer
     /// Otos wrote, or one from before the schema baseline — is refused unopened, and
     /// nothing in it or beside it is erased.
@@ -243,6 +249,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(FileManager.default.fileExists(atPath: fixture.thumbnail.path(percentEncoded: false)))
     }
 
+    // Validates: ARC-043
     /// A refused catalog cannot say whether a persisted root is registered, so a
     /// namespace lease for that root reports the catalog, never the root, as missing.
     /// ARC-043: a catalog written at the baseline opens through the additive
@@ -368,6 +375,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(rows == 1)
     }
 
+    // Validates: ENR-003
     /// v8 (ENR-003): the four `ts_*_unix` columns become the library's capture instant. A
     /// row with stored records takes the first role in `instantPrecedence` with an instant
     /// (digitized here, which the old order ranked behind QuickTime's creation date); a row
@@ -452,6 +460,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(indexes.count == 4)
     }
 
+    // Validates: ENR-024
     /// ADR 0047: v26 auto-tags faces. A face the user confirmed is the user's; a face of a
     /// group they ignored is held, never given a person by Otos; every other face is open
     /// for assignment. The ignored flag is gone, and a person may be hidden or a favourite.
@@ -491,6 +500,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(personColumns.isSuperset(of: ["is_hidden", "is_favorite"]))
     }
 
+    // Validates: ENR-024
     /// v82: a face never names no one while its row says it is someone's. A face an earlier
     /// delete left with no person but a seed is opened; a held face stays held; and deleting a
     /// person now opens their faces in the same statement, the key photo with them.
@@ -533,6 +543,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(deleted == [[nil, 0, 0], [nil, 4, 0], [nil, 0, 0]])
     }
 
+    // Validates: ENR-024
     /// ADR 0047: v28 names v26's feature flag the key photo. A person's chosen face stays
     /// chosen, and the one-per-person rule holds under the new name.
     @Test func theKeyPhotoMigrationKeepsEachPersonsChosenFace() async throws {
@@ -571,6 +582,7 @@ struct CatalogStoreSchemaMigrationTests {
         }
     }
 
+    // Validates: ENR-003
     /// ADR 0039: v23 puts the timeline on local capture time. A row with a wall clock —
     /// floating or offset-bearing — is its wall clock read as UTC, whatever its instant or
     /// file dates say; a row without one is its absolute time read in the zone the
@@ -637,6 +649,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(stale.isEmpty)
     }
 
+    // Validates: ENR-003
     /// ADR 0039: v56 puts an item without a wall clock on the second its absolute time
     /// falls in, as a wall clock is: an unread Immich still placed by the server's date
     /// with milliseconds sits where the read's wall clock of that second will put it, so the
@@ -688,6 +701,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(indexesAfter == indexesBefore)
     }
 
+    // Validates: APP-063
     /// ADR 0009: v13 turns the one enrichment stamp into the metadata stamp and gives every
     /// row the rendering stamp it already had in effect — except a card's or camera's still
     /// or RAW without a preview, whose thumbnail was QuickLook's or the camera's, not a
@@ -766,6 +780,7 @@ struct CatalogStoreSchemaMigrationTests {
         }
     }
 
+    // Validates: APP-081
     /// v80 (ADR 0054): a library's one prefix becomes the first of its set, and a pair whose
     /// rows have no digest takes its own key in place of the asset's path checksum, which two
     /// servers can share; a pair of a digested file keeps the digest.
@@ -874,6 +889,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(shown == ["IMG_1.JPG=shown", "a1/IMG_1.JPG=1"])
     }
 
+    // Validates: APP-089
     /// v64 (ADR 0054): every photo whose copies disagree takes one choice — the choices made
     /// before acts were ordered rank Liked, then Disliked, then Not Rated — and every copy
     /// learns whether it has a present copy. A later act on one copy is every copy's.
@@ -985,6 +1001,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(rendered == ["lib.jpg", "card.heif", "card.mov"])
     }
 
+    // Validates: ENR-016
     /// ADR 0035 backfill: the preview migration clears the enrichment stamps of library
     /// stills — so they re-enrich and gain a rendered thumbnail and preview — and leaves
     /// videos and card rows stamped.
@@ -1028,6 +1045,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(stamped == ["clip.mov", "card.jpg"])
     }
 
+    // Validates: ENR-022
     /// A RAW whose upright original could not be decoded was stamped as read with no faces.
     /// The migration clears the faces stamp of a RAW with no face row, so it is read again,
     /// and leaves a RAW with faces, a still that is no RAW and an unread RAW as they were.
@@ -1079,6 +1097,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(stamped == ["withFace.arw", "still.jpg"])
     }
 
+    // Validates: ENR-022
     /// Faces revision 2 only turns more detections away, so the migration clears the faces
     /// stamp of a photo with a face read under revision 1, and leaves a photo stamped with no
     /// face, a photo whose faces revision 2 read, and an unread photo as they were.
@@ -1133,6 +1152,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(stamped == ["faceless.jpg", "current.jpg"])
     }
 
+    // Validates: ENR-031
     /// Faces read from originals become faces read from stored previews (ADR 0047): the
     /// migration drops the library claim's index pair, which owed faces, and clears every
     /// faces stamp, with faces or without, so every still is read again from its preview; the
@@ -1161,6 +1181,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(indexes.isSuperset(of: [EnrichmentClaimGateway.libraryGlobalIndexName, EnrichmentClaimGateway.libraryRootIndexName]))
     }
 
+    // Validates: ARC-056
     /// v36 (ARC-056): every stored name key is made again from its row's path under its
     /// root's case capability — an empty key and the key of a path a reorganization moved a
     /// row from alike, for media and companions.
@@ -1222,6 +1243,7 @@ struct CatalogStoreSchemaMigrationTests {
         ])
     }
 
+    // Validates: ARC-062
     /// v37 (ADR 0052): each row's burst identifier is filled from the metadata record Otos
     /// already stored for it, so a burst stacks without its file being read again.
     @Test func theBurstMigrationFillsEachIdentifierFromItsStoredMetadata() async throws {
@@ -1274,6 +1296,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(identifiers == ["IMG_1.HEIC=B1", "IMG_2.HEIC=nil", "IMG_3.HEIC=nil"])
     }
 
+    // Validates: ARC-062
     /// v46 (ADR 0052): camera bursts no longer stack, so the frame-number column and its
     /// index go; an iPhone burst's identifier stays, read through `idx_media_asset_burst` again.
     @Test func theCameraBurstMigrationDropsTheFrameNumberAndKeepsBurstIdentifiers() async throws {
@@ -1312,6 +1335,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(identifiers == ["B1"])
     }
 
+    // Validates: ENR-022
     @Test func theFacesFromPreviewMigrationReReadsEveryStill() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -1367,6 +1391,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(indexes.isDisjoint(with: libraryIndexes))
     }
 
+    // Validates: ENR-005
     /// A HEIF rotated by its `irot` property was cataloged with no orientation before
     /// MediaMetadata 0.6.1. The migration clears the enrichment stamps of library HEIF
     /// rows with no orientation, so they re-enrich and read it anew, and leaves HEIFs
@@ -1436,6 +1461,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(stamped == ["tagged.heic", "plain.jpg", "card.heif"])
     }
 
+    // Validates: ENR-005
     /// ADR 0039: v7 renames stored format tokens to MediaMetadata's file-type names and
     /// clears the single-number revisions v6 stored, which per-family revisions replace.
     @Test func v7RenamesFileTypesAndClearsSingleNumberRevisions() async throws {
@@ -1496,6 +1522,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(rows == ["HEIF HEIF nil", "JPEG JPEG nil", "ARW ARW nil"])
     }
 
+    // Validates: ENR-019
     /// ADR 0041: v9 adds the content identifier a Live Photo pairs on, and makes the
     /// families that can carry it — HEIF, JPEG and ISO BMFF — stale, so `MetadataRefresher`
     /// re-reads them from local bytes. Other families keep their revision.
@@ -1562,6 +1589,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(rows == ["a/b.heic 'a/' - nil", "c.jpg '' - nil", "d.mov '' - nil", "e.arw '' - nil"])
     }
 
+    // Validates: ARC-003
     @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {
         let fixture = try await Self.makeUnknownHistoryFixture(identifier: "v999_future_history")
         let persistedRoot = try await makeTestDatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
@@ -1577,6 +1605,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(acquisition == .catalogUnavailable)
     }
 
+    // Validates: ARC-043
     @Test func unrecognizedLegacySchemaIsRefusedWithoutErase() async throws {
         let temp = try makeTestDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -1618,6 +1647,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
     }
 
+    // Validates: ARC-044
     @Test func importBatchQueriesReturnNewestFirst() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -1651,6 +1681,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(Set(newerIDs.map(\.relativePath.rawValue)) == ["b.jpg", "c.jpg"])
     }
 
+    // Validates: ENR-012
     @Test func enrichmentWritesCaptureWallCompact() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -1757,6 +1788,7 @@ private extension CatalogStoreSchemaMigrationTests {
 /// ADR 0047's catalog after the faces review: where faces were read from, birthdays in their
 /// one form, and key photos on the user's word.
 extension CatalogStoreSchemaMigrationTests {
+    // Validates: ENR-023
     /// v47 records the source each photo's faces were read from: its stamp where it has one,
     /// else the source the stamp would name now. A photo with no face row records none.
     @Test func theFacesReadSourceMigrationKeepsWhereFacesCameFrom() async throws {
@@ -1795,6 +1827,7 @@ extension CatalogStoreSchemaMigrationTests {
         #expect(sources == ["cleared.jpg 7 70", "none.jpg nil nil", "stamped.jpg 5 50"])
     }
 
+    // Validates: ENR-024
     /// v48 writes each birthday in its one form: a spelling of a valid date the rule before
     /// it accepted is rewritten, and one naming no date is cleared, so no stored birthday
     /// fails the People read.
@@ -1815,6 +1848,7 @@ extension CatalogStoreSchemaMigrationTests {
         #expect(birthdays.compactMap(\.self).allSatisfy { PersonBirthday($0) != nil })
     }
 
+    // Validates: ENR-024
     /// v49 makes a key photo chosen on a face Otos had guessed the user's word, as choosing
     /// one now is; every other face keeps whose word it was.
     @Test func aKeyPhotoOnAGuessBecomesTheUsersWord() async throws {
@@ -1845,6 +1879,7 @@ extension CatalogStoreSchemaMigrationTests {
         #expect(assignments == [FaceAssignmentColumn.user, .model].map(\.rawValue))
     }
 
+    // Validates: ENR-028
     /// v53: an empty text reading of a photo with a stored preview may be a preview that did
     /// not decode, so it goes and the photo is owed a reading from its preview again; a reading
     /// with lines stays current, and a photo with no preview, which is never read, keeps its row.
@@ -1891,6 +1926,7 @@ extension CatalogStoreSchemaMigrationTests {
         #expect(owed == ["empty.jpg"])
     }
 
+    // Validates: ENR-028
     /// v74: every stored reading that holds a word gets its folded row and its words in the
     /// text index, current or not; one with no lines, or none of two characters, gets none. The
     /// rows go with their reading's asset, by cascade and the trigger.
@@ -1936,6 +1972,7 @@ extension CatalogStoreSchemaMigrationTests {
         #expect(left.0 == 0 && left.1 == 0)
     }
 
+    // Validates: ENR-023
     /// v66: each face's embedding moves to its own row, numbered in face order, and the face
     /// row keeps everything else: its person and whose word it is, its likeness, its key
     /// photo, its rejections. The vector rows follow their face: a moved photo carries them and

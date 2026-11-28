@@ -6,7 +6,7 @@ import OSLog
 /// App updater guide
 ///
 /// The installed app updates itself with Sparkle (ADR 0059). CI builds every `main` commit
-/// whose `Required CI Gate` passed, signs it with the owner's development certificate and
+/// whose `CI gate` passed, signs it with the maintainer's Apple Development certificate and
 /// with Otos's own EdDSA update key, and publishes it with Sparkle's feed on GitHub Releases
 /// (`script/release.sh`). Sparkle checks the feed every hour (`SUScheduledCheckInterval`, its
 /// shortest), downloads a newer build in the background without showing anything, and hands

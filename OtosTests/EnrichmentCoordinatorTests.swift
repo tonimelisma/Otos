@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct EnrichmentCoordinatorTests {
+    // Validates: ENR-009
     @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
             store: makeTestStore(location: .inMemory),
@@ -64,6 +65,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-011
     @Test func eagerDeviceStagingDownloadsStillItemsBeforeVideos() async throws {
         let temp = try makeTestDirectory()
         let rootPath = LibraryRootPath(
@@ -122,6 +124,7 @@ struct EnrichmentCoordinatorTests {
         try await store.releaseEnrichmentClaims(reclaimed.map(\.asset.id))
     }
 
+    // Validates: ENR-009
     /// The eject drain drops work that was claimed but not started, and returns when the
     /// work that was running finishes — not after an interval.
     @Test func drainDropsQueuedWorkAndReturnsWhenRunningWorkFinishes() async throws {
@@ -165,6 +168,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-018
     /// ENR-018: a row the user is looking at is claimed ahead of queued background work and
     /// outside the claim window. With the window full of slow background claims, the next
     /// free slot goes to the visible row, not to the next queued one.
@@ -205,6 +209,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-017
     /// ENR-017: once an import starts copying from a card, the work queued on the card is
     /// dropped and nothing new starts there; the work already reading finishes. When the
     /// import ends the card enriches again.
@@ -255,6 +260,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-001
     @Test func visibleThumbnailLifecycleEnrichesViewportPriorityAssets() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -283,6 +289,7 @@ struct EnrichmentCoordinatorTests {
         #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(.products) })
     }
 
+    // Validates: ENR-014
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -525,6 +532,7 @@ struct EnrichmentCoordinatorTests {
 
     // MARK: - An idle coordinator writes nothing
 
+    // Validates: ENR-008
     /// ENR-009: a background claim that found nothing is not asked again until a Store change
     /// or a claim the coordinator gave back moves its inputs: an empty claim is still a write
     /// transaction, and an idle coordinator writes nothing.
@@ -562,6 +570,7 @@ struct EnrichmentCoordinatorTests {
 
     // MARK: - Claim-window release and retry exhaustion
 
+    // Validates: ENR-009
     @Test func exhaustedBackgroundRetriesReleaseClaimWindowForFreshCandidate() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -632,6 +641,7 @@ struct EnrichmentCoordinatorTests {
         #expect(await coordinator.workStateSnapshot().enriching == 1)
     }
 
+    // Validates: ENR-009
     /// ENR-009: a claimed row the ledger paces is deferred back to the Store while its
     /// source signature matches, and claimed at once when the source changed since the
     /// ledger entry was written.
@@ -704,6 +714,7 @@ struct EnrichmentCoordinatorTests {
         #expect(claimed.map(\.id) == [freshID])
     }
 
+    // Validates: ENR-011
     /// A camera attach offers every catalog item at once, while only
     /// `globalOutstandingLimit` may be outstanding. `stageDevice` must queue the
     /// overflow rather than take `seeds.prefix(available)` and discard the rest,
@@ -884,6 +895,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-014
     /// Readiness asks the one owner of where an original is (`locality(of:)`, ADR 0046 §4),
     /// never the file's `SF_DATALESS` flag, which says nothing for a source that stages its
     /// originals: a camera row whose original is not in its staging folder is not ready for
@@ -984,6 +996,7 @@ struct EnrichmentCoordinatorTests {
         #expect(state.deviceSeedsQueued == 0)
     }
 
+    // Validates: ENR-008, ENR-009, ENR-011
     @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {
         let store = makeTestStore(location: .inMemory)
         let executor = HeldMaterializationExecutor()
@@ -1061,6 +1074,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-013, ENR-022
     /// `EnrichWork.scope` is the value the Store's claim decided
     /// (`ClaimedEnrichmentCandidate.scope`), not one the coordinator re-derives from its own
     /// notion of root kind — a second owner of the same fact, able to disagree. A library

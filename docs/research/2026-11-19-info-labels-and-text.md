@@ -2,8 +2,8 @@
 
 ## Question
 
-The owner, after the descriptions were made plain: "investigate all the other stuff. labels, OCR
-text etc". The Info pane's In This Photo section shows Vision's confident scene labels as chips
+With the descriptions made plain, the rest of the Info pane needed the same look: labels, read
+text and the like. The Info pane's In This Photo section shows Vision's confident scene labels as chips
 and the text Vision read in the photo (ADR 0048, ADR 0050;
 `2026-11-12-text-and-labels-in-the-info-pane.md`). Neither had been graded against the
 pictures.
@@ -11,11 +11,11 @@ pictures.
 ## Method
 
 Read-only, on the installed catalog: 45 stills chosen by a stable hash of their path (20 with
-shown text, 20 without, the owner's five examples), each graded by looking at its preview
+shown text, 20 without, five examples reported by the user), each graded by looking at its preview
 beside its chips, its shown text and its place. Then each defect found was measured across
 the library: 166,171 stored scene readings, 25,899 stills with shown text, and 24 phone
-screenshots re-read with Vision for each line's box. The graded material names the owner's
-family and stays out of the repository.
+screenshots re-read with Vision for each line's box. The graded material names real people
+and stays out of the repository.
 
 ## Results [measured]
 
@@ -49,7 +49,7 @@ An inherited ancestor scores what its descendant does (vehicle 0.523 and automob
 material and textile 0.513), and one seen on its own scores well above (automobile 0.523 beside
 licence plate 0.339). **Rule:** a chip is left out when a shown descendant scores within 0.05
 of it. On the SUV `machine 0.535, vehicle 0.523, automobile 0.523, outdoor 0.514, land 0.514,
-license_plate 0.339` it shows **Automobile, Land, License plate**; on a family photo `people
+license_plate 0.339` it shows **Automobile, Land, License plate**; on a photo of people `people
 0.901, adult 0.881, child 0.566, baby 0.454` it shows **Adult, Child, Baby**. Search keeps
 every label.
 

@@ -62,6 +62,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// ARC-047: the coordinator must discover an attached source purely via
     /// the store's `RootPlanningChange` stream — no `setDestination`/`queueImport`
     /// intent. This pins the emit → subscribe → refreshSources chain that a field
@@ -126,6 +127,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047, ARC-057
     @Test func catalogChangeWakesWaitingForMetadataSource() async throws {
         let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -222,6 +224,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-046
     /// Regression: an enriching cloud destination bumps `planRevision` every few
     /// seconds without changing occupancy. Planning must settle to `.ready` and
     /// stay there — never livelock back into `.planning` — while a real occupancy
@@ -298,6 +301,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// ARC-046's enrichment clause: "enrichment overlay writes ... never advance it,
     /// so planning settles while a large cloud destination keeps enriching."
     ///
@@ -375,6 +379,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// The held plan is the answer for a *refresh*, never for rows it did not see. A
     /// card enumerates in pieces, so a plan can be proven over the first few files and
     /// then the card gains rows whose naming facts are pending. Holding that plan across
@@ -463,6 +468,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// A plan proven after a metadata wait replaces the wait's count. While the card is
     /// read again, the held plan cannot be offered, and a rebuild then showed the count
     /// from before the plan — "0 of 1 items" about a card whose every row had been read —
@@ -559,6 +565,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// A destination change is the rebuild whose inputs changed: the held plan's
     /// counts were measured against the previous library, so holding it across
     /// the rebuild (`aRebuildKeepsShowingThePlanItIsReplacing`) would draw those
@@ -635,6 +642,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-046
     @Test func destinationNamingChurnDoesNotDisturbReadyPlan() async throws {
         let temp = try makeTestDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -700,6 +708,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-046
     /// The other half of the role split: the *source's* capture walls are what the
     /// date/time destination name is derived from, so a naming write there must
     /// replan. Without this edge a card planned from filesystem mtime would keep
@@ -752,6 +761,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     @Test func destinationDefaultsToFirstAddedLibrary() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
@@ -773,6 +783,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     @Test func destinationDefaultSkipsUnavailableFirstLibrary() async throws {
         let temp = try makeTestDirectory()
         let firstURL = temp.appending(path: "Zebra", directoryHint: .isDirectory)
@@ -826,6 +837,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// "Dragging a library to the top changes [the default destination]" —
     /// including for a card already attached, which is the deliberate
     /// consequence of following the order rather than a fixed pick: the
@@ -860,6 +872,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// A destination picked via the pop-up survives an ordinary refresh even
     /// while it stays available — the "must survive from the moment it is made
     /// until that run finishes" rule (`import-bar.md`) — unlike the default,
@@ -934,6 +947,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// ARC-047: the destination picked for a source is remembered in
     /// `destinationBySource` and read back on every new attachment, so a
     /// re-attached source resumes at its remembered destination rather than
@@ -1101,6 +1115,7 @@ struct ImportBatchSidebarPolicyTests {
         #expect(resolved == .library(pictures.path))
     }
 
+    // Validates: APP-034
     /// The import counter stuttered: it stepped forward and then back, hundreds of times.
     ///
     /// `ByteProgressTracker` is monotonic where it computes a sample, so a decrease never
@@ -1129,6 +1144,7 @@ struct ImportBatchSidebarPolicyTests {
         #expect(!newer.isStale(comparedTo: newer), "a repeat of the current sample is not stale")
     }
 
+    // Validates: APP-034
     /// Either counter regressing is enough. Bytes move on every callback while the item
     /// count only moves when a file settles, so a reordered pair often disagrees on just one
     /// of them — checking only bytes would let the item count walk backwards, which is the

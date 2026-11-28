@@ -111,7 +111,7 @@ what those facts mean. That covers:
     An Immich asset is placed by the server's date, which has milliseconds, until its
     bytes are read. The read's wall clock for the same second then leaves it where it
     was. Migration v56 redefined the column; before it, 41,048 of 51,327 read Immich
-    stills on the owner's catalog had moved by under a second when read
+    stills on the reference catalog had moved by under a second when read
     (`docs/research/2026-11-14-whole-second-capture-time.md`).
   - The grid's day sections (`CatalogStore.orderedAssetIDs`), the Date sort, On This Day
     (`AnniversaryMatch`), search's date spans, People's birthday rules and Info's

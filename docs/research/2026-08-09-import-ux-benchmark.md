@@ -316,7 +316,7 @@ wire-service workflow and the wrong answer for Otos's stated "smallest correct m
 principle. Note also the Lightroom 6.2 lesson before removing anything a workflow already
 depends on: relocating a control is safe, deleting it is not.
 
-**Open question for the owner:** is per-item import selection in scope as a product
+**Open question:** is per-item import selection in scope as a product
 concept, given that grid selection is already overloaded — APP-021 defines the compared
 pair as "the selection capped at two". Item C assumes grid selection can additionally
 mean "items to import" while a card is the selected source. If it cannot, the plan-view

@@ -88,8 +88,8 @@ nonisolated extension CatalogChangedFacts {
     /// What the filter's options for the sidebar row `row` depend on: which rows the row
     /// holds, their kinds and formats, and the places named for them. Not which file is a
     /// copy: the options are read with every copy (`CatalogStore.filterOptionTally`), and 227 of
-    /// the 277 changes of the owner's tour named copies
-    /// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+    /// the 277 changes of a tour on the reference library named copies
+    /// (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
     static func filterOptionsInputs(of row: SidebarSelection) -> CatalogChangedFacts {
         var facts: CatalogChangedFacts = [.membership, .kindAndFormat, .grouping, .location, .placeNames]
         facts.formUnion(rowInputs(of: row))
@@ -276,7 +276,7 @@ nonisolated struct CatalogProjectionReads: Sendable {
     /// moved since: what a scope the user returns to shows while it is read again. A search is
     /// applied after the order is read, from the index's answer, so the order read for the
     /// descriptor without its search answers it: typing a search, changing it and clearing it
-    /// read no order (on the owner's catalog each read 164,762 rows again).
+    /// read no order (on the reference catalog each read 164,762 rows again).
     func heldOrder(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths paths: Set<LibraryRootPath>

@@ -23,8 +23,7 @@ set -euo pipefail
 # duplicate download.
 
 # Each tool has one version and one archive per platform: the macOS build for the Mac,
-# the Linux builds for a Claude Code cloud session's x86_64 VM (AGENTS.md, "Cloud
-# Sessions") and for an arm64 Linux container on the Mac, which runs them natively.
+# the Linux builds for a Claude Code cloud session's x86_64 VM (CLAUDE.md, "Where sessions run") and for an arm64 Linux container on the Mac, which runs them natively.
 # `member` is the binary's name inside the archive.
 SWIFTFORMAT_VERSION="0.62.1"
 SWIFTLINT_VERSION="0.65.0"

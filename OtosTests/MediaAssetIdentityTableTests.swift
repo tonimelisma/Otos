@@ -20,6 +20,7 @@ struct MediaAssetIdentityTableTests {
         "Vi\u{1EC7}t.jpg", "Vie\u{323}\u{302}t.jpg", "Ånge.jpg", "A\u{30A}nge.jpg", "\u{212B}nge.jpg",
     ]
 
+    // Validates: ARC-070
     /// Every pair, both ways: the table's order is `String`'s `<`, canonically equivalent
     /// spellings compare equal, and the byte order is the UTF-8's.
     @Test func theOrderIsStringsOrderAndTheByteOrderIsTheBytes() {
@@ -40,6 +41,7 @@ struct MediaAssetIdentityTableTests {
         #expect(disagreements.isEmpty, "\(disagreements.prefix(5))")
     }
 
+    // Validates: ARC-070
     /// A sort by path, by root and path, and by path then root (the order of faces) reads no
     /// string and takes the table's lock once per comparison at most, and orders as sorting the
     /// decoded strings does; IDs, faces and their policies order exactly so.
@@ -90,6 +92,7 @@ struct MediaAssetIdentityTableTests {
         #expect(faces.sorted(by: FaceAssignmentPolicy.pathOrder).map(\.asset.relativePath.rawValue) == decoded)
     }
 
+    // Validates: ARC-070
     /// A pass that tells libraries apart over a whole grouping — Duplicates' same-photo buckets
     /// — reads every ID's root number under one lock acquisition and decodes nothing, however
     /// many IDs it reads; the numbers are equal exactly where the roots are.
@@ -111,13 +114,14 @@ struct MediaAssetIdentityTableTests {
         #expect(Set(numbers).count == roots.count)
     }
 
+    // Validates: ARC-070
     /// The pause a maker of an ID can wait behind, counted as the slots one rebuild of the
     /// index moves under the lock: without sizing, crossing half the index rebuilds every
     /// place already made; sized at open from the catalog's rows, making that many IDs never
     /// rebuilds it.
     @Test func anIndexSizedAtOpenIsNeverRebuiltWhileIDsAreMade() {
         // 20,000 places cross four doublings unsized, the last moving 32,768 slots, and none
-        // sized for them: the property the owner's 165,000 shows, at an eighth of the inserts.
+        // sized for them: the property the reference library's 165,000 shows, at an eighth of the inserts.
         let entries = 20000
         let root = LibraryRootPath(rawValue: "/Sized")
         let paths = (0 ..< entries).map { MediaRelativePath(rawValue: "2026/\($0 % 365)/IMG_\($0).HEIC") }
@@ -138,6 +142,7 @@ struct MediaAssetIdentityTableTests {
         #expect(sized.count == entries && unsized.count == entries)
     }
 
+    // Validates: ARC-070
     /// The table's usage, as the memory line reports it: its pairs and roughly a hundred
     /// bytes each.
     @Test func usageCountsThePairsAndTheirBytes() {
@@ -151,6 +156,7 @@ struct MediaAssetIdentityTableTests {
         #expect(usage.bytes > 10000 * 40)
     }
 
+    // Validates: ARC-070
     /// The grid's bind of one screenful (120 tiles), as `MediaGridBridge` binds a tile — pin it,
     /// hold its stub, read its content — and then the catalog's details merged: what the
     /// table pays per tile, bounded so it cannot grow unseen.

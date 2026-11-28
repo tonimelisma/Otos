@@ -13,6 +13,7 @@ import Testing
 /// see the research doc's "Correction" section); these fixtures are that
 /// recorded data, not a guess.
 struct RemovableVolumeMonitorQualificationTests {
+    // Validates: APP-017
     @Test func diskImageIsRejected() {
         #expect(!RemovableVolumeMonitor.isPhysicalRemovableDevice(deviceModel: "Disk Image"))
     }
@@ -31,6 +32,7 @@ struct RemovableVolumeMonitorQualificationTests {
 /// initial wrong guess (`kDADiskDescriptionDeviceProtocolKey`, which reports
 /// the unhelpful `"Virtual Interface"` for a disk image, not `"Disk Image"`).
 struct RemovableVolumeMonitorLiveDiskImageTests {
+    // Validates: APP-017
     @Test func mountedDiskImageReportsDiskImageModel() throws {
         let image = try MountedTestDiskImage.attach()
         defer { image.detach() }
@@ -61,6 +63,7 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.reconcile([]) == [.detach(Self.card.identity, .unmounted)])
     }
 
+    // Validates: APP-017
     @Test func anUnmountRequestQuiescesAndARefusalResumes() {
         var tracker = RemovableVolumeTracker()
         _ = tracker.reconcile([Self.card])
@@ -75,6 +78,7 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.refusalLimitElapsed(identity: identity, request: request).isEmpty, "resumes once")
     }
 
+    // Validates: APP-017
     @Test func anUnmountThatSucceedsDetachesAndNeverResumes() {
         var tracker = RemovableVolumeTracker()
         _ = tracker.reconcile([Self.card])
@@ -86,6 +90,7 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.refusalLimitElapsed(identity: identity, request: request).isEmpty)
     }
 
+    // Validates: APP-017
     /// A second request (a retried eject) quiesces again; the first request's limit
     /// elapsing must not resume the source the second one is still unmounting.
     @Test func anOlderRequestsLimitNeverResumesANewerRequest() {
@@ -101,6 +106,7 @@ struct RemovableVolumeTrackerTests {
         #expect(tracker.refusalLimitElapsed(identity: identity, request: second) == [.resume(identity)])
     }
 
+    // Validates: APP-017
     @Test func aDisappearedCardDetachesAsDisconnectedMatchedByUUIDOrPath() {
         var tracker = RemovableVolumeTracker()
         _ = tracker.reconcile([Self.card])
@@ -117,6 +123,7 @@ struct RemovableVolumeTrackerTests {
 /// the mounted-volume listing holds it, so a completed mount asks for the set to be read
 /// again (`docs/research/2026-11-19-card-mount-reported-before-listed.md`).
 struct RemovableVolumeMountCompletionTests {
+    // Validates: APP-017
     @Test func aCompletedMountAsksForTheMountedSetToBeReadAgain() async {
         let center = NotificationCenter()
         let (events, continuation) = AsyncStream.makeStream(of: RemovableVolumeMonitor.Event.self)
@@ -133,6 +140,7 @@ struct RemovableVolumeMountCompletionTests {
         #expect(received == [.volumesChanged(.mountCompleted)])
     }
 
+    // Validates: APP-017
     @Test func anUnmountAsksForNothing() async {
         let center = NotificationCenter()
         let (events, continuation) = AsyncStream.makeStream(of: RemovableVolumeMonitor.Event.self)

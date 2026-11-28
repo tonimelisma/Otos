@@ -9,7 +9,7 @@ A hand-off (ADR 0037) gives another app one full-size file per photo, kept only 
 next launch. People also need files to keep: a set of photos at a chosen size and format
 in a folder of their own, to upload, mail or archive.
 
-Owner decisions (2026-10-25):
+Product decisions (2026-10-25):
 - Export is allowed, for several photos at once and into a library folder.
 - Formats JPEG, HEIC or Original; full size or a long edge, never enlarged; a quality
   setting; metadata kept, with a switch to remove location.
@@ -19,7 +19,7 @@ Owner decisions (2026-10-25):
 - One background job with progress and Cancel, under the 5 GB free-space floor.
 
 Export writes into a folder that may be a library or a cloud-synced folder, so it is one
-of the user-initiated file operations AGENTS.md lists, beside import and reorganization.
+of the user-initiated file operations CLAUDE.md lists, beside import and reorganization.
 
 ## Decision
 
@@ -75,7 +75,7 @@ of the user-initiated file operations AGENTS.md lists, beside import and reorgan
 
 - **Write into the destination under a hidden name, then rename.** A crash would leave a
   hidden, unjournaled file in the person's folder, which ARC-031 forbids.
-- **Overwrite or ask on a collision.** The owner chose import's naming: never overwrite,
+- **Overwrite or ask on a collision.** Export uses import's naming: never overwrite,
   never ask.
 - **Stop the whole job on the first failed photo.** Unlike a hand-off, an export is a set
   of independent files; the person keeps what was written and is told what was not.

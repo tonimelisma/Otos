@@ -71,6 +71,7 @@ struct MediaTransferPlannerTests {
         )
     }
 
+    // Validates: APP-029
     /// A copy whose size is unknown is counted as unknown, never as zero bytes, so the
     /// plan's byte total says it is a lower bound.
     @Test func aCopyWithAnUnknownSizeIsCountedAsUnknown() {
@@ -86,6 +87,7 @@ struct MediaTransferPlannerTests {
         #expect(plan.totals.copyByteCount == PartialByteCount(knownBytes: 10, unknownCount: 1))
     }
 
+    // Validates: ARC-046, ARC-046A
     @Test func matchingLiveFactsSkipEvenWhenDestinationIsNotInCatalog() {
         let source = Self.facts()
         let relative = source.relativePath
@@ -113,6 +115,7 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .skipPreexisting(destination: relative))
     }
 
+    // Validates: ARC-056
     @Test func caseInsensitiveDestinationDoesNotPlanCaseOnlyCopy() {
         let source = Self.facts(name: "IMG_1.JPG")
         var policy = ImportPolicy.from(.default)
@@ -187,6 +190,7 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .copy(destination: source.relativePath))
     }
 
+    // Validates: ARC-057
     @Test func zeroByteMediaIsExcludedFromCopyAndNaming() {
         let source = Self.facts(name: "empty.jpg", byteSize: 0)
         let plan = MediaTransferPlanner.planImport(
@@ -375,6 +379,7 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].destination == expected)
     }
 
+    // Validates: ARC-046
     @Test func blocksWhenNoUsableDate() {
         let source = Self.facts(name: "nodate.jpg", modified: nil, captureWallCompact: nil)
         let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
@@ -406,6 +411,7 @@ struct MediaTransferPlannerTests {
         #expect(secondPlan.entries.map(\.disposition) == [.copy(destination: Self.firstSuffix)])
     }
 
+    // Validates: ARC-046
     /// A companion lands beside its primary under the primary's name. Original naming
     /// keeps every member's exact spelling, the companion's extension included; date-time
     /// naming gives the companion its kind's extension.
@@ -452,6 +458,7 @@ struct MediaTransferPlannerTests {
         ]])
     }
 
+    // Validates: ARC-046A
     @Test func settledNameIsObservedAsOccupancyByNextBuild() throws {
         let source = Self.facts(name: "same.jpg")
         var policy = ImportPolicy.from(.default)
@@ -481,6 +488,7 @@ struct MediaTransferPlannerTests {
         #expect(resumed.entries[0].destination == Self.firstSuffix)
     }
 
+    // Validates: ARC-057
     @Test func policyThatNeverConsultsDateDoesNotWait() {
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
@@ -524,6 +532,7 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].destination == next)
     }
 
+    // Validates: ARC-046
     /// The invariant that makes planning one pass: the folders declared before any
     /// I/O cover every destination the plan actually chooses, suffix retries included.
     /// If a candidate could ever land outside this set, a single enumeration would no
@@ -559,6 +568,7 @@ struct MediaTransferPlannerTests {
         #expect(Set(plan.entries.compactMap(\.destination)).count == 4)
     }
 
+    // Validates: ARC-046
     /// An unreadable destination folder must never read as free space. Planning an
     /// overwrite on an unread namespace is the one failure this design could
     /// introduce, so absence is a claim only an enumerated folder can support.
@@ -697,6 +707,7 @@ struct MediaTransferPlannerTests {
         return try #require(facts.first { $0.id == id }).isSourceUnreadable
     }
 
+    // Validates: ARC-057
     @Test func unreadableSourceIsBlockedNotSilentlySkipped() {
         let root = LibraryRootPath(rawValue: "/Volumes/Card")
         let relative = MediaRelativePath(rawValue: "IMG_0001.JPG")

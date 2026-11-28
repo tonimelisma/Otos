@@ -7,6 +7,7 @@ import Testing
 /// also republishes (ARC-038).
 @Suite(.testScope)
 struct CatalogStoreScanFreshnessTests {
+    // Validates: ARC-038
     /// A scan's baseline holds each row's facts as their digest, which is equal exactly when
     /// the upsert's `WHERE` would find the facts equal: text byte for byte (a precomposed and a
     /// decomposed name differ), a missing value apart from an empty one, and no two facts run
@@ -35,6 +36,7 @@ struct CatalogStoreScanFreshnessTests {
         #expect(_isPOD(ScanFactDigest.self))
     }
 
+    // Validates: ARC-038, ARC-039
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -75,6 +77,7 @@ struct CatalogStoreScanFreshnessTests {
         #expect(abs(refreshedModified.timeIntervalSince1970 - originalModified.timeIntervalSince1970) > 60)
     }
 
+    // Validates: ARC-038
     /// A rescan that finds every file as the catalog holds it takes no write transaction,
     /// for its batches or its companions: only a file whose facts differ reaches the writer
     /// (`ScanBaseline`), and one changed file is one row written.

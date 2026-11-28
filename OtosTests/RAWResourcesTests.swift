@@ -7,6 +7,7 @@ import Testing
 /// (`ImageRenderer.fetchResources`, the wait `openRAW` makes on `CIRAWFilter.downloadResources`).
 @Suite(.testScope)
 struct RAWResourcesTests {
+    // Validates: ENR-036
     /// Core Image reports on a queue of its own, after the fetch has returned: the wait ends
     /// with that report, not before it.
     @Test func theWaitEndsWithTheReportFromAnotherQueue() async throws {
@@ -23,6 +24,7 @@ struct RAWResourcesTests {
         #expect(reported.isSet, "the fetch returned only after Core Image reported")
     }
 
+    // Validates: ENR-036
     /// A failed or timed-out download is classified by its domain and code, and is not a
     /// `RenderError`: it says nothing about the file.
     @Test func aFailedDownloadThrowsItsDomainAndCode() {

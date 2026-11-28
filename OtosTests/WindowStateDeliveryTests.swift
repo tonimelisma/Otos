@@ -4,12 +4,13 @@ import Testing
 
 /// The window applies the newest publication there is when its consumer runs (ADR 0032,
 /// rule 5). A publication a newer one replaced while the main actor was busy is never
-/// applied: on the owner's Mac each such apply was one more main-thread turn, about 60 ms,
+/// applied: on the test Mac each such apply was one more main-thread turn, about 60 ms,
 /// before an act's own state reached the grid
 /// (`docs/research/2026-11-16-grid-applies-during-motion.md`).
 @Suite(.testScope)
 @MainActor
 struct WindowStateDeliveryTests {
+    // Validates: ARC-068
     /// Background republishes and an act's publication all arrive while the consumer is
     /// parked on its doorbell and before the main actor runs it: one apply runs, it applies
     /// the act's state, and what the window shows besides the hidden tile is what it showed.
@@ -46,6 +47,7 @@ struct WindowStateDeliveryTests {
         #expect(model.focusedAssetID == ids[2])
     }
 
+    // Validates: ARC-068
     /// The relay puts each publication in the mailbox as it arrives, off the main actor: with
     /// the main thread held, a consumer off the main actor still takes the act's state. A
     /// relay bound to the main actor could not run meanwhile, and this test would never end.
@@ -83,6 +85,7 @@ struct WindowStateDeliveryTests {
         #expect(await takenIterator.next() == act.mediaGrid.orderedAssetIDs)
     }
 
+    // Validates: ARC-068
     /// The mailbox hands one consumer the newest value and how many it replaced; a ring
     /// whose value was already taken waits again, and a finished mailbox delivers what it
     /// still holds, then ends.

@@ -41,6 +41,7 @@ struct CatalogConnectionActivityTests {
         case opened(Result<DatabasePool, any Error>)
     }
 
+    // Validates: ARC-072
     /// A catalog opened while another connection holds the file's exclusive lock (the last
     /// connection to a WAL file holds it while it closes, to checkpoint and remove the log)
     /// waits for the lock, writer first, and opens once it is let go, rather than failing the

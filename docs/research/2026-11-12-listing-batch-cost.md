@@ -2,7 +2,7 @@
 
 ## Question
 
-After #681 and #682 the owner's 147k-asset Immich account finished its first sync, but
+After #681 and #682 the test Immich server's 147k-asset account finished its first sync, but
 applying one 500-line batch took about 0.2 s at the start and 1.2–3.8 s at 95k–147k rows,
 and `catalog.sqlite-wal` reached 257 MB. Where does a batch's time go, why does it grow
 with the account, and what is the owner fix?
@@ -13,7 +13,7 @@ with the account, and what is the owner fix?
    session's `sync-apply.trace`), exported with `xctrace export` and summed per frame.
 2. The installed app's own unified log after the sync (pid 59518, 12:55–16:07): the
    window's order query and every grid structural apply on a 158–164k-item catalog.
-3. The window's order query run with `sqlite3` against a backup of the owner's catalog
+3. The window's order query run with `sqlite3` against a backup of the reference catalog
    (967 MB; deleted after the run), cold and after `cat` had read the file into the page
    cache.
 4. The Store's batch write replayed in plain SQLite (Python, the catalog's own schema,
@@ -82,7 +82,7 @@ which also drives Duplicates and People — and search, the base tree's batch se
 times more work at 100k than at 10k. The fixed tree removes the derived owners' share
 (about 1.1 s a batch at 100k); what still grows is the window's own publication, one O(n)
 order query per publication (144 publications for 204 batches). Blocks read from disk were
-0 throughout: the probe's catalog fits in the page cache, which the owner's 1 GB catalog
+0 throughout: the probe's catalog fits in the page cache, which the reference library's 1 GB catalog
 does not.
 
 ### Six of the eight readers can learn nothing from a listing batch
@@ -122,9 +122,9 @@ publication changed (222 of the 224 applies inserted and removed nothing, reorde
   main actor (~20 s at 158k items) and a layout solve that grows with day sections on it
   (~1.1 s median at 158k). The grid's mutation gate applies only the newest state, so at
   that size most publications made during a listing are superseded before they are
-  drawn. Removing the main-thread term needs a different layout model, which the owner
+  drawn. Removing the main-thread term needs a different layout model, which was
   ruled out on 2026-11-04 when it cost 150–200 ms; at an Immich account's size that
-  decision is his to revisit.
+  decision is open to revisit.
 - Disproved: that the grid rebuilds its snapshot for publications whose order did not
   change. The mutation gate already turns identical identities into a visible-tile refresh;
   the installed app's applies all changed the order (222 reorders, 2 insertions).

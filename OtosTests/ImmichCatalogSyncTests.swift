@@ -244,6 +244,7 @@ struct ImmichCatalogSyncTests {
 
     private static let complete = ImmichSyncEvent.complete(ack: "SyncCompleteV1|1")
 
+    // Validates: APP-063
     @Test func aPassListsImagesAndVideosWithTheirSizesAndSkipsWhatIsNotOtosMedia() async throws {
         let fixture = try await Fixture.make()
         let server = ScriptedServer([[
@@ -269,6 +270,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// An asset Immich trashes is hidden and keeps its overlay; restoring it shows it with
     /// that overlay. A permanent deletion purges it.
     @Test func trashHidesAndKeepsOverlayAndAPermanentDeletionPurges() async throws {
@@ -301,6 +303,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     @Test func aSizeReportedInALaterPassReachesItsRow() async throws {
         let fixture = try await Fixture.make()
         let server = ScriptedServer([
@@ -317,6 +320,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A reset discards the cursor: the reset is acknowledged, the stream read again in
     /// full, and a row the full listing no longer names is purged.
     @Test func aResetResyncsInFullAndPurgesWhatItNoLongerLists() async throws {
@@ -341,6 +345,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// The resync a reset owes outlives a stream that drops after some of its batches were
     /// acknowledged. The server resumes a plain stream after those batches, so the next pass
     /// asks it to read from zero again: only a stream that lists everything and reaches its
@@ -375,6 +380,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A resync settles only the request it started from: one recorded while it ran (a new
     /// session, another reset) stays owed after it completes.
     @Test func aResyncRequestedWhileOneRunsStaysOwed() async throws {
@@ -392,6 +398,7 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
+    // Validates: APP-063
     /// A root that cannot get a listing lease is not a teardown: the pass says so, and its
     /// owner tries again.
     @Test func aPassWithoutALeaseIsNotStopped() async throws {
@@ -404,6 +411,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A stream that ends before `SyncCompleteV1` was cut short: what it applied stays, but
     /// the pass is not a sync, so no one is told the catalog is current.
     @Test func aStreamCutShortIsNotASync() async throws {
@@ -420,6 +428,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-064
     /// A pass reports that its server answered as soon as the first line of its stream is
     /// read, once, before any batch is applied and before the pass ends, so a first sync that
     /// takes minutes is online while it runs. A stream that fails before any line reports
@@ -447,6 +456,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-064
     /// A pass reports its listing applied once the stream reaches its end and before any of
     /// the server's images is fetched, which on a first sync takes far longer; a pass whose
     /// stream fails reports no listing.
@@ -476,6 +486,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-096
     /// A pass says how far its listing is after each batch it applied, then how far its images
     /// are of the rows owed them when the fetch began: what the Activity row shows
     /// (`ImmichAccountStatus.SyncProgress`).
@@ -519,6 +530,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-096
     /// The count the image fetch reports against is the rows its walk reads: exact, through
     /// the walk's own index.
     @Test func theOwedImagesCountIsTheRowsTheWalkReads() async throws {
@@ -541,6 +553,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// Every acknowledgement follows the Store's apply of its lines: a batch the
     /// connection dropped inside is never acknowledged, and the next pass replays it.
     @Test func aDroppedConnectionAcknowledgesOnlyAppliedBatches() async throws {
@@ -640,6 +653,7 @@ struct ImmichCatalogSyncTests {
         }
     }
 
+    // Validates: APP-065
     /// A pass fetches the server's preview once for each row owed one: a still gets the
     /// preview at the server's size and a thumbnail drawn from it, a video only the
     /// thumbnail. A file that changes is owed new ones; nothing else is asked for again.
@@ -682,6 +696,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-065
     /// An edited still shows Otos's rendering, never the server's (ADR 0046 §7): once it
     /// has an edit, a changed file does not ask for the server's preview again, on this
     /// pass or any later one.
@@ -713,6 +728,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A preview the server answers it does not have is skipped, not an end to the pass,
     /// and is not asked for again: not by the next pass, only once a later listing of the
     /// asset says the server has made its previews. Any other refusal still ends the pass.
@@ -742,6 +758,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-065
     @Test func aPreviewTheServerDoesNotHaveIsNotAskedForAgain() async throws {
         let fixture = try await FileFixture.make()
         let preview = try Self.jpeg(width: 300, height: 200)
@@ -821,6 +838,7 @@ struct ImmichCatalogSyncTests {
         }
     }
 
+    // Validates: APP-065
     /// An asset the server lists without a thumbhash has no previews yet, and a Live
     /// Photo's motion part never has any (Immich makes none for a hidden asset): neither is
     /// asked for its images, so a pass asks for only the still's.
@@ -846,6 +864,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-065
     /// A preview that is no image is skipped and asked for again next pass; a server that
     /// stops answering ends the product pass, and the rest stay owed.
     @Test func productsTheServerCannotGiveStayOwed() async throws {
@@ -872,6 +891,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A folder listed in full purges the rows inside it that the batch does not list, and
     /// never a sibling: not one whose name sorts inside the folder's range (`a-b`, `a.jpg`),
     /// nor one after it (`a2`).
@@ -907,6 +927,7 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A batch that only adds rows is announced as added, which the owners of derived facts
     /// do not read; a batch that changes, hides or deletes a row the catalog holds is a
     /// catalog change everyone hears.
@@ -962,6 +983,7 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A new row that comes with a digest another copy holds is a new copy: its batch is
     /// announced as added and as a change of which files are copies, naming that row, so
     /// Duplicates and People hear it without waiting for its metadata. A new row whose digest
@@ -1009,6 +1031,7 @@ struct ImmichCatalogSyncTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A deleted still names the Live Photo movie it leaves, whose pairing the deletion moved:
     /// an owner keeping a memory per asset cannot find it from a row that is gone, and the
     /// movie, no longer a paired motion, is owed what a photo is.
@@ -1076,6 +1099,7 @@ struct ImmichCatalogSyncTests {
         )
     }
 
+    // Validates: APP-063
     /// A motion part is listed in its still's folder under its own name, with its own
     /// size: the still's size never lands on it, nor its size on the still.
     @Test func aLivePhotosMotionPartIsListedInItsStillsFolder() async throws {
@@ -1101,6 +1125,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A still whose motion part's own lines were acknowledged in an earlier pass lists it
     /// from the server's facts. A later size for the motion reaches its row by its own ID.
     /// A still that no longer links it takes it out; deleting the still takes the rest.
@@ -1136,6 +1161,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A trashed still hides its motion part with it; a motion part deleted on its own
     /// leaves the still.
     @Test func aMotionPartFollowsItsStillIntoTheTrashAndGoesAloneWhenDeletedAlone() async throws {
@@ -1160,6 +1186,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A motion part's own line, arriving without its still's, refreshes the row it already
     /// has: its modification time and size, in its still's folder, hidden as the still is.
     @Test func aMotionPartsOwnLineRefreshesItsRowWhereItLives() async throws {
@@ -1185,6 +1212,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A video listed on its own that becomes a Live Photo's motion part leaves its own
     /// folder: its `hidden` line removes the row it had there, whether the still comes in
     /// a later pass or the line follows the timeline line in the same batch, and the motion
@@ -1218,6 +1246,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A motion part whose own line came earlier in the pass is listed from it when its
     /// still arrives, with no request to the server, even before the server has reported its
     /// size. With no size and, a hidden asset, none of the server's images, it is one the
@@ -1243,6 +1272,7 @@ struct ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A motion part the server refuses to describe never holds back the pass: its still is
     /// listed, the batch acknowledged, and a motion row the still's folder already has keeps
     /// its overlay. A server failure still fails the pass.
@@ -1282,6 +1312,7 @@ struct ImmichCatalogSyncTests {
 // MARK: - The rows on screen first
 
 extension ImmichCatalogSyncTests {
+    // Validates: APP-065
     /// A burst listed after the last pass, three rows owed the server's images, the walk not
     /// reached them: the rows on screen get theirs at once, in the screen's order, and no
     /// other row's is asked for.
@@ -1318,6 +1349,7 @@ extension ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-065
     /// The loop for the rows on screen fetches as soon as they are shown, with no pass
     /// running: what a listed row on screen waited for was the next poll's pass.
     @Test func showingRowsFetchesTheirImagesWithNoPassRunning() async throws {
@@ -1354,6 +1386,7 @@ extension ImmichCatalogSyncTests {
 // MARK: - A failed pass answers nothing (ADR 0032 rule 4)
 
 extension ImmichCatalogSyncTests {
+    // Validates: APP-063
     /// A pass whose server did not answer leaves its request owed: the account never reads as
     /// caught up on a sync it did not make. The next pass that syncs answers it.
     @Test func aPassTheServerFailedLeavesItsRequestOwedUntilOneSyncs() async throws {
@@ -1394,6 +1427,7 @@ extension ImmichCatalogSyncTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-063
     /// A fetch of the rows on screen that the server failed answers nothing either: the sync
     /// keeps owing it, and the next pass whose walk fetches those rows' images answers it.
     @Test func aFailedFetchOfTheRowsOnScreenStaysOwedUntilAPassFetchesThem() async throws {

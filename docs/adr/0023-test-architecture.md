@@ -27,8 +27,8 @@ all traceable to hosting:
 2. **The hosting hazard needed policing.** Because the app ran in-process, it
    could reach production data, so `RunContext.isTestRun`, `TemporaryDefaults`,
    68 hand-written `defer`s, a formally-accepted plist leak, and two shell
-   scripts (`script/check-production-data-untouched.sh`,
-   `script/purge-test-preference-domains.sh`) existed to prevent it. 1,343
+   scripts (script/check-production-data-untouched.sh,
+   script/purge-test-preference-domains.sh) existed to prevent it. 1,343
    leaked preference domains were present on 2026-08-16, costing ~21 s per
    `verify.sh` run before even reaching the leak's actual cause.
 3. **The leak's cause was `PreferencesDomain.suite` minting a real
@@ -96,13 +96,13 @@ proves that two independently-constructed actors given "the same domain" (by
 name, not by object reference) must observe each other's writes, which only a
 registry inside `makeDefaults()` itself — reachable identically from both app
 and test construction sites — can preserve without rewiring how every
-consumer is wired together. `OtosTests/TemporaryDefaults.swift` and all 68
+consumer is wired together. OtosTests/TemporaryDefaults.swift and all 68
 `defer { cleanUp() }` call sites are gone: an in-memory domain needs no
 cleanup.
 
 **`script/verify.sh` no longer polices what it no longer needs to.**
-`script/check-production-data-untouched.sh` and
-`script/purge-test-preference-domains.sh` are deleted — tests cannot reach
+script/check-production-data-untouched.sh and
+script/purge-test-preference-domains.sh are deleted — tests cannot reach
 production data (they never launch the app, and preferences are in-memory).
 `script/build.sh` runs `build-for-testing` and `script/test.sh` runs
 `test-without-building` instead of a plain `build` followed by a

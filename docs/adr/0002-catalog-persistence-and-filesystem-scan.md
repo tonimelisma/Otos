@@ -176,7 +176,7 @@ held for seconds at a time by background reads, and a visible tile's detail read
 2.5–4.5 s for one with 0 ms of its own work
 (`docs/research/2026-11-14-scope-switch-and-background-laps.md`); a second, read-only pool of
 two readers for the tiles and the inspector fixed only those two reads, and the window's
-order and options still waited (window waits 1.9 s at p95 on a generated owner-size catalog
+order and options still waited (window waits 1.9 s at p95 on a generated reference-size catalog
 with every owner running). One pool with admission replaced it: measured on the same
 reproduction, `docs/research/2026-11-16-window-read-lanes.md`. Rejected: a lower QoS for the
 background readers (background work ten times slower in a loaded run, no window gain), and
@@ -229,7 +229,7 @@ the next write restarts the log from its start, and its commit truncates the fil
 writer's `journal_size_limit`, which is the same budget (or to that commit's own frames, if
 more). The file therefore peaks at the
 budget plus what is written during the longest read in flight, and returns to the budget
-after it. On a generated catalog of the owner's size, with a 20 s background read in flight,
+after it. On a generated catalog of the reference size, with a 20 s background read in flight,
 a truncating checkpoint behind GRDB's barrier held every main-pool read for 20,055 ms; the
 passive checkpoint took 3 ms and nothing waited, and with 17–25 s readers during heavy
 writes the file peaked at 226–230 MB and returned to 64 MiB (the window read lanes' proof of
@@ -245,7 +245,7 @@ copied first).
 
 ### Schema Migrations At Launch
 
-The catalog opens, and migrates, before the window can show any of it: on the owner's 2.5 GB
+The catalog opens, and migrates, before the window can show any of it: on the reference library's 2.5 GB
 catalog the first launches after new migrations took 22–43 s against 9–86 ms for one with
 none, and the log said nothing about the wait
 (`docs/research/2026-11-15-catalog-open-cost.md`). So:
@@ -266,7 +266,7 @@ none, and the log said nothing about the wait
 - **A migration enforces foreign keys as it runs** (`foreignKeyChecks: .immediate`, every
   registration). GRDB's default turns enforcement off and then runs `PRAGMA foreign_key_check`,
   which reads every table that declares a foreign key — nearly the whole file, 0.6–1.5 s warm
-  and 8.8 s cold per migration on the owner-shaped catalog — to find violations a migration
+  and 8.8 s cold per migration on the reference-shaped catalog — to find violations a migration
   that writes no key cannot cause. No registered migration rebuilds a table, deletes a row
   another table refers to or changes a referenced key, so with enforcement on no foreign-key
   action fires and the outcome is the default's. A migration that must rebuild a table
@@ -295,7 +295,7 @@ none, and the log said nothing about the wait
 - **The open compacts a file a tenth free.** SQLite reuses a dropped table's pages but
   never returns them, and `VACUUM` cannot run inside a migration's transaction, so after the
   migrations the open rewrites the file (`CatalogStore.compactIfOwed`) when at least a tenth
-  of its pages and 256 MB are free — v71 left 634 MB of the owner's 2.8 GB free, 23.6 % — and says so
+  of its pages and 256 MB are free — v71 left 634 MB of the reference library's 2.8 GB free, 23.6 % — and says so
   (`Optimizing catalog…`, DES-121). It needs twice the used pages free above the free-space
   floor (a temporary copy, then the log, ADR 0027); without that room it is skipped, logged
   (`op=catalog.compaction phase=skipped reason=freeSpaceFloor`), and the next open asks again.
@@ -305,13 +305,13 @@ none, and the log said nothing about the wait
   INTO` a new file and a rename (two copies of the catalog on disk and a file swap under
   open connections).
 - **A migration's PR states its cost** — milliseconds and WAL bytes — measured on a generated
-  catalog of the owner's shape (about 167,000 assets, 2 GB: the research note's recipe), and
+  catalog of the reference shape (about 167,000 assets, 2 GB: the research note's recipe), and
   what in its outcome needs that time when it is more than a second.
   `CatalogMigrationCostTests` measures it (`OTOS_SCALE_TEST=1 script/check.sh --only
-  CatalogMigrationCostTests`): it generates that catalog (`OwnerShapedCatalog`), puts it back
+  CatalogMigrationCostTests`): it generates that catalog (`ReferenceShapedCatalog`), puts it back
   to the schema before the newest migration (the statements that undo it, kept beside the
   test), runs the Store's own pass over the newest, and writes its milliseconds, the WAL it left and the file's size before and after to
-  `build/migration-cost/owner.txt`. The owner's file is fragmented on disk (its asset table
+  `build/migration-cost/reference.txt`. The reference catalog's file is fragmented on disk (its asset table
   1.2 % sequential), so a migration that reads a whole table there is slower than measured;
   the PR says so.
 
@@ -470,11 +470,11 @@ During a filesystem scan, discovered asset changes are accumulated by the catalo
 owner and flushed to SQLite on the background scan cadence when pending changes
 exist. This is a time-based cadence, not a file-count threshold, with one exception:
 a walk's first batch goes out as soon as it holds `CatalogScanner.firstBatchCount`
-(256) files. A batch's write costs each of its rows (about 0.3 ms at the owner's
-schema), so a first batch of a whole cadence's files — 8,729 of a new 160,000-file
+(256) files. A batch's write costs each of its rows (about 0.3 ms at the reference
+library's schema), so a first batch of a whole cadence's files — 8,729 of a new 160,000-file
 library — kept every row off the window for its 2.6 s write; 256 files are about a
 window of tiles and are written in tens of milliseconds
-(`docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+(`docs/research/2026-11-17-a-new-library-at-the-reference-size.md`).
 
 `CatalogProjection` publishes SwiftUI-visible background scan state on its
 background publication cadence when pending view changes exist. Direct user
@@ -489,7 +489,7 @@ length), equal exactly when the facts are byte for byte. A whole root's baseline
 the walk's length, and the five strings a row held were 127 MB of a 160,000-row root's walk. Each batch is compared with it off the Store actor, and only
 files whose row is missing or differs reach the writer; companions are written only when
 the pass changed a media row or observed companions that differ. A pass over an
-unchanged scope therefore takes no write transaction. Measured on the owner's library
+unchanged scope therefore takes no write transaction. Measured on the reference library
 before this rule: six batches of a 16,924-file root that changed nothing held the writer
 about 1.9 s in total, four statements per file inside each transaction. The baseline
 decides only what may be skipped: deletion is still decided from the rows read at the
@@ -508,7 +508,7 @@ or failed scan.
 ### Change Journal
 
 A launch does not walk a fixed library when the filesystem itself can say nothing under it
-changed since the catalog last reflected it. Measured before this rule on the owner's library:
+changed since the catalog last reflected it. Measured before this rule on the reference library:
 every launch listed both libraries in full, 16,924 and 788 files, eight seconds of walk that
 changed nothing, in the same first seconds as the first grid and People's first pass; the cloud
 provider's File Provider extension, started with Otos, ran at 80–90 % CPU for minutes while the
@@ -595,7 +595,7 @@ hydration with no event; this session could not drive a provider). A provider ch
 did not record would stay out of the catalog until the next walk: the root's next
 `uuidChanged`/`rootChanged`/dropped fallback, or the 24-hour integrity walk of a long session.
 
-Measured cost of v75 on a generated catalog of the owner's shape (2,272,321,536 bytes, `CatalogMigrationCostTests` with `OTOS_SCALE_TEST=1`): 4 ms and 32,992 WAL bytes; the file's size is unchanged and its new table takes one 4,096-byte page.
+Measured cost of v75 on a generated catalog of the reference shape (2,272,321,536 bytes, `CatalogMigrationCostTests` with `OTOS_SCALE_TEST=1`): 4 ms and 32,992 WAL bytes; the file's size is unchanged and its new table takes one 4,096-byte page.
 
 ### Running-App Filesystem Watching (V1)
 

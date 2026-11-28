@@ -7,6 +7,7 @@ import Testing
 /// live renderer and the stored-image renderer agree.
 @Suite(.testScope)
 struct EditRenderingTests {
+    // Validates: APP-046
     @Test func exposureBrightensAndANeutralRecipeLeavesThePhotoAsItIs() async throws {
         let url = try makeTestDirectory().appending(path: "gradient.jpg")
         try writeGradientJPEG(to: url)
@@ -32,6 +33,7 @@ struct EditRenderingTests {
         #expect(toneSpread(contrasty.image) > toneSpread(neutral.image))
     }
 
+    // Validates: APP-046
     /// Highlights runs −100…+100 like Lightroom's: down darkens the bright end, up lifts
     /// it, and neither moves the dark end much.
     @Test func highlightsLowerOrLiftTheBrightTonesOnly() async throws {
@@ -51,6 +53,7 @@ struct EditRenderingTests {
         #expect(try abs(meanColor(lifted, in: dark).green - darkBase) < 0.02)
     }
 
+    // Validates: APP-047
     @Test func aStillsWhiteBalanceVibranceAndSaturationMoveItsColor() async throws {
         let url = try makeTestDirectory().appending(path: "gray.jpg")
         try writeSolidJPEG(to: url, red: 0.5, green: 0.5, blue: 0.5)
@@ -71,6 +74,7 @@ struct EditRenderingTests {
         #expect(abs(desaturated.red - desaturated.blue) < abs(neutral.red - neutral.blue) / 4)
     }
 
+    // Validates: APP-047
     /// The picker on a warm-cast still finds the relative white balance that renders the
     /// clicked point gray.
     @Test func pickingANeutralPointOnAStillGraysIt() async throws {
@@ -92,6 +96,7 @@ struct EditRenderingTests {
         #expect(abs(color.blue - color.green) < 0.02)
     }
 
+    // Validates: APP-048
     /// Auto crop and Auto straighten read only the photo being edited: a read for one the user
     /// has left develops nothing, and the open photo still reads.
     @Test func anAnalysisReadForAPhotoNoLongerOpenDevelopsNothing() async throws {
@@ -113,6 +118,7 @@ struct EditRenderingTests {
         #expect(closed == nil)
     }
 
+    // Validates: APP-049
     /// Effects: a negative vignette darkens the corners and a positive one lightens them,
     /// leaving the center alone.
     @Test func theVignetteDarkensOrLightensTheCornersOnly() async throws {
@@ -129,6 +135,7 @@ struct EditRenderingTests {
         #expect(try abs(meanColor(darker.image, in: center).green - 0.5) < 0.04)
     }
 
+    // Validates: APP-049
     /// Detail on a still: sharpening raises the contrast across an edge.
     @Test func sharpeningRaisesContrastAcrossAnEdge() async throws {
         let url = try makeTestDirectory().appending(path: "split.jpg")

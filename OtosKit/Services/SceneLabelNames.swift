@@ -19,10 +19,10 @@ import Foundation
 ///
 /// A chip that only repeats a more specific one is left out. Vision names every ancestor with a
 /// label (people with adult, machine and vehicle with automobile, liquid, water and water body
-/// with ocean) and publishes no taxonomy; its scores show one, measured once and shipped as
-/// `SceneLabelHierarchy.tsv` (`script/scene-label-hierarchy.sh`). An ancestor inherited from its
+/// with ocean) and publishes no taxonomy; its scores show one, derived once from the stored
+/// scene readings of a reference library and shipped as `SceneLabelHierarchy.tsv`. An ancestor inherited from its
 /// descendant scores what the descendant does: 70% of shown ancestor–descendant pairs on the
-/// owner's library were within 0.02, and the gaps tail off past 0.04. One that scores well above
+/// reference library were within 0.02, and the gaps tail off past 0.04. One that scores well above
 /// every shown descendant was seen in its own right — an automobile at 0.52 beside its licence
 /// plate at 0.34 — and stays. So an ancestor is left out when a shown descendant scores within
 /// `inheritedConfidence` of it (`docs/research/2026-11-19-info-labels-and-text.md`). Search

@@ -6,7 +6,7 @@ import Testing
 /// every enrichment pass asks the Store which of them owe work. A row the Store answered owes
 /// nothing is not asked of again until a write names it (`PriorityAnswers`): a pass woken by
 /// anything else reads none of them, where every pass read every row on screen (1,084 reads in
-/// the owner's ten-minute idle session).
+/// a ten-minute idle session on the reference library).
 @Suite(.testScope)
 struct EnrichmentPriorityAnswerTests {
     private static let names = ["a.jpg", "b.jpg", "c.jpg"]
@@ -25,6 +25,7 @@ struct EnrichmentPriorityAnswerTests {
         }
     }
 
+    // Validates: ENR-018
     @Test func rowsOnScreenThatOweNothingAreReadOnceUntilAWriteNamesThem() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -77,6 +78,7 @@ struct EnrichmentPriorityAnswerTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-018
     /// A change heard while the read of the rows is out may postdate what the read saw: the
     /// row it names is not held from that answer.
     @Test func aRowNamedWhileItsReadIsOutIsAskedAgain() {

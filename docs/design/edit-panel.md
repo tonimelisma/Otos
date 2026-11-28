@@ -1,5 +1,7 @@
 # Edit panel
 
+GOVERNS: `OtosKit/Views/EditPanelView.swift`, `OtosKit/Views/EditHistogramView.swift`, `OtosKit/Views/CropEditorView.swift`
+
 The trailing inspector where one photo is edited (DES-092, ADR 0036). It is how the
 user changes what a photo looks like everywhere in Otos, without changing the original.
 

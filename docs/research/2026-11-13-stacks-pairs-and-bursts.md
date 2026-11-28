@@ -2,10 +2,10 @@
 
 Date: 2026-11-13. A desk survey, from vendor help pages, release notes and community threads,
 of how photo apps show a RAW+JPEG pair and a burst, how the user reaches a single file, and
-how a collapsed group answers an action. It opened when the owner noted that On This Day
+how a collapsed group answers an action. It opened on the observation that On This Day
 shows every file of a day, each RAW+JPEG shot twice. Plan 0115 relies on it.
 
-## Facts about the owner's library
+## Facts about the reference library
 
 From `docs/research/2026-10-31-duplicate-calibration.md` (two fixed libraries, 14 445 stills
 and RAWs):

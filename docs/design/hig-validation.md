@@ -1,5 +1,7 @@
 # HIG and Accessibility Validation — `design-system.md` v0.1
 
+GOVERNS: `docs/design/design-system.md`
+
 Audit of the drafted design rules against Apple's Human Interface Guidelines and
 accessibility criteria, 2026-08-13. Each finding names the rule, the source, and
 the correction. Corrections marked **applied** are already in `design-system.md`.

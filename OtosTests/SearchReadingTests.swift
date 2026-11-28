@@ -56,6 +56,7 @@ struct SearchReadingTests {
         SearchTextQuery(query).matches(folded: SearchTextReading.folded(text))
     }
 
+    // Validates: APP-074
     @Test func typedWordsMatchAtTheStartOfAWord() {
         let text = "STARBUCKS Coffee\nMenu · Café crème 4,50 €"
         #expect(Self.matches("starbucks", in: text))
@@ -67,6 +68,7 @@ struct SearchReadingTests {
         #expect(Self.matches("咖啡", in: "星巴克咖啡"))
     }
 
+    // Validates: APP-074
     @Test func aQueryNamingAThingIsGatedAndAPhraseIsNot() throws {
         let vocabulary = try SearchLabelVocabulary(bundle: Bundle(for: CatalogWindowViewModel.self))
         let tokenizer = try SearchTextTokenizer(bundle: Bundle(for: CatalogWindowViewModel.self))
@@ -78,6 +80,7 @@ struct SearchReadingTests {
         #expect(phrase.isEmpty)
     }
 
+    // Validates: APP-074
     @Test func theGateKeepsWhatTheClassifierSawOrWhatSigLIPIsSureOf() {
         #expect(SearchLabelGate.keeps(score: 0.10, best: 0.15, named: []) { _ in nil })
         #expect(!SearchLabelGate.keeps(score: 0.10, best: 0.15, named: ["horse"]) { ["dog": Float(0.9)][$0] })
@@ -122,6 +125,7 @@ struct SearchReadingTests {
         }
     }
 
+    // Validates: ENR-028
     /// A recognition that fails about one picture is no reading (ADR 0032 rule 4): that still
     /// has no result, so it stays owed and is read again, never stamped as holding no text, and
     /// the rest of the page is read, in the same session. A reading that finds nothing is a
@@ -151,6 +155,7 @@ struct SearchReadingTests {
         #expect(await once.sessionsStarted == 1)
     }
 
+    // Validates: ENR-028
     /// A failure that loses Vision's reader for the session's process ends the page where it
     /// came: the stills it did not read have no result, so they stay owed, and the next page
     /// is read by a new session.
@@ -182,6 +187,7 @@ struct SearchReadingTests {
         #expect(attempts.withLock { $0 } == 4)
     }
 
+    // Validates: ENR-028
     /// Otos's own reading process answers a preview through its pipe, answers a picture that
     /// does not decode as such, and a child that is gone ends its session. The child answers
     /// with a fixed line instead of asking Vision (`SearchTextReadingProcess.answeringArgument`):
@@ -210,6 +216,7 @@ struct SearchReadingTests {
         }
     }
 
+    // Validates: ENR-028
     /// A child started with arguments it does not know ends at once rather than reading with
     /// a reader nobody asked for: the session ends with no reading, as a crashed child's does
     /// (`.exited` when its output closes first, `.ended` when the request finds it gone).
@@ -229,6 +236,7 @@ struct SearchReadingTests {
         }
     }
 
+    // Validates: ENR-028
     /// A reading process that neither answers nor exits is ended at its deadline, and the
     /// picture comes back `.exited`: owed, and paged past by the reader. `/bin/sleep` stands in
     /// for a child stuck mid-reading: its output stays open and silent.
@@ -242,6 +250,7 @@ struct SearchReadingTests {
         }
     }
 
+    // Validates: ENR-028
     /// A picture whose reading ends its process is paged past: the rest of the page is read by
     /// a new session, so one such picture never stops every other still from being read.
     @Test func aPictureThatEndsItsSessionIsPagedPast() async throws {
@@ -258,6 +267,7 @@ struct SearchReadingTests {
         #expect(await reader.sessionsStarted == 2)
     }
 
+    // Validates: ENR-028
     /// Only the `e5rtError` case with status 13 loses the process: the same case's deadline
     /// (status 10), another case of the same domain, and an error of another domain with the
     /// same code fail one reading.
@@ -269,6 +279,7 @@ struct SearchReadingTests {
         #expect(!SearchTextReading.losesTheProcess(NSError(domain: NSCocoaErrorDomain, code: 1)))
     }
 
+    // Validates: ENR-028
     /// Search matches every kept line; the Info pane shows only the certain ones.
     @Test func searchReadsEveryLineAndTheInfoPaneTheCertainOnes() {
         let reading = TextReading([
@@ -279,6 +290,7 @@ struct SearchReadingTests {
         #expect(SearchTextReading.shown(reading, sceneLabels: []) == ["BRIDGE CLOSED AHEAD"])
     }
 
+    // Validates: APP-041
     /// What a person reads as the photo's text: a phone screenshot's status bar is not shown,
     /// nor a line twice; a cropped screenshot keeps a title at its top, and a photo keeps text
     /// at its top. Search keeps every line.
@@ -301,6 +313,7 @@ struct SearchReadingTests {
         #expect(SearchTextReading.searchable(phone).hasPrefix("23:11 1\n25\n"))
     }
 
+    // Validates: ENR-028
     /// Vision's classification keeps the gate's loose labels and the confident ones apart:
     /// every confident label is one the gate holds, most confident first.
     @Test func sceneLabelsHoldTheConfidentOnesMostConfidentFirst() async throws {
@@ -314,6 +327,7 @@ struct SearchReadingTests {
         #expect(confidences == confidences.sorted(by: >))
     }
 
+    // Validates: APP-041, ENR-028
     /// A text reading is written only for the preview it was read from, and is current after.
     @Test func aTextReadingIsWrittenOnlyForThePreviewItWasReadFrom() async throws {
         let temp = try makeTestDirectory()
@@ -342,6 +356,7 @@ struct SearchReadingTests {
         await store.shutdown()
     }
 
+    // Validates: APP-041, ENR-028
     /// The Info pane reads a still's confident scene labels from its current embedding row
     /// only: none before it is read, the confident ones after, none again once its thumbnail
     /// changes.
@@ -425,6 +440,7 @@ struct SearchReadingTests {
 /// hang.
 @Suite(.testScope, .enabled(if: ProcessInfo.processInfo.environment["OTOS_TEXT_READING_LIVE"] == "1"))
 struct SearchTextLiveReadingTests {
+    // Validates: ENR-028
     /// Text drawn into a picture is read back, certain enough for the Info pane to show it.
     ///
     /// When macOS purges Vision's compiled model under disk pressure while this process holds
@@ -451,6 +467,7 @@ struct SearchTextLiveReadingTests {
         }
     }
 
+    // Validates: ENR-028
     /// Otos's own reading process reads a preview's text with Vision as the app reads it. A
     /// fresh child's first reading is a cold one, which a loaded machine can make Vision give
     /// up on, and a child whose reader a cache purge lost is the case a new child exists for,

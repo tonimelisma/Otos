@@ -3,9 +3,9 @@
 Date: 2026-11-15. Context: #767 made the Imports sidebar and All Imports count the photos each
 batch's grid shows (ADR 0052: a stack counts once), reading every batch's rows and stacking
 their folders on each pass where a membership, grouping or stack fact moved. This pass
-measures that read on a backup of the owner's catalog and in the installed app's log.
+measures that read on a backup of the reference catalog and in the installed app's log.
 
-## The owner's catalog
+## The reference catalog
 
 `sqlite3 .backup` of the installed app's catalog, read by the real
 `CatalogQueryGateway.fetchImportBatches` in a test process (Debug, as the installed app
@@ -26,7 +26,7 @@ From `script/logs.sh show --last 4h` of the installed app: `op=catalog.projectio
 phase=finish` ran up to 33 times a minute (09:43, 09:45) and 11–20 a minute for
 10:06–10:11. A membership fact moves with every import write and scan change, and the stack
 fact with every enrichment write to a still that shares a folder with a RAW, which is every
-folder holding the owner's camera imports. At 350 ms to 1.5 s a read, counting every batch
+folder holding the reference library's camera imports. At 350 ms to 1.5 s a read, counting every batch
 on such a pass would add seconds of work per minute to the projection while importing or
 enriching.
 

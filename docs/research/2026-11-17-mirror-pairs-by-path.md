@@ -6,12 +6,12 @@
 
 ## Question
 
-ADR 0054 shows a library file and its Immich mirror as one photo. On the owner's library All
+ADR 0054 shows a library file and its Immich mirror as one photo. On the reference library All
 Media showed about the two sets added together, and each mirror walk logged `paired=0`. Why,
 and what design delivers the decision without downloading originals, now that a cloud-only
 file's digest waits for its bytes to be local (ADR 0009 §12)?
 
-## The owner's catalog (read-only, schema v78, 2026-11-17)
+## The reference catalog (read-only, schema v78, 2026-11-17)
 
 Read from the installed app's catalog, opened `mode=ro` while no Otos ran; the checksum each
 library file's path would have was computed outside the catalog with the code's own rule
@@ -88,10 +88,10 @@ Stacks fold some of these items further in the window; the difference is the pai
 - A stored prefix that pairs any file is kept with no request; the probe asks only for a
   library none of whose files is paired.
 
-## Migration v79's cost on a generated owner-shaped catalog
+## Migration v79's cost on a generated reference-shaped catalog
 
 Measured with `OTOS_SCALE_TEST=1 script/check.sh --only CatalogMigrationCostTests` on
-`OwnerShapedCatalog` at scale 1 (147,267 account rows, 16,683 generated pairs whose rows'
+`ReferenceShapedCatalog` at scale 1 (147,267 account rows, 16,683 generated pairs whose rows'
 copy keys the triggers set), the catalog put back to v78 with each pair's asset holding its
 file's digest where the file has one, as v61's pairing wrote it:
 
@@ -113,7 +113,7 @@ migration; the account's first walk writes them.
 ## The order reads with every generated pair one photo
 
 `OTOS_SCALE_TEST=1 script/check.sh --only OrderReadSurveyTests`, on the generated catalog with its
-16,683 pairs (`OwnerShapedCatalog.writeMirrorPairs`), newest first, no filter:
+16,683 pairs (`ReferenceShapedCatalog.writeMirrorPairs`), newest first, no filter:
 
 | Read | Rows | Pages | Rows visited per row returned |
 | --- | --- | --- | --- |
@@ -128,7 +128,7 @@ the pair table.
 
 ## A second prefix (later on 2026-11-17, relied on by migration v80)
 
-One read-only server answer, authorized by the owner, gave the `originalPath` of one of the
+One read-only server answer, authorized by the user, gave the `originalPath` of one of the
 15,955 unpaired files: the same library, under a second server prefix (written here as
 `/srv/b/…`; the stored one as `/srv/a/…`). Checked offline against each unpaired file's
 asset's `source_path_sha1`:
@@ -148,10 +148,10 @@ candidates (`immich_mirror_asked`), every path compared in either normal form
 (`ImmichPathChecksum.everyForm`), and a pair's fallback copy key its own (`pair:<account>:<asset
 path>`) in place of the asset's path checksum, which two servers can share.
 
-### v80's cost on a generated owner-shaped catalog
+### v80's cost on a generated reference-shaped catalog
 
 Measured with `OTOS_SCALE_TEST=1 script/check.sh --only CatalogMigrationCostTests` on
-`OwnerShapedCatalog` at scale 1, which now generates its 16,683 pairs under two prefixes (982
+`ReferenceShapedCatalog` at scale 1, which now generates its 16,683 pairs under two prefixes (982
 under the first), each asset's path checksum that of its prefix and file, the catalog put back
 to v79 (v79's triggers, one prefix per library, each pair keyed by its asset's path checksum):
 
@@ -164,5 +164,5 @@ to v79 (v79's triggers, one prefix per library, each pair keyed by its asset's p
 | Order reads' pages before / after | `defaultOrder` 7,372 → 7,374, `nameOrder` 6,974 → 6,976, `likedFilter` 96 → 98, `filterOptions` 7,843 → 7,845 |
 
 Almost all of it is the rekey of every pair whose rows have no common digest (each regroups
-its key). The generated catalog has 16,683 pairs; the owner's has 982, so his migration rekeys
+its key). The generated catalog has 16,683 pairs; the reference catalog has 982, so its migration rekeys
 about a seventeenth as many rows. No order index is rebuilt.

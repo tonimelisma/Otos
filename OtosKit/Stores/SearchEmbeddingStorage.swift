@@ -112,7 +112,7 @@ nonisolated enum SearchEmbeddingStorage {
     /// search index reconciles its memory against. Each asset's stamp is read from the product
     /// stamps index and its embedding's source from the embedding source index, the asset side
     /// outer (`CROSS JOIN`), so the check reads neither table: 12k pages against 251k for the
-    /// owner-shaped catalog (`CatalogStoreQueryPlanTests`). Every stored embedding has its vector
+    /// reference-shaped catalog (`CatalogStoreQueryPlanTests`). Every stored embedding has its vector
     /// (v51 removed the rows without one, and a write always carries one).
     static func currentEmbeddingIDsSQL(rootCount: Int) -> String {
         """

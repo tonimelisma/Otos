@@ -4,34 +4,34 @@ Date: 2026-11-12. Question: can Otos read a library's faces from the 2560 px pre
 already stores, instead of downloading and decoding every original at full resolution
 (ADR 0047)? What does the preview lose, and does any identity decision change?
 
-**Answer:** yes. Read from the preview, the owner's faces make the same identity decisions:
-no face the owner labelled goes to the wrong person, and no sibling is confused that was
+**Answer:** yes. Read from the preview, the reference library's faces make the same identity decisions:
+no labelled face goes to the wrong person, and no sibling is confused that was
 not confused before. The preview loses faces at the quality floor, not small faces: Vision
 scores a face about 0.015 lower on the preview, so faces just above 0.3 on the original fall
 under it. A floor of 0.28 on the preview admits as many faces as 0.3 did on originals. Otos
 now reads every still's faces from its stored preview, with that floor (analysis revision 3).
 
-The research material is in `~/Development/Otos-face-research` (owner photos, never
+The research material is in `~/Development/Otos-face-research` (private photos, never
 committed); the harness (`run4/harness`) and its outputs are in its `run4/`.
 
 ## Why it matters
 
-- **Downloads.** On the owner's library 2,993 of 3,000 random originals are dataless cloud
+- **Downloads.** On the reference library 2,993 of 3,000 random originals are dataless cloud
   placeholders. Reading faces from originals downloads each of them. Every new analysis
   revision does it again: #670's revision 2 re-reads every still with faces.
 - **Time.** About 1.5 s a photo to decode an original at full resolution, against 66 ms to
   read and analyse its preview (measured below: 6,945 previews in 12 minutes, analysis
   included).
-- **The owner's rule (2026-11-12).** A tiny face is one he does not care about; his
-  children's faces are prominent in their photos.
+- **The rule (2026-11-12).** A tiny face is one the user does not care about; the faces
+  that matter are prominent in their photos.
 
 ## 1. Method
 
 Two sets, both of faces already read from originals, so no original was downloaded:
 
-- **The owner's current library.** A copy of the installed catalog: every still in a fixed
+- **The reference library, current.** A copy of the installed catalog: every still in a fixed
   library with faces read from its original (analysis revision 1) and a stored preview, and
-  no edit. 6,945 stills from 2026, 5,471 faces. The owner placed 1,819 of them by hand
+  no edit. 6,945 stills from 2026, 5,471 faces. The user placed 1,819 of them by hand
   (Sam 1,000, Ian 819), so they are the labels. The preview is Otos's own rendering:
   HEIC, 2560 px long edge (ADR 0035).
 - **The research labels** (`docs/research/2026-11-07-face-recognition-models.md`): 3,293
@@ -47,7 +47,7 @@ acts across a re-read; in the research set by the highest cosine above 0.6 withi
 photo. Then:
 
 - **Decisions:** `FaceAssignmentPolicy` on both readings with the catalog's own anchors (the
-  owner's faces and the seeds, carried to preview faces by box).
+  user's faces and the seeds, carried to preview faces by box).
 - **Accuracy:** `script/face-accuracy.sh` on both readings (cold start, seeded,
   corrections).
 
@@ -82,7 +82,7 @@ the original are the ones lost:
 
 **The floor, matched to the preview's scale.** The same previews with the floor swept:
 
-| Floor on the preview | Lost | Of them, owner-placed | Of them, 600 px or more | Found that the original did not |
+| Floor on the preview | Lost | Of them, user-placed | Of them, 600 px or more | Found that the original did not |
 | --- | --- | --- | --- | --- |
 | 0.30 | 212 | 52 | 82 | 91 |
 | 0.29 | 151 | 38 | 47 | 116 |
@@ -96,7 +96,7 @@ At 0.28 the preview admits about as many faces as the original did at 0.3 (5,501
 
 ## 3. Identity decisions
 
-**The owner's current library,** labels the 1,819 faces the owner placed:
+**The reference library, current,** labels the 1,819 faces the user placed:
 
 | | Original | Preview, 0.30 | Preview, 0.28 | Preview, 0.25 |
 | --- | --- | --- | --- | --- |
@@ -107,7 +107,7 @@ At 0.28 the preview admits about as many faces as the original did at 0.3 (5,501
 | Sam's labelled faces reached | 1,000 / 1,000 | 972 / 972 | 986 / 986 | 989 / 989 |
 | Ian's labelled faces reached | 819 / 819 | 795 / 795 | 806 / 806 | 815 / 815 |
 
-**The catalog's own assignment,** the owner's anchors carried to the preview's faces by box,
+**The catalog's own assignment,** the user's anchors carried to the preview's faces by box,
 at 0.28, over the 5,348 faces both readings found: 4,327 get the same person, 970 have none
 in either, 2 change person, 7 gain one and 42 lose theirs.
 
@@ -115,7 +115,7 @@ in either, 2 change person, 7 gain one and 42 lose theirs.
   person. Their embeddings moved 0.009 and 0.71 (a RAW turned away); both were Otos's
   guesses, so the labels cannot say which reading was right.
 - **Lost a person (42):** 40 are guesses of Sam's in one afternoon's burst (2026-10-18),
-  reached in the original's assignment through owner-placed faces that the preview does not
+  reached in the original's assignment through user-placed faces that the preview does not
   find. Their own embeddings are as before (cosine 0.97–0.99).
 
 **The research labels at 1,600 px,** a lower bound on the stored preview:
@@ -132,12 +132,12 @@ in either, 2 change person, 7 gain one and 42 lose theirs.
 Here the lost faces do skew small, because 1,600 px is small: at 0.3, 62 of the 133 faces
 under 100 px are lost, and 19 of the 463 of 1,000 px or more.
 
-## 4. What the switch costs the owner
+## 4. What the switch costs the user
 
 - **Faces:** about 2% of the faces read from originals are not found in the preview at
   0.28, almost all at the quality floor; about as many others are found.
 - **Names:** a re-read carries the user's acts over by box (`FaceCarryOver`). At 0.28, 27 of
-  the 1,819 faces the owner placed are not found in the preview: 13 of Ian's, 14 of Sam's,
+  the 1,819 faces the user placed are not found in the preview: 13 of Ian's, 14 of Sam's,
   each in a photo whose quality on the original read 0.30–0.64, most of them in bursts that
   keep other faces of the same child. A re-read of the same source therefore keeps a face the
   user said something about that it does not find, as it was read, so none of these names is
@@ -155,13 +155,13 @@ faces read from originals before the person rule:
 
 - **Faces:** 5,493 from previews against 5,471 from originals; 5,342 found by both, 129 not
   found in the preview (35 of them 600 px or more on the original), 151 found only there.
-- **The owner's labels:** cold start, seeded and corrections all with no labelled face on the
+- **The reference labels:** cold start, seeded and corrections all with no labelled face on the
   wrong person and no sibling confused; one labelled person split in two at cold start; every
   labelled face of Sam (986) and Ian (806) found in the preview reached.
 - **The catalog's own assignment:** 4,325 the same person, 968 none in either, 2 changed (the
   two Tyler guesses of section 3), 6 gain a person and 41 lose theirs, 40 of them in the
   2026-10-18 burst.
-- **Owner-placed faces not found:** the same 27 as at 0.28 without the person rule; they keep
+- **User-placed faces not found:** the same 27 as at 0.28 without the person rule; they keep
   their names as read.
 
 ## 6. Conclusions

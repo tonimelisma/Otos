@@ -1,8 +1,8 @@
-# People assignment at the owner's scale (2026-11-13)
+# People assignment at reference-library scale (2026-11-13)
 
 Why an assignment pass took minutes once video and Immich faces were read, what each phase
 cost, and what changed. All timings are from the Debug build the installed app runs (ADR
-0030), on a consistent copy of the owner's catalog: 89,474 faces, 682 people (the five
+0030), on a consistent copy of the reference catalog: 89,474 faces, 682 people (the five
 largest have 14,218, 13,706, 8,377, 7,316 and 6,265 faces), 1,821 faces given by the user and
 3,511 seeds.
 

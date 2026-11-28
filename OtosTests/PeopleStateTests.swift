@@ -55,6 +55,7 @@ struct PeopleStateTests {
         PhotoFaces(snapshot: snapshot, tiles: tiles(snapshot), files: files)
     }
 
+    // Validates: APP-072
     /// The gallery: favourites first, then every named person before every unnamed one, each
     /// by most photos; hidden people last. Tyler, unnamed, has more photos than Sam and is
     /// still after her. The cover is the key photo, else the newest.
@@ -105,6 +106,7 @@ struct PeopleStateTests {
         #expect(FaceAssignmentPlan.likenessMoved(from: stored, to: nil))
     }
 
+    // Validates: APP-041, APP-072
     /// A photo's faces as the menus and Info show them: a hidden person's face is left out,
     /// an unidentified face is not. (A detection marked not a face never reaches the
     /// snapshot: `PeopleStoreTests`.)
@@ -128,6 +130,7 @@ struct PeopleStateTests {
         #expect(Self.state(snapshot).hasFaces)
     }
 
+    // Validates: APP-072
     /// What one assignment writes is only what changed: a new guess, a guess taken away, a
     /// new person with seeds, a changed likeness, and a person Otos found whose last face is
     /// gone. The user's faces are never written.
@@ -162,6 +165,7 @@ struct PeopleStateTests {
         #expect(plan.emptied == [tyler])
     }
 
+    // Validates: ENR-025
     /// A lapsed seed is released from its person and given out again: the plan names the
     /// person it was a seed of, carries its new guess when it has one, and empties the
     /// person it leaves with no face.
@@ -186,6 +190,7 @@ struct PeopleStateTests {
         #expect(plan.emptied == [found])
     }
 
+    // Validates: ENR-025
     /// Assignment reads a person as Otos's own only when the user said nothing about them;
     /// a key photo the user chose is their word.
     @Test func aKeyPhotoMakesAPersonTheUsers() {
@@ -197,6 +202,7 @@ struct PeopleStateTests {
         #expect(snapshot.personFacts.map(\.isBare) == [false])
     }
 
+    // Validates: APP-072
     /// Across a selection, the people its unidentified faces most likely are; This Is gives
     /// a person the face most like them in each photo.
     @Test func theSelectionsLikelyPeopleAndTheFacesTheyAreGiven() {
@@ -230,6 +236,7 @@ struct PeopleStateTests {
         }
     }
 
+    // Validates: APP-072
     /// The acts' hard rules disable them, with the reason the tooltip shows (DES-038).
     @Test func theHardRulesNameTheirReason() throws {
         let birthday = try #require(PersonBirthday("2021-01-01")?.seconds)
@@ -262,6 +269,7 @@ struct PeopleStateTests {
         #expect(index.person(named: "Ian", excluding: Self.sam) == Self.ian)
     }
 
+    // Validates: APP-072
     /// Every refusal that counts says what it counts (`MediaCount`, ADR 0047's Counts): photos,
     /// videos, or photos and videos, each counted once however many faces it holds.
     @Test func refusalsCountPhotosAndVideosAsWhatTheyAre() throws {
@@ -295,7 +303,8 @@ struct PeopleStateTests {
         #expect(PeopleText.beforeTheBirthday(MediaCount(videos: 1)) == "1 video is from before the birthday")
     }
 
-    /// Merging says two people are one (owner, 2026-11-19): a photo both are in, even on the
+    // Validates: APP-072
+    /// Merging says two people are one: a photo both are in, even on the
     /// user's word, never refuses it. The store keeps the face there most like them.
     @Test func aPhotoBothAreInNeverRefusesAMerge() {
         let faces = [
@@ -309,6 +318,7 @@ struct PeopleStateTests {
         #expect(index.mergeRefusal(Self.sam, into: Self.sam) == "Choose another person")
     }
 
+    // Validates: APP-013
     /// Likeness orders one person's photos; elsewhere, a People filter of one person
     /// included, the reads use the default order, and the user's choice is kept for the next
     /// person's photos.
@@ -322,6 +332,7 @@ struct PeopleStateTests {
         #expect(descriptor.sort == .likenessLeast)
     }
 
+    // Validates: APP-013
     @Test func thePeopleFilterIsPartOfTheFilter() {
         var filter = MediaFilter.all.settingPerson(Self.sam, included: true)
         #expect(filter.isActive && filter.filtersPeople)
@@ -329,11 +340,13 @@ struct PeopleStateTests {
         #expect(!filter.isActive)
     }
 
+    // Validates: APP-072
     @Test func aDraggedPersonRoundTrips() {
         #expect(PeopleDrag.person(from: PeopleDrag.payload(Self.sam)) == Self.sam)
         #expect(PeopleDrag.person(from: "net.melisma.otos.other:1") == nil)
     }
 
+    // Validates: APP-072
     @Test func aFaceTileIsTheEnlargedBoxInsideThePhoto() throws {
         let context = try #require(CGContext(
             data: nil, width: 400, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
@@ -346,6 +359,7 @@ struct PeopleStateTests {
         #expect(corner.width == 200 && corner.height == 200)
     }
 
+    // Validates: APP-072
     /// A face tile of an edited photo shows the face: its box, a fraction of the upright
     /// photo, is carried onto the stored preview through the crop and the quarter turn that
     /// preview shows; a face the crop leaves out has no tile. The upright photo is 400 × 200
@@ -371,6 +385,7 @@ struct PeopleStateTests {
         #expect(await FaceCrop.decode(box, from: FacePreview(name: "cropped.png", recipe: leftHalf), in: directory, pixelEdge: 64) == nil)
     }
 
+    // Validates: APP-072
     /// A face tile holds its own pixels and no more: a small face on a 2560 px preview gives a
     /// tile at most the size asked for, whose bytes are its own rows, not the preview's
     /// (`DisplayImage.draw`). A crop sharing the preview's pixels kept the whole decode alive.
@@ -387,6 +402,7 @@ struct PeopleStateTests {
         #expect(Self.isFace(Self.centerPixel(of: tile.cgImage)))
     }
 
+    // Validates: APP-041
     /// A face's outline on the edited photo: the box itself without an edit, mapped through
     /// a quarter turn and a crop, and nothing when the crop leaves it out.
     @Test func aFacesOutlineFollowsTheEdit() throws {
@@ -407,6 +423,7 @@ struct PeopleStateTests {
         #expect(abs(half.minX - 0.2) < 1e-9 && abs(half.width - 0.4) < 1e-9 && abs(half.minY - 0.2) < 1e-9)
     }
 
+    // Validates: APP-072
     /// `FaceOutline` places a box on the photo as shown: as is without an edit, through the
     /// edit with the upright size, nowhere with an edit and no size; and draws each outline
     /// in its frame from the top-left corner.
@@ -422,6 +439,7 @@ struct PeopleStateTests {
         #expect(FaceOutline.path([box], in: frame).boundingBox == CGRect(x: 30, y: 40, width: 40, height: 10))
     }
 
+    // Validates: APP-072
     /// The loupe and compare place outlines through the edit their own decode shows, so they
     /// need nothing the Info pane reads (DES-113): a decode carries the original's upright
     /// size and its edit, and its shown size follows from them.

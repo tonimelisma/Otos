@@ -5,7 +5,7 @@ import Testing
 
 /// The stack candidates (ADR 0052) are the stills that can be in a stack and no others: the
 /// stills of each folder that holds a present RAW and another present still, and every still
-/// carrying a burst identifier. On a catalog of the owner's shape (`OwnerShapedCatalog`) the
+/// carrying a burst identifier. On a catalog of the reference shape (`ReferenceShapedCatalog`) the
 /// read builds exactly the stacks the read of every RAW folder's stills built, from fewer
 /// candidates, through indexes alone, with no sort of the candidates.
 @Suite(.testScope)
@@ -41,9 +41,10 @@ struct PhotoStackCandidateTests {
         )
     }
 
-    @Test func theCandidatesBuildEveryStackOfTheOwnersShapeFromStillsThatCanStack() async throws {
-        let scale = StallReproductionTests.ownerSize ? 1 : 0.05
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: scale)
+    // Validates: ARC-062
+    @Test func theCandidatesBuildEveryStackOfTheReferenceShapeFromStillsThatCanStack() async throws {
+        let scale = StallReproductionTests.referenceSize ? 1 : 0.05
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: scale)
         let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         let (narrow, every, rootPaths, plan) = try await queue.read { db in
@@ -65,12 +66,12 @@ struct PhotoStackCandidateTests {
         let everyStacks = CatalogStacks(PhotoStackSQL.stacks(of: every, rootPaths: rootPaths, pairing: .paired))
         #expect(narrowStacks == everyStacks)
         let kinds = narrowStacks.stacks.values.map(\.id.kind)
-        #expect(kinds.count { $0 == .pair } == OwnerShapedCatalog.scaled(5384, scale) + OwnerShapedCatalog.scaled(464, scale))
+        #expect(kinds.count { $0 == .pair } == ReferenceShapedCatalog.scaled(5384, scale) + ReferenceShapedCatalog.scaled(464, scale))
         #expect(kinds.count { $0 == .burst } == 1)
 
         // The account's RAWs, each alone in its asset's folder, are not read.
         #expect(narrow.count < every.count)
-        let accountRaws = OwnerShapedCatalog.scaled(10906, scale)
+        let accountRaws = ReferenceShapedCatalog.scaled(10906, scale)
         #expect(narrow.count == every.count - accountRaws)
         for (rootID, candidates) in narrow.byRoot {
             let byFolder = Dictionary(grouping: candidates) { $0.relativePath.folder }

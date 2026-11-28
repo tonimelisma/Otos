@@ -10,7 +10,7 @@ import Vision
 /// thing the classifier knows — "horse", "cat", "Christmas tree" — keeps only the photos where
 /// the classifier saw it too, or where SigLIP is nearly as sure as of its best match.
 ///
-/// Measured on the owner's judged queries (`docs/research/2026-11-09-keyword-search.md` §9):
+/// Measured on the reference library's judged queries (`docs/research/2026-11-09-keyword-search.md` §9):
 /// precision inside the cutoff rose from 0.65 to 0.70, with 81% of the relevant photos kept
 /// against 87%. A query for a thing the library barely holds no longer floods the grid: horse
 /// showed 150 photos, two of them right; gated, 27. Lowering the cutoff instead bought less
@@ -38,7 +38,7 @@ nonisolated enum SearchLabelGate {
 
 /// Vision's scene classification of one picture, read twice over:
 /// - **For the gate:** every label at or above `SearchLabelGate.minimumConfidence`, with its
-///   confidence — a loose reading on purpose, about 18 labels a photo on the owner's library,
+///   confidence — a loose reading on purpose, about 18 labels a photo on the reference library,
 ///   with echoes like a horse beside a wagon at 0.08.
 /// - **For the Info pane:** the labels that pass Vision's own high-precision test
 ///   (`hasMinimumRecall(0.01, forPrecision: 0.9)`, Apple's recommended filter: each label's

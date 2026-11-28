@@ -90,6 +90,7 @@ struct CatalogStoreChangeJournalTests {
         store.use().connections.holds.filter { $0.role == "main.writer" }.reduce(0) { $0 + $1.count }
     }
 
+    // Validates: ARC-025
     /// Nothing changed while Otos was not running: the replay delivers no event, and the
     /// launch reads no directory, stats no file and takes the writer for nothing.
     @Test func aReplayWithNoEventsReadsAndWritesNothing() async throws {
@@ -107,6 +108,7 @@ struct CatalogStoreChangeJournalTests {
         #expect(await store.storedJournalPosition(for: library.path) == Self.position(100))
     }
 
+    // Validates: ARC-025
     /// A replay naming two folders reads exactly those two, never the root, and the position
     /// stored is the last event it applied.
     @Test func aReplayNamingTwoFoldersReadsOnlyThem() async throws {
@@ -128,6 +130,7 @@ struct CatalogStoreChangeJournalTests {
         #expect(await store.storedJournalPosition(for: library.path) == Self.position(160))
     }
 
+    // Validates: ARC-025
     /// A file deleted while Otos was not running is purged through the lifecycle from the
     /// replay's one event, with no walk.
     @Test func aFileDeletedWhileNotRunningIsPurgedFromTheReplay() async throws {
@@ -144,6 +147,7 @@ struct CatalogStoreChangeJournalTests {
         #expect(await store.storedJournalPosition(for: library.path) == Self.position(120))
     }
 
+    // Validates: ARC-025
     /// An event that says the journal lost track — dropped events, wrapped IDs, a change on
     /// the path to the root, a mount under it, or subdirectories to rescan at the root —
     /// makes the launch walk the whole root.
@@ -168,6 +172,7 @@ struct CatalogStoreChangeJournalTests {
         #expect(await store.storedJournalPosition(for: library.path) == Self.position(150))
     }
 
+    // Validates: ARC-025
     /// A journal that cannot vouch — another event database, another folder at the path,
     /// a stored position ahead of the stream, or a volume that keeps no history — walks the
     /// root, watched from now; a volume with no history never stores a position.
@@ -195,6 +200,7 @@ struct CatalogStoreChangeJournalTests {
         }
     }
 
+    // Validates: ARC-025
     /// An event delivered while a walk is suspended is not lost: it is applied once the walk
     /// ends. The walk it overtook could not delete what it did not find (the event made its
     /// observation stale, ARC-041), so it settles nothing and no position is stored past it:
@@ -270,6 +276,7 @@ struct CatalogStoreChangeJournalTests {
         return AddedLibrary(store: store, journal: journal, gate: gate, scans: scans, path: path)
     }
 
+    // Validates: ARC-025
     /// A newly added library's first walk leaves it current. A stream started from the probe
     /// with `FullHistory` delivers the whole history chunk holding it, events older than the
     /// probe among them: here the writes that made the library, the root folder's creation
@@ -293,6 +300,7 @@ struct CatalogStoreChangeJournalTests {
         await added.store.shutdown()
     }
 
+    // Validates: ARC-025
     /// An event after the probe, delivered while the first walk is suspended, is applied
     /// after it: exactly that path is read again, and nothing else. The walk it overtook
     /// could not delete (ARC-041), so it settles nothing and no position is stored past it.
@@ -309,6 +317,7 @@ struct CatalogStoreChangeJournalTests {
         await added.store.shutdown()
     }
 
+    // Validates: ARC-025
     /// A replay's `FullHistory` chunk holds events from before the stored position, which the
     /// catalog already reflects: they read nothing, and the launch is a replay with no changes.
     @Test func historyBeforeTheStoredPositionReadsNothing() async throws {

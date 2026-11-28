@@ -2,7 +2,7 @@
 
 ## Question
 
-On the owner's launch of build 191ffe1a (19:54, a 2.56 GB catalog of 164,700 assets, three
+On the user's launch of build 191ffe1a (19:54, a 2.56 GB catalog of 164,700 assets, three
 OneDrive libraries and an Immich account), visible tiles' reads and the window's reads
 waited 5–10 s for their body with `resumeMs=0`, released within 50 ms of each other on both
 reader pools. #794 could not rebuild it with probes of the Store alone
@@ -12,7 +12,7 @@ connection (`waitMs − lockMs`) does it show?
 
 ## Method
 
-Nothing touched the owner's catalog or the installed app; his unified log was read only.
+Nothing touched the reference catalog or the installed app; the test Mac's unified log was read only.
 
 - **Sandbox.** The dev build (`net.melisma.Otos.dev`, main at 977d010f) launched by its
   executable with `CFFIXED_USER_HOME` set to a temporary home, its open catalog checked with
@@ -20,17 +20,17 @@ Nothing touched the owner's catalog or the installed app; his unified log was re
 - **Data.** Two library folders of generated media: 16,000 and 1,500 distinct 160 px JPEGs
   with EXIF dates, 290 short H.264 movies and 70 movies cut to a third of their length so
   AVFoundation cannot decode them (17,860 files, 73 MB). The first launch scanned them; the
-  catalog was then padded in SQL to the owner's scale: eight more library roots whose folders
+  catalog was then padded in SQL to the reference scale: eight more library roots whose folders
   do not exist, each holding a copy of the 17,860 rows with a digest, a 1 KB gray signature on
   four rows in five, an `asset_metadata` row with a 1.1 KB record and a 3 KB search embedding
   — 160,740 assets, a 1.40 GB file. One padded root's 17,860 rows carry no extraction
-  revision, so the metadata refresh walks them as it walked the owner's 14,836.
+  revision, so the metadata refresh walks them as it walked the reference catalog's 14,836.
 - **Runs.** Each launch selected the first library through the smoke seam
   (`OTOS_SMOKE_SELECT_ROOT`), so the window's order and the visible tiles' reads ran
   throughout, republished on every enrichment batch. Run 2 relaunched the padded catalog with
   10,011 items left to enrich; run 3 enriched the rest and went idle. The dev build's own log
   (`processID == <pid>`, info and debug) was read back after each run.
-- **The owner's log.** `log show` of the installed app and of the whole system for
+- **The test Mac's log.** `log show` of the installed app and of the whole system for
   19:53:50–19:55:10.
 
 ## Findings
@@ -49,16 +49,16 @@ batches; that is the writer's queue and is not a read.
 
 ### What the sandbox could not have
 
-- **OneDrive.** The owner's libraries are File Provider folders of mostly dataless files: the
+- **OneDrive.** The reference libraries are File Provider folders of mostly dataless files: the
   scan's enumeration, every `locality(of:)` and every materialization talk to `fileproviderd`.
-  His metadata refresh skipped 14,832 rows in 50.1 s, 3.4 ms a row; the sandbox's skipped
+  Its metadata refresh skipped 14,832 rows in 50.1 s, 3.4 ms a row; the sandbox's skipped
   17,860 in 1.4 s, because an absent root answers `unreachable` without a file system call.
 - **Apple's language model.** No description request ran in the sandbox: the generated stills
   never became describable.
 - **A cold, 2.56 GB file and a 16 GB Mac under memory pressure.** The padded file had just
   been written and was in the file cache.
 
-### What the owner's log does show
+### What the test Mac's log does show
 
 - **The 10 s cluster was a whole-process silence.** After the scan batch at 19:54:19.18 the
   installed app logged nothing of its own until 19:54:24.51: no scan batch (they had come every
@@ -101,7 +101,7 @@ batches; that is the writer's queue and is not a read.
   Nothing polls: the waiter knows it waited (ADR 0033).
 - Nothing else changed: no mechanism was proven, so no owner was moved.
 
-## What one owner launch will now say
+## What one launch on the reference library will now say
 
 For a read that waits a second or more, one line decides it:
 
@@ -139,10 +139,10 @@ needs UI access, which was not granted, and the smoke seam selects a scope but h
 
 ## Conclusions
 
-- The whole app's startup on generated data at the owner's row count did not make any read
-  wait more than 98 ms; the owner's waits need something the sandbox lacks.
-- The owner's 10 s wait was the whole process going quiet as Apple's language model first
-  loaded under rising memory pressure; his 5.7 s wait held both reader pools while the writer
+- The whole app's startup on generated data at the reference row count did not make any read
+  wait more than 98 ms; the reference launch's waits need something the sandbox lacks.
+- The reference launch's 10 s wait was the whole process going quiet as Apple's language model first
+  loaded under rising memory pressure; its 5.7 s wait held both reader pools while the writer
   and the main thread ran, and its holder is unknown.
 - The next launch's `op=catalog.store.stall` lines name the holder, or show that there was
   none in Otos.

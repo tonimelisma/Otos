@@ -1,10 +1,10 @@
-# The window's own reads on the owner's catalog (plan 0116 stage 5)
+# The window's own reads on the reference catalog (plan 0116 stage 5)
 
-Date: 2026-11-16. Method: the owner's catalog (2.56 GB, 166,990 assets, schema v65) opened
+Date: 2026-11-16. Method: the reference catalog (2.56 GB, 166,990 assets, schema v65) opened
 read-only with `sqlite3 -readonly "file:…?mode=ro"`, Otos not running; "cold" means the
 file's pages were dropped from the buffer cache with `msync(MS_INVALIDATE)` on a read-only
 mapping and `mincore` reported none resident; "pages" are SQLite's page cache misses in a
-fresh process (`.stats on`). The installed build's unified log of the owner's read-only tour
+fresh process (`.stats on`). The installed build's unified log of the read-only tour on it
 (build 661be172, 2026-11-16 09:01–09:05 UTC) was read for the order of events. No benchmark
 was run.
 
@@ -55,10 +55,10 @@ The name order took 25.9 s in the tour, cold on a Mac with 86 MB free.
 | Only folders holding a RAW and another still, `UNION ALL` | 15,038 | 13,037 | 0.58 s | 0.08 s |
 | Of which the folder test alone (index only) | 6 folders, 15,009 stills | 4,381 | 0.14 s | |
 
-The owner's RAW folders: library 7 has 6, all holding other stills; a camera (13) has 5; the
-Immich account has 10,906, every one alone in its asset's staging folder. His bursts: 33
+The reference library's RAW folders: library 7 has 6, all holding other stills; a camera (13) has 5; the
+Immich account has 10,906, every one alone in its asset's staging folder. Its bursts: 33
 identifiers on 39 stills, one burst of seven frames and 32 identifiers carried by one still.
-His pairs: 5,849 stacks in all.
+Its pairs: 5,849 stacks in all.
 
 Of the narrower read's 0.58 s cold, 0.44 s is the 15,038 candidates' table rows. A covering
 index would have to carry `sort_key` (154 to 544 bytes a row), which the rule reads to order a
@@ -70,7 +70,7 @@ other reads lose on a Mac that already pages.
 
 ## 4. The order read's Swift work, unoptimized and at `-O` (E1)
 
-`OrderReadPhaseTests` at the owner's size (`OwnerShapedCatalog`, scale 1: 164,766 rows of All
+`OrderReadPhaseTests` at the reference library's size (`ReferenceShapedCatalog`, scale 1: 164,766 rows of All
 Media, 159,382 shown once stacks collapse), three rounds in one ordinary test process, the
 file warm after the first. Milliseconds, rounds 2 and 3:
 

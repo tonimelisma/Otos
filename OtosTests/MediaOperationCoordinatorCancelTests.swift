@@ -7,6 +7,7 @@ import Testing
 /// source-read bracket or its hop onto the executor, and an executor's cancel is never undone.
 @Suite(.testScope)
 struct MediaOperationCoordinatorCancelTests {
+    // Validates: ARC-047
     /// The cancel is delivered while the run waits at its start, after its source-read bracket
     /// and before the real executor's `execute` begins: the run ends stopped by the user, and
     /// nothing is copied.

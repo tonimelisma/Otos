@@ -97,7 +97,7 @@ Verified directly in
 
 ADR 0006 previously justified the reloadData-class fallback
 (`reorderOnly || items ≥ 1000` in `MediaGridStructuralApplyPolicy`) with a
-spec-0039-era true-diff timing. The owner declared that measurement **stale**
+spec-0039-era true-diff timing. That measurement was declared **stale**
 on 2026-07-09 and it has been removed from the ADR; no prior in-repo number
 constrains the animation question. The current fallback's measured cost in this
 run's signposts is ~90 ms for the apply call plus ~100 ms of completion work at
@@ -220,17 +220,17 @@ allocation and unanimated reorder policy are unchanged — those remain plan
    ~200 ms reloadData-class apply at 23k items each, and O(visible²) + per-tile
    symbol-allocation overhead added/amplified in the recent tile-store PRs.
 2. The reorder cadence is **not** the problem and stays at once per second
-   (owner decision, 2026-07-09: fix the jank, do not make it rarer). The fix is
+   (product decision: fix the jank, do not make it rarer). The fix is
    the apply policy plus the bind-path costs: (a) visible-set bookkeeping
    O(visible) per pass, (b) cached placeholder icons, (c) route same-descriptor
    small-delta reorders through `apply(animatingDifferences: true)` — measured
    ~25 ms at 23k for the K = 1–3 trickle — which both removes the visible-item
-   teardown that causes the jank and animates the moves, matching the owner's
+   teardown that causes the jank and animates the moves, matching the stated
    preference. Whole-list reorders and descriptor changes keep the unanimated
    reloadData-class path (quadratic cliff, spike table).
 3. Adoption must verify in-app that animated move-only applies fire their
    completion (see spike caveat); if AppKit's completion proves unreliable
-   there, the finding goes back to the owner before any workaround is designed.
+   there, the finding goes back for a product decision before any workaround is designed.
 
 ## Post-fix run (2026-07-09, after PRs #78–#80 / plan 0008)
 
@@ -313,7 +313,7 @@ duration.
 
 ## Plan 0009 final verification run (2026-07-09, all parts landed)
 
-Owner scroll session, ~2 min attach with enrichment active (~5.1k/23,048):
+User scroll session, ~2 min attach with enrichment active (~5.1k/23,048):
 log `logs/run-20260710T021345Z-p19675-prod.log`, trace
 `build/Profiles/SwiftUI-plan0009-20260709-191352.trace` (deleted 2026-11-10; the
 aggregates below are its only record).
@@ -334,7 +334,7 @@ aggregates below are its only record).
   cloud-download completions painting thumbnails — consistent with the Part D
   CA-commit/IOSurface-upload diagnosis, now demoted from "hangs" to "bursty
   late frames while the main thread stays responsive." Part D remains
-  open/evidence-first; whether it proceeds is an owner feel/priority call.
+  open/evidence-first; whether it proceeds is a product feel/priority call.
 - Debug `MainRunLoopStallMonitor` logged 65 faults (worst 637 ms) against the
   0-row hangs table; its timer-lateness signal over-reports under continuous
   display load and its `lastOp` attribution can reference operations tens of
@@ -344,8 +344,8 @@ aggregates below are its only record).
 ## Mid-scroll residual analysis (2026-07-09, plan 0009 final trace)
 
 Aggregating main-thread stacks inside the 43 ≥100 ms hitch windows of
-`SwiftUI-plan0009-20260709-191352.trace` (owner still feels brief mid-scroll
-pauses despite the 0-row hangs table):
+`SwiftUI-plan0009-20260709-191352.trace` (brief mid-scroll pauses are still felt
+despite the 0-row hangs table):
 
 - Dominant: render-pipeline commit — `CA::Transaction::commit` blocked in
   `mach_msg` (~650 ms across windows), `CVPixelBuffer` → IOSurface copies of
@@ -366,7 +366,7 @@ Evidence-ranked levers for the remaining mid-scroll tail:
 1. Defer structural applies while a live scroll is in progress (park
    `pendingGrid` in the gate; drain on ~250 ms quiet — same signal Part B
    uses). Removes apply-driven layout/commit churn from scroll entirely;
-   applies resume immediately on pause. Owner sign-off required (adjacent to,
+   applies resume immediately on pause. Product sign-off required (adjacent to,
    but distinct from, the rejected cadence holdback: publication cadence is
    untouched; adoption defers only while the finger is down).
 2. Part D decode-format: decode thumbnails into IOSurface-friendly

@@ -24,6 +24,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.gridSelection == .empty)
     }
 
+    // Validates: APP-010
     @Test func loupeEmptySpaceIsNoOp() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 3)
@@ -37,6 +38,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.focusedAssetID == ids[0])
     }
 
+    // Validates: APP-011
     @Test func reconcileNativeAdoptsKeyboardSelection() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
@@ -97,6 +99,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.gridSelection == .empty)
     }
 
+    // Validates: APP-042
     /// A filter narrows the same collection, so what the user selected and is still in
     /// it stays selected (APP-042). Only a new scope clears.
     @Test func filterChangeKeepsSurvivingSelection() {
@@ -112,6 +115,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.gridSelection.selection == [ids[3]])
     }
 
+    // Validates: APP-042
     /// A sort reorders the same collection: membership is unchanged, so the whole
     /// selection survives.
     @Test func sortChangeKeepsSelection() {
@@ -129,6 +133,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.gridSelection.selection == [ids[2]])
     }
 
+    // Validates: APP-042
     /// The loupe stays on the photo the user is looking at when a filter keeps it, and
     /// moves to its nearest survivor in the old order when the filter drops it — not to
     /// the first item, which is where a new scope starts.

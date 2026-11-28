@@ -8,7 +8,7 @@ import Testing
 import UniformTypeIdentifiers
 
 /// A layer shows only a `DisplayImage`, and a `DisplayImage` holds its pixels when it is made
-/// (APP-169). The owner's scrolling stuttered on every new row because each tile's thumbnail
+/// (APP-169). Scrolling on the test Mac stuttered on every new row because each tile's thumbnail
 /// was Image I/O's whole decode of a JPEG, whose pixels the decoder fills only when Core
 /// Animation first shows the image, in the window's commit on the main thread: about 3.5 ms a
 /// tile (`docs/research/2026-11-18-display-images-drawn-before-shown.md`).
@@ -18,6 +18,7 @@ import UniformTypeIdentifiers
 /// what a layer will show is already in the surface it shows.
 @Suite(.testScope)
 struct DisplayImageTests {
+    // Validates: APP-091
     /// The grid's path: a stored thumbnail, decoded whole, holds its pixels when the tile
     /// store gets it.
     @Test func aStoredThumbnailHoldsItsPixelsWhenLoaded() throws {
@@ -28,6 +29,7 @@ struct DisplayImageTests {
         try Self.expectFilled(image, near: (200, 40, 30))
     }
 
+    // Validates: APP-091
     /// The loupe's path: a stored preview larger than the pane asks for is scaled by Image
     /// I/O and drawn, and holds its pixels when the loader gets it.
     @Test func aScaledDecodeHoldsItsPixelsWhenMade() throws {
@@ -39,6 +41,7 @@ struct DisplayImageTests {
         try Self.expectFilled(image, near: (30, 160, 220))
     }
 
+    // Validates: APP-091
     /// A grayscale file has no RGB color space to draw in; it is drawn in sRGB.
     @Test func aGrayscaleFileIsDrawnInSRGB() throws {
         let directory = try makeTestDirectory()
@@ -55,6 +58,7 @@ struct DisplayImageTests {
         try Self.expectFilled(image, near: (128, 128, 128))
     }
 
+    // Validates: APP-091
     /// A live edit's Core Image rendering is rendered straight into the surface, upright.
     @Test func aCoreImageRenderingHoldsItsPixelsTopRowFirst() throws {
         // Red on the bottom half, blue on the top half, in Core Image's y-up space.

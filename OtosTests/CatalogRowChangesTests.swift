@@ -9,6 +9,7 @@ struct CatalogRowChangesTests {
         MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: path))
     }
 
+    // Validates: ARC-018
     /// A source's own facts of a listed item that moved are announced as their kinds, naming
     /// the row; a statement that changed nothing announces nothing.
     @Test func anExistingRowsKnownFactsAreAnnouncedAsTheirKinds() {
@@ -21,6 +22,7 @@ struct CatalogRowChangesTests {
         #expect(rows.notifications == [.changed([.membership, .copies, .images, .detail], rows: .rows([id("a/IMG.JPG")]))])
     }
 
+    // Validates: ARC-018
     /// Beside new rows they follow the insert; beside another change to an existing row the
     /// change names both writes' kinds and both rows.
     @Test func knownFactsJoinTheWritesOtherChanges() {
@@ -35,6 +37,7 @@ struct CatalogRowChangesTests {
         #expect(updated.notifications == [.changed(CatalogChangedFacts.fileFacts.union(.images), rows: .rows([id("a/IMG.JPG"), id("b/IMG.JPG")]))])
     }
 
+    // Validates: ARC-018
     /// A write names the kinds of what it did to each existing row, never every kind: a file's
     /// facts, a row's presence (a deletion names the Live Photo partner it leaves), a size by
     /// source item with no row named. A row that took another path names every kind keyed by a

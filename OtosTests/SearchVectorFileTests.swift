@@ -31,6 +31,7 @@ struct SearchVectorFileTests {
         }
     }
 
+    // Validates: ENR-027
     @Test func aFileAppendedInPagesAndOpenedAgainAnswersAsItsRowsDo() async throws {
         let directory = try makeTestDirectory()
         var generator = SeededFloats(seed: 42)
@@ -71,6 +72,7 @@ struct SearchVectorFileTests {
         }
     }
 
+    // Validates: ENR-027
     @Test func aLaterSlotForAnAssetSupersedesItAndCompactionKeepsOnlyTheLive() async throws {
         let directory = try makeTestDirectory()
         var generator = SeededFloats(seed: 7)
@@ -99,6 +101,7 @@ struct SearchVectorFileTests {
         }
     }
 
+    // Validates: ENR-027
     @Test func onlyCommittedSlotsOpenAndAnythingElseDoesNot() async throws {
         let directory = try makeTestDirectory()
         var generator = SeededFloats(seed: 3)
@@ -132,6 +135,7 @@ struct SearchVectorFileTests {
         }
     }
 
+    // Validates: ENR-027
     @Test func labelsReadAsTheStoredTextReadsThem() {
         let labels = SearchVectorKeys.labels(fromText: "dog:0.500,cat:bad,dog:0.250,lake:0.125,broken")
         #expect(labels.map(\.name) == ["dog", "lake"])

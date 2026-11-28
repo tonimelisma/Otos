@@ -98,6 +98,7 @@ struct CatalogStoreTrashPutBackTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-033
     @Test func putBackAfterARelaunchShowsTheItemWithItsChoiceAndEdit() async throws {
         let (library, store) = try await Self.makeLibrary(names: ["a.jpg", "b.jpg", "c.jpg"])
         let (putBack, emptied, stillInTrash) = (library.ids[0], library.ids[1], library.ids[2])

@@ -53,6 +53,7 @@ struct RenderSharingTests {
         return url
     }
 
+    // Validates: ENR-016
     /// Enrichment has asked for a photo's preview and waits for its turn; the pane asks for the
     /// same photo at the same size. One render runs, at once, and both are handed its pixels.
     @Test func thePaneIsHandedTheRenderEnrichmentAskedFor() async throws {
@@ -77,6 +78,7 @@ struct RenderSharingTests {
         try await held.task.value
     }
 
+    // Validates: ENR-016
     /// An ask cancelled while its render waits for its turn hears `CancellationError` at once,
     /// and its render, which nobody else waits on, leaves the budget without reading a byte.
     @Test func anAskNobodyWaitsOnLeavesBeforeItsRenderBegins() async throws {

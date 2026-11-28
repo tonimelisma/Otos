@@ -29,5 +29,5 @@ behavior worth testing, add or update the `APP-*` row in `docs/requirements.md` 
 the `DES-*` ID in its Requirement text. The design doc says what it should look like; the
 requirement row says it is implemented and points at the test.
 
-Views stay passive (AGENTS.md, "Architecture Standards"): `script/guard-view-passivity.sh`
+Views stay passive (CLAUDE.md, "Architecture standards"): `script/guard-view-passivity.sh`
 checks it.

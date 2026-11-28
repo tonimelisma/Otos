@@ -10,7 +10,7 @@ Labels: **[V]** checked against the cited source (Apple documentation, the insta
 macOS 27 SDK headers, or Chromium/WebKit source); **[R]** a press or community report;
 **[I]** inference.
 
-## Owner direction captured
+## Direction captured
 
 - Copying, pasting, sharing or dragging an edited photo out of Otos hands over the
   **edited version**. The original file is never modified; the edit stays an overlay.
@@ -92,7 +92,7 @@ the folder belongs to the process that wrote it and is cleared by the next launc
 when no reader of it can remain. Drag-out keeps file URLs too, rendered at drag start
 when the photos are edited.
 
-Open questions for the owner:
+Open questions:
 
 - **Unedited RAW.** An unedited RAW is shown with RAW9 defaults, but its original is an
   `.arw` that a web page cannot display. Does "hand over the edited version" also mean

@@ -103,7 +103,7 @@ nonisolated struct FaceFact: Sendable, Equatable {
 /// precision, with whether the model can tell anyone by it decided from the stored
 /// single-precision values. Its bytes are a slice of the mapped file `FaceVectors` writes
 /// (`FaceVectorFile`), or bytes of its own for a vector made from an embedding. Half precision
-/// halves what People holds (103k faces: 105 MB rather than 211 MB); on the owner's 102,978
+/// halves what People holds (103k faces: 105 MB rather than 211 MB); on the reference library's 102,978
 /// stored vectors it changed no face's best person, threshold or margin decision in 3,029
 /// faces sampled, the largest similarity moving 9.6e-5
 /// (`docs/research/2026-11-16-people-memory-and-kernel.md`). Assignment widens a block of
@@ -224,7 +224,7 @@ nonisolated struct FaceAssignmentResult: Sendable, Equatable {
 /// result does not depend on the guesses it made before: run on its own output, it gives the
 /// same output.
 ///
-/// The rules and values were measured on the owner's labelled faces with the shipped model
+/// The rules and values were measured on a private labelled set of faces with the shipped model
 /// (`docs/research/2026-11-07-face-recognition-models.md`;
 /// `docs/research/2026-11-12-face-auto-assignment.md`):
 /// - **Reach:** a face is compared with each person's faces: all of them when the person was
@@ -255,7 +255,7 @@ nonisolated enum FaceAssignmentPolicy {
     static let threshold: Float = 0.434
     static let margin: Float = 0.16
     static let groupLink: Float = 0.65
-    /// The strongest links each face keeps for grouping. Measured on the owner's labels: 10,
+    /// The strongest links each face keeps for grouping. Measured on the labelled set: 10,
     /// 20 or every link give the same groups; fewer links make grouping cost proportional to
     /// the faces, not their pairs.
     static let groupLinks = 10
@@ -335,8 +335,8 @@ nonisolated enum FaceAssignmentPolicy {
 
     /// The seeds that no longer stand:
     /// - any person's seed from before that person's birthday: a photo's date can move after
-    ///   it was seeded (a new reading, a corrected date), and on Otos's word the birthday wins
-    ///   (owner decision, 2026-11-21); the user's own faces keep their person;
+    ///   it was seeded (a new reading, a corrected date), and on Otos's word the birthday wins;
+    ///   the user's own faces keep their person;
     /// - of each person the user said nothing about and gave no face, every unrecognisable
     ///   seed, and every seed when the recognisable ones span fewer than two days.
     static func lapsedSeeds(_ faces: [FaceFact], people: [PersonFact]) -> Set<FaceID> {
@@ -377,7 +377,7 @@ nonisolated enum FaceAssignmentPolicy {
     /// groups in path order of their first face.
     static func unnamedGroups(_ faces: [FaceFact]) -> [[FaceID]] {
         // At most `groupLinks` per face, in a region of their own and sorted in place: at the
-        // owner's scale an array of them and its sorted copy were tens of megabytes of heap
+        // reference library's scale an array of them and its sorted copy were tens of megabytes of heap
         // that stayed in the footprint after the pass (`ScratchBuffer`).
         let links = ScratchBuffer<GroupLink>(count: faces.count * groupLinks)
         defer { withExtendedLifetime(links) {} }
@@ -559,7 +559,7 @@ nonisolated enum FaceAssignmentPolicy {
 /// Each open face keeps, per person, its best similarity to that person's evidence so far
 /// (`Bests`). Only a best of `kept` or more is kept: a decision reads a best only when it
 /// reaches `threshold`, and a runner-up only when it is within `margin` of a best that does,
-/// so a lower one decides nothing. On the owner's faces a face keeps about 6 of 752 people.
+/// so a lower one decides nothing. On the reference library's faces a face keeps about 6 of 752 people.
 nonisolated struct Fill {
     /// Every face with a person, anchors included, by index into the faces.
     var assigned: [Int: FaceAssignmentResult.Person]

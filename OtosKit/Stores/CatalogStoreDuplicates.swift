@@ -88,7 +88,7 @@ nonisolated enum DuplicatesGateway {
     ///   a file on a disk the server reads — for a mirrored library, the very file Otos holds
     ///   there (ADR 0054). Immich holds no bytes of it, so it is never a copy to keep in place
     ///   of another: a group never holds it, so no click, folder rule or default can keep it
-    ///   and send the file it mirrors to the Trash (owner, 2026-11-15).
+    ///   and send the file it mirrors to the Trash.
     static func countsAsCopy(_ row: String) -> String {
         """
         \(row).byte_size > 0
@@ -105,8 +105,8 @@ nonisolated enum DuplicatesGateway {
     /// roots (their IDs bound twice) — another in the same root while Duplicates compares
     /// within each library. Both reads walk the digest index, which holds only rows that have
     /// a digest, in digest then root order, so neither visits a row without one nor groups
-    /// through a temporary B-tree: most of the owner's rows (an Immich account's) have none
-    /// (`docs/research/2026-11-14-owner-scale-query-plans.md`).
+    /// through a temporary B-tree: most of the reference library's rows (an Immich account's) have none
+    /// (`docs/research/2026-11-14-reference-scale-query-plans.md`).
     static func duplicateCopiesSQL(rootCount: Int, reach: DuplicatesReach) -> String {
         let placeholders = Array(repeating: "?", count: rootCount).joined(separator: ", ")
         let shared = DuplicatesReachSQL.shared(
@@ -340,7 +340,7 @@ nonisolated struct RenderSignatureResult: Equatable, Sendable {
 /// `candidateIndexName` (v67) holds exactly the stills compared, with every column the
 /// candidate read tests or returns, and `metadataIndexName` the record's pairing columns, so
 /// the read touches no wide row: before, it read every row of every root to find them, 37 s
-/// cold on the owner's catalog.
+/// cold on the reference catalog.
 nonisolated enum SamePhotoSQL {
     static let candidateIndexName = "idx_media_asset_same_photo_candidate"
     static let metadataIndexName = "idx_asset_metadata_same_photo"

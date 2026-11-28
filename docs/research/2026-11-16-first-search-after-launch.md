@@ -2,7 +2,7 @@
 
 ## Question
 
-On the owner's library (installed 5f77e2e5, a read-only ten-minute tour) the first search
+On the reference library (installed 5f77e2e5, a read-only ten-minute tour) the first search
 took 1,606 ms against a 1 s target; the two tours before it took 476 ms and 636 ms. The tour
 searched about 6 s after launch. Later searches took 177 ms and 159 ms. What did the 1.6 s go
 to?
@@ -36,7 +36,7 @@ the day that searched later, loaded-to-prepared took 38 to 63 ms.
 ## Evidence: the encoder's load, alone
 
 A scratch program (no Otos code but a copy of the tokenizer) loaded the installed app's
-bundled resources, `-O` as the installed app is built, on the owner's Mac:
+bundled resources, `-O` as the installed app is built, on the test Mac:
 
 | Step | First run | Second run |
 | --- | --- | --- |
@@ -66,6 +66,6 @@ hashed for the merges.
 
 ## Not measured here
 
-- The tour after the change: the next tour on the owner's library.
+- The tour after the change: the next tour on the reference library.
 - The first prediction's 2.4 s under load: it ran beside a People pass and the tour's photo
   steps, with about 550 MB free; which of CPU and page-ins cost it was not separated.

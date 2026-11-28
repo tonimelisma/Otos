@@ -3,7 +3,7 @@
 ## Question
 
 After the first search's encoder load became a load the user waits on
-(`2026-11-16-first-search-after-launch.md`), the owner's tours measured the first search,
+(`2026-11-16-first-search-after-launch.md`), the reference tours measured the first search,
 typed about 5–6 s after launch, at 476, 636, 1,606 (before that change), 382, 725 and then
 2,582 ms on final `main` 7138219e. It passes when the text encoder is ready and fails when the
 search arrives while it loads. What did the 2,582 ms go to, why did the load take 3 s, and what
@@ -96,5 +96,5 @@ both: `search.firstResultsMs` held to 1,000 ms, `search.completeMs` a number wit
 
 ## Not measured here
 
-- The tour after the change: the next tour on the owner's library.
+- The tour after the change: the next tour on the reference library.
 - Why the 19:42 compile was not reused (above).

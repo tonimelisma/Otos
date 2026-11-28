@@ -52,8 +52,8 @@ EOF
 # Xcode writes there:
 #
 #   otos_build_checkout <root> verification <xcodebuild option or action...>
-#       The builds whose products a test run loads: script/build.sh, script/bench.sh and
-#       script/face-accuracy.sh. They pass otos_build_settings and share the models after.
+#       The builds whose products a test run loads: script/build.sh and script/bench.sh.
+#       They pass otos_build_settings and share the models after.
 #   otos_build_checkout <root> debuggable <xcodebuild option or action...>
 #       script/build_and_run.sh (and so smoke-run.sh, profile.sh and capture-run.sh): an
 #       app to run, debug or profile, built with real source paths and none of the

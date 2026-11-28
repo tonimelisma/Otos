@@ -1,10 +1,10 @@
 # Disk read and CPU of an idle session, by owner (2026-11-16)
 
 Plan 0116. Source: the installed app's unified log for one read-only ten-minute tour on the
-owner's library (installed d68eb425: 34 steps in about 10 s, then 600 s idle), every
+reference library (installed d68eb425: 34 steps in about 10 s, then 600 s idle), every
 `op=contentHash`, `op=process.usage` and `op=materialization.request` line of the day's
-sessions, and read-only counts from the owner's catalog (`sqlite3 -readonly … ?mode=ro`
-while no Otos ran). Nothing was launched on the owner's data.
+sessions, and read-only counts from the reference catalog (`sqlite3 -readonly … ?mode=ro`
+while no Otos ran). Nothing was launched on the reference data.
 
 ## What read 18.7 GB
 
@@ -23,7 +23,7 @@ fetched by the provider and then read again by the hasher. The hashing took 11.2
 time, an upper bound on its CPU.
 
 **This is owed work, not a re-walk.** Of 1,589 originals hashed across the day's sessions,
-none was hashed twice. The owner's catalog holds 157,235 rows with no digest: 147,279 in the
+none was hashed twice. The reference catalog holds 157,235 rows with no digest: 147,279 in the
 Immich account (whose originals are not downloaded for a digest), 7,732 in the OneDrive
 library, 389 GB of them. At the observed 16 GB per ten minutes, the library's backlog is
 about four hours of open app, paced by the provider's download speed. ADR 0009 permits

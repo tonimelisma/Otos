@@ -16,7 +16,7 @@ paths:
   - Keep `foreignKeyChecks: .immediate`. A table rebuild registers `.deferred` and says
     why.
 - A migration PR states the migration's cost, in milliseconds and WAL bytes, measured on a
-  generated catalog of the owner's shape (`docs/research/2026-11-15-catalog-open-cost.md`).
+  generated catalog of the reference library's shape (`docs/research/2026-11-15-catalog-open-cost.md`).
 - Never change an applied migration in a way that changes its outcome.
 - A release cannot be rolled back past a migration: Sparkle does not downgrade, and older
   code cannot read a newer schema. A bad migration is fixed forward.

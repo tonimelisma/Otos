@@ -7,13 +7,13 @@
 
 A camera set to RAW+JPEG writes each shot twice: `DSC01234.ARW` and `DSC01234.JPG` side by
 side. Otos catalogs every image as its own row, so the grid, On This Day, People, Places and
-search show each such shot twice; the owner's library holds 5 338 such pairs. An iPhone burst
+search show each such shot twice; the reference library holds 5 338 such pairs. An iPhone burst
 writes one file per frame, all carrying Apple's burst identifier; a burst shows as a run of
 near-identical tiles. The survey `docs/research/2026-11-13-stacks-pairs-and-bursts.md`
 compares Apple Photos, Lightroom Classic and desktop, Google Photos, Immich, digiKam and
 Capture One.
 
-The owner decided, on 2026-11-13:
+Decided on 2026-11-13:
 
 - RAW+JPEG pairs and bursts are each one photo everywhere, not only in On This Day;
 - the shown file of a pair is the camera JPEG by default, as in Apple Photos, and switching to
@@ -25,8 +25,8 @@ The owner decided, on 2026-11-13:
 - Move to Trash on one file of an expanded pair trashes only that file;
 - switching an edited pair's shown file keeps each file's own edit;
 - iPhone bursts stack by their identifier; camera bursts were to stack by the drive mode the
-  camera records in each frame, never by timing (owner, 2026-11-13, after
-  `docs/research/2026-11-13-camera-burst-detection.md` found no timing threshold in the owner's
+  camera records in each frame, never by timing (2026-11-13, after
+  `docs/research/2026-11-13-camera-burst-detection.md` found no timing threshold in the reference
   library). The frame number alone cannot bound one burst (below), so camera bursts do not
   stack until a fact that does is read.
 
@@ -77,7 +77,7 @@ present RAW and another present still, and every present still carrying a burst 
 whatever the scope or filter, so a filter that hides one file never unpairs the
 other — in the transaction that reads the order. A folder with one still can hold no pair: an
 Immich account stages each asset in its own folder, and its lone RAWs were 10,906 of the
-owner's 25,944 candidates (`docs/research/2026-11-16-window-reads-owner-catalog.md`). From the candidates
+reference library's 25,944 candidates (`docs/research/2026-11-16-window-reads-reference-catalog.md`). From the candidates
 the pure `PhotoStackRule` decides the stacks in Swift, through the same stem key companions use. Nothing about the stack is stored. `media_asset.burst_identifier` becomes a column, written with every metadata record
 like `content_identifier` and backfilled from the stored metadata JSON.
 
@@ -147,12 +147,12 @@ an ordinary photo. The duplicates scope never collapses.
 - **Evaluate the pair rule in SQL, as `LivePhotoSQL` is.** SQLite's `lower()` folds ASCII
   only, so SQL could not apply the volume's own stem equality; the rule runs in Swift over
   candidates SQL reads, cutting each candidate's stored name key (ARC-056).
-- **Show the RAW by default, as Lightroom Classic does.** The owner chose the camera JPEG, as
-  Apple Photos shows it.
+- **Show the RAW by default, as Lightroom Classic does.** Otos shows the camera JPEG, as
+  Apple Photos does.
 - **A separate burst view (Apple, Google).** A second browser duplicates every action; expanding
   in place keeps one path per action.
 - **Apple's "Use RAW as Original".** "Original" already names a photo without its edit in Otos.
-- **Group camera bursts by time.** The owner's library shows no gap that separates burst frames
+- **Group camera bursts by time.** The reference library shows no gap that separates burst frames
   from quick single shots: stacking at 0.15 s joins 0.8 % of shots, at 0.5 s 29.4 %. A wrong
   stack hides photos, and the camera already records what it did.
 - **Bound a camera burst by its file numbers.** Otos's import naming removes the camera's
@@ -161,7 +161,7 @@ an ordinary photo. The duplicates scope never collapses.
 
 ## Consequences
 
-- The grid shows 5 338 fewer tiles on the owner's library, and On This Day stops doubling.
+- The grid shows 5 338 fewer tiles on the reference library, and On This Day stops doubling.
 - Every count reads stacks, so a consumer that counts asset IDs directly (People's photo count)
   changes to count stack keys.
 - Migration v32 adds the key-choice stamp; v37 adds `burst_identifier`, filled from the

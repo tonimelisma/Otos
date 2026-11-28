@@ -50,7 +50,7 @@ nonisolated struct PersonSheetContext: Equatable, Sendable {
     let names: [String]
 }
 
-/// The question a merge asks first (owner decision, 2026-11-10): a drop of one person on
+/// The question a merge asks first: a drop of one person on
 /// another, Merge Into ▸, or a name another person already has.
 nonisolated struct PeopleMergeQuestion: Equatable, Sendable {
     let from: PersonID

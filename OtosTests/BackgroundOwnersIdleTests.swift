@@ -5,11 +5,11 @@ import Testing
 /// Once every background owner has done what it owes, a catalog with nothing new costs
 /// nothing (ADR 0032 rule 8): no store change, no write, and at most a few reads per owner. An
 /// owner that writes while idle wakes every owner that reads what it wrote, and one that reads
-/// a whole set on a timer reads it cold on a Mac under memory pressure; the owner's
-/// four-minute tour found both kinds (`copies` announced 227 times by digests no other file
+/// a whole set on a timer reads it cold on a Mac under memory pressure; a four-minute
+/// tour on the reference library found both kinds (`copies` announced 227 times by digests no other file
 /// held, PR #809).
 ///
-/// Every owner starts on a generated catalog of the owner's shape as the app starts them
+/// Every owner starts on a generated catalog of the reference shape as the app starts them
 /// (`RunningBackgroundOwners`: at the first grid, under the window's one `LoadAdmission`), an
 /// account's sync with them. Settled is a fact, not a quiet window: every owner reports that
 /// it owes nothing and runs nothing at one instant (`BackgroundOwnerQuiescence`). Then each
@@ -25,16 +25,17 @@ struct BackgroundOwnersIdleTests {
     /// Rows those reads may return: an owner rung with nothing owed finds nothing to visit.
     static let rowsPerOwner = 0
 
+    // Validates: ARC-066, ENR-008
     @Test func everyBackgroundOwnerIsQuietOnceItsWorkIsDone() async throws {
         let rounds = try await Self.measure(scale: 0.01, named: "small")
         // Every owner the app starts reported its quiescence, the account's sync among them.
         #expect(Set(rounds.map(\.owner)) == Self.owners, "\(rounds.map(\.owner))")
     }
 
-    /// The same round at the owner's size, on demand (`OTOS_SCALE_TEST=1`).
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func everyBackgroundOwnerIsQuietOnceItsWorkIsDoneAtTheOwnersSize() async throws {
-        let rounds = try await Self.measure(scale: 1, named: "owner")
+    /// The same round at the reference size, on demand (`OTOS_SCALE_TEST=1`).
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
+    func everyBackgroundOwnerIsQuietOnceItsWorkIsDoneAtTheReferenceSize() async throws {
+        let rounds = try await Self.measure(scale: 1, named: "reference")
         #expect(Set(rounds.map(\.owner)) == Self.owners, "\(rounds.map(\.owner))")
     }
 
@@ -49,7 +50,7 @@ struct BackgroundOwnersIdleTests {
         var phase = PhaseClock(test: name)
         let directory = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: scale)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: scale)
         phase.ended("catalogMade")
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
@@ -97,9 +98,9 @@ struct BackgroundOwnersIdleTests {
         await store.shutdown()
         let report = "settled: \(OwnerRound.summary(settled))\nidle store: \(idle.summary)\nidle owners:\n"
             + rounds.map { "  \($0.summary)" }.joined(separator: "\n") + "\n"
-        // The on-demand run at the owner's size leaves its report for the record; the suite's
+        // The on-demand run at the reference size leaves its report for the record; the suite's
         // own run says it in a failure's message.
-        if name == "owner" {
+        if name == "reference" {
             try IdleUse.write(report, named: name)
         }
 

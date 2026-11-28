@@ -8,9 +8,9 @@ import Foundation
 /// rows in its named cells, most first. So a change that names its rows and moves only their
 /// locations or types re-reads those rows by key and replaces what they gave (`replace(_:)`),
 /// and a change of the cells' names re-reads the names of its cells alone, instead of reading the row's
-/// whole scope again: on the owner's library a sync moved the locations of rows a batch at a
+/// whole scope again: on the reference library a sync moved the locations of rows a batch at a
 /// time, and each batch re-read All Media's options whole
-/// (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+/// (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
 ///
 /// Held compactly, because it is held for the shown row while the window is open: per row, its
 /// row id and two small indexes into the tables of the types and cells present, so All Media's

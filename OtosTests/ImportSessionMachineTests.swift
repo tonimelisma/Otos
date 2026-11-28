@@ -163,6 +163,7 @@ struct ImportSessionMachineTests {
 
     // MARK: Builds
 
+    // Validates: ARC-047
     @Test func aRevisionMovedDuringABuildRequestsAnotherPlan() {
         var (machine, build) = Self.attachedWithBuildRunning()
 
@@ -184,6 +185,7 @@ struct ImportSessionMachineTests {
         #expect(Self.builds(in: effects).first?.id.generation.rawValue == build.id.generation.rawValue + 1)
     }
 
+    // Validates: ARC-047
     @Test func aRequestMadeDuringABuildSurvivesABuildThatFinishesConsistently() {
         var (machine, build) = Self.attachedWithBuildRunning()
 
@@ -199,6 +201,7 @@ struct ImportSessionMachineTests {
         #expect(machine.sessions[Self.card]?.provenPlan != nil)
     }
 
+    // Validates: ARC-047
     @Test func aPreferenceChangeDuringABuildRequestsAnotherPlan() {
         var (machine, build) = Self.attachedWithBuildRunning()
         var changed = ImportPreferences.default
@@ -212,6 +215,7 @@ struct ImportSessionMachineTests {
         #expect(next.first?.policy.importSidecarFiles == changed.importSidecarFiles)
     }
 
+    // Validates: ARC-047
     @Test func aDestinationPickedDuringABuildDiscardsItsResult() {
         var (machine, build) = Self.attachedWithBuildRunning(
             libraries: [Self.library(Self.libraryA), Self.library(Self.libraryB), Self.cardState()]
@@ -226,6 +230,7 @@ struct ImportSessionMachineTests {
         #expect(machine.sessions[Self.card]?.provenPlan == nil)
     }
 
+    // Validates: ARC-047
     /// ARC-047: a default destination that follows a reorder is a destination change like
     /// a pick: the plan proven against the old library is not held under the new one.
     @Test func aReorderThatMovesTheDestinationDropsThePlanMeasuredAgainstTheOldLibrary() {
@@ -244,6 +249,7 @@ struct ImportSessionMachineTests {
         #expect(Self.builds(in: effects).first?.destination == Self.libraryB)
     }
 
+    // Validates: ARC-047
     /// A run releases the library it copied into, even when a reorder held during the run
     /// moves its own source elsewhere at settlement: another source still pointed at that
     /// library rebuilds then.
@@ -286,6 +292,7 @@ struct ImportSessionMachineTests {
         #expect(Self.builds(in: effects).contains { $0.id.source == otherCard && $0.destination == Self.libraryA })
     }
 
+    // Validates: ARC-047
     @Test func aStaleBuildResultIsDropped() {
         var (machine, build) = Self.attachedWithBuildRunning()
         let staleGeneration = Machine.BuildID(
@@ -370,6 +377,7 @@ struct ImportSessionMachineTests {
         _ = machine.handle(.buildFinished(build.id, Self.builtPlan(for: build)))
     }
 
+    // Validates: ARC-057
     /// The last enrichment batch of a card lands after the build's live read of the rows and
     /// before the build is applied: its catalog change finds the session building, so the
     /// build that then finds naming pending plans again instead of parking on a wake that
@@ -450,6 +458,7 @@ struct ImportSessionMachineTests {
         #expect(machine.sessions[Self.card]?.importRequested == false)
     }
 
+    // Validates: ARC-047
     /// ADR 0024, field trace 2026-11-06: a plan built while the card was still being
     /// scanned offered "Erase 68 items" from rows the card no longer held. Such a plan is
     /// never run, and the card settling asks for the plan that is — even when the scan
@@ -476,6 +485,7 @@ struct ImportSessionMachineTests {
         #expect(Self.executions(in: third).count == 1)
     }
 
+    // Validates: ARC-047
     /// A plan built mid-read and still held when the card settles is rebuilt by the
     /// settling refresh itself, even though the scan moved no revision.
     @Test func aHeldMidReadPlanIsRebuiltWhenTheCardSettles() {
@@ -490,6 +500,7 @@ struct ImportSessionMachineTests {
         #expect(Self.builds(in: settled).count == 1)
     }
 
+    // Validates: ARC-047
     /// The card can settle while the build that began mid-read is still running; that
     /// build's result then asks for its successor itself.
     @Test func aPlanBuiltMidReadThatLandsAfterTheCardSettledRequestsItsSuccessor() {
@@ -564,6 +575,7 @@ struct ImportSessionMachineTests {
         #expect(Self.execution(in: machine)?.progress == Self.progress)
     }
 
+    // Validates: ARC-047
     @Test func aFailedRunStatesTheCountItsExecutorReports() throws {
         var (machine, run) = try Self.executing()
 
@@ -625,6 +637,7 @@ struct ImportSessionMachineTests {
         })
     }
 
+    // Validates: APP-029
     /// `import-bar.md` "Where the user is standing": the bar follows a run onto its batch
     /// row, so the run's batch outlives the run — through its settlement, the re-plan after
     /// it and a `Try Again` — and gives way only to the next run, which names no batch

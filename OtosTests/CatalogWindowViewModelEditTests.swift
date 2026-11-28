@@ -12,6 +12,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelEditTests {
+    // Validates: APP-046
     @Test func draggingRendersLiveAndLettingGoSavesAndRendersTheProducts() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -42,6 +43,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-092
     /// A section with changes has a checkmark that turns its changes off in the loupe, saving
     /// nothing, until the edit changes or another photo is opened (DES-122).
     @Test func aSectionsCheckmarkTurnsItsChangesOffInTheLoupeUntilTheEditChanges() async throws {
@@ -78,9 +80,10 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-093
     /// Returning to an edited photo shows its edit from the first image the loupe paints, with
-    /// the edit panel open and closed (owner, 2026-11-19: "it shows in the loupe the unedited
-    /// version for a subsecond before switching to the edited one").
+    /// the edit panel open and closed: the loupe never shows the unedited version for a moment
+    /// before switching to the edited one.
     @Test(arguments: [true, false])
     func anEditedPhotoIsNeverShownUnedited(panelOpen: Bool) async throws {
         try await withEditableLibrary(fileCount: 2) { library in
@@ -114,6 +117,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-046
     /// The pane's progress indicator marks a pane waiting for its photo (DES-086): loading
     /// raises it, and refreshing the photo the pane already shows — an edit's new preview —
     /// does not.
@@ -134,6 +138,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-039
     /// An undo shows what it changes (F-18): undoing an edit to a photo the user has moved
     /// away from selects that photo again, and the panel follows it.
     @Test func undoingAnEditToAnotherPhotoRevealsIt() async throws {
@@ -155,6 +160,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-046
     @Test func undoAndRedoStepThroughSavesAndBringThePanelAlong() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -184,6 +190,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-046
     @Test func resetReturnsEveryLightControlToNeutralAsOneUndoStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -206,6 +213,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-047
     /// The picker, armed in the loupe, saves the clicked point's white balance as one step.
     @Test func theWhiteBalancePickerSavesTheClickedPointAsOneStep() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
@@ -232,6 +240,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-047
     @Test func escapeDisarmsThePickerBeforeLeavingTheLoupe() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = library.makeEditModel()
@@ -248,6 +257,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// C from the grid opens the panel and the loupe with the crop tool on; a drag saves
     /// one step when let go, and Escape ends the tool keeping the crop.
     @Test func theCropToolSavesADragAsOneStepAndEscapeEndsIt() async throws {
@@ -277,6 +287,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// A line drawn on the crop canvas straightens the photo along it as one step; the
     /// ruler that armed it disarms.
     @Test func aLineDrawnOnTheCanvasStraightensAlongIt() async throws {
@@ -298,6 +309,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// Crop geometry takes the photo's upright size from the decode it is edited from,
     /// never from the catalog row: a HEIF turned by its `irot` property can be cataloged
     /// with its stored landscape size while it shows upright.
@@ -316,6 +328,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// The crop tool starts with Custom, even when C is pressed before the photo has opened;
     /// Original chosen once it opens stands as the photo does, portrait here, never a
     /// landscape guess from an unknown frame.
@@ -338,6 +351,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// Level ▸ Auto straightens by an iPhone back camera's gravity reading, as one undo step,
     /// mirrored on a photo shown flipped; the reading is known as the photo opens.
     @Test func autoStraightenUsesTheCamerasReadingAndMirrorsItWhenFlipped() async throws {
@@ -374,6 +388,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// A front-camera photo's gravity reading says nothing about how it is shown, since iOS
     /// may have mirrored it: Auto straighten never uses it, and reads the pixels instead.
     @Test func aFrontCameraReadingIsNeverTheLevel() async throws {
@@ -394,6 +409,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// Suggested ▸ Crop applies the crop read for the frame the draft shows, as one undo
     /// step; once the frame turns, that reading no longer applies until the new frame is read.
     @Test func autoCropAppliesTheReadingForTheFrameAsShown() async throws {
@@ -421,6 +437,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     /// The ruler draws on the crop canvas, so arming it with the tool off turns the tool on.
     @Test func theRulerTurnsTheCropToolOn() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
@@ -436,6 +453,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-048
     @Test func leavingTheLoupeEndsTheCropTool() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = library.makeEditModel()
@@ -450,6 +468,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-046
     /// The panel edits one photo; with two selected its controls have nothing to act on.
     @Test func aMultipleSelectionHasNoEditTarget() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
@@ -466,6 +485,7 @@ struct CatalogWindowViewModelEditTests {
         }
     }
 
+    // Validates: APP-046
     @Test func hidingThePanelLetsGoOfTheTarget() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let model = library.makeEditModel()

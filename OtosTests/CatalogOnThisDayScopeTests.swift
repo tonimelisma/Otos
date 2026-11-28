@@ -19,6 +19,7 @@ struct CatalogOnThisDayScopeTests {
         )) ?? Date(timeIntervalSince1970: 0)
     }
 
+    // Validates: APP-069
     @Test func onThisDayHoldsEarlierYearsOfTheDayNewestFirstAndEveryReadAgrees() async throws {
         let temp = try makeTestDirectory()
         defer { try? FileManager.default.removeItem(at: temp) }
@@ -102,6 +103,7 @@ struct CatalogOnThisDayScopeTests {
         #expect(state.isYears)
     }
 
+    // Validates: APP-069
     /// No earlier year holds the day: the scope holds the day of the month in earlier
     /// months instead, newest first. Any earlier year that does hold it wins, and a filter
     /// that hides that year's items only narrows — it never turns the years into months.
@@ -186,7 +188,8 @@ struct CatalogOnThisDayScopeTests {
             == [.months(2), .months(4), .months(13)])
     }
 
-    /// On This Day picks (owner, 2026-11-13, as Apple Photos' Memories): a Disliked photo and
+    // Validates: APP-069
+    /// On This Day picks (as Apple Photos' Memories): a Disliked photo and
     /// one Vision is confident is a screenshot are left out, a day's Liked photos come first,
     /// and a day holding only left-out photos is no anniversary.
     @Test func onThisDayLeavesOutDislikedPhotosAndScreenshotsAndPutsLikedFirst() async throws {
@@ -246,6 +249,7 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    // Validates: APP-069
     /// A label counts only from the search row read from the photo's thumbnail as it is now
     /// (ADR 0048's staleness): a current screenshot or document row leaves its photo out; a
     /// screenshot row read from an earlier thumbnail is no fact about the photo, which stays,
@@ -331,6 +335,7 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    // Validates: APP-069, APP-075
     /// A RAW+JPEG pair is one photo, and a choice on it is its key's (ADR 0052): a Disliked
     /// key leaves the whole pair out, its RAW twin included; a Disliked RAW behind its key
     /// leaves the key on the day.
@@ -381,6 +386,7 @@ struct CatalogOnThisDayScopeTests {
         await store.shutdown()
     }
 
+    // Validates: APP-069
     /// A year is offered exactly when its card would hold a photo (`OnThisDayPicks.shows`):
     /// an earlier year whose only photo is a pair with a Disliked key holds no photo On This
     /// Day shows — its RAW twin is not Disliked, but leaves with its key — so the day falls
@@ -451,6 +457,7 @@ struct CatalogOnThisDayScopeTests {
         #expect(liked.stacks.stack(containing: id("DSC1.JPG"))?.key == id("DSC1.JPG"))
     }
 
+    // Validates: APP-069
     /// On This Day's counts come from the rule its cards use (`OnThisDayPicks.shows`): its
     /// only visible use of them is the empty state, and a scope whose every photo is a file of
     /// a Disliked-key stack is nothing on this day — under a filter it is not "no matches",
@@ -515,6 +522,7 @@ struct CatalogOnThisDayScopeTests {
         #expect(empty == .nothingOnThisDay(Self.today))
     }
 
+    // Validates: APP-069, APP-070
     @MainActor
     @Test func onThisDayResolvesWithTheFixedLibrariesAndNamesItsEmptiness() {
         let pictures = CatalogLibraryState(

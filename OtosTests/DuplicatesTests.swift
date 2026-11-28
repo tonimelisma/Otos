@@ -46,6 +46,7 @@ struct DuplicatesTests {
         return groups[0]
     }
 
+    // Validates: APP-060
     @Test func aCopySuffixLosesToTheOriginalName() throws {
         let group = try Self.onlyGroup([Self.copy("a/IMG_1 copy.jpg", born: 50), Self.copy("b/IMG_1.jpg", born: 90)])
         #expect(group.defaultKeep == [Self.copy("b/IMG_1.jpg").copy.id])
@@ -65,6 +66,7 @@ struct DuplicatesTests {
         #expect(group.defaultKeep == [Self.copy("IMG_1 copy.jpg").copy.id])
     }
 
+    // Validates: APP-060
     @Test func workOnTwoCopiesIsCarriedOntoTheCopyKept() throws {
         let liked = Self.copy("a.jpg", choice: .liked).copy.id
         let edited = Self.copy("b.jpg", edited: true).copy.id
@@ -73,6 +75,7 @@ struct DuplicatesTests {
         #expect(DuplicatesSession().resolution(of: group)?.carries == [DuplicateCarry(from: liked, to: edited, work: .choice)])
     }
 
+    // Validates: APP-060
     @Test func onlyWorkThatCannotBeCombinedWaits() throws {
         let twoEdits = try Self.onlyGroup([Self.copy("a.jpg", edited: true), Self.copy("b.jpg", edited: true)])
         #expect(twoEdits.defaultKeep == nil)
@@ -84,6 +87,7 @@ struct DuplicatesTests {
         #expect(oneChoice.defaultKeep == [Self.copy("a.jpg").copy.id])
     }
 
+    // Validates: APP-060
     @Test func eachLibraryKeepsItsOwnCopy() throws {
         let pair = try Self.onlyGroup([Self.copy("IMG_1.jpg"), Self.copy("IMG_1.jpg", in: Self.backup)])
         #expect(pair.defaultKeep == [Self.copy("IMG_1.jpg").copy.id, Self.copy("IMG_1.jpg", in: Self.backup).copy.id])
@@ -99,6 +103,7 @@ struct DuplicatesTests {
         #expect(DuplicatesSession().resolution(of: extra)?.moving == [Self.copy("IMG_1 copy.jpg").copy.id])
     }
 
+    // Validates: APP-060
     /// A click keeps that copy and nothing else, across libraries too; it outranks the
     /// folder's rule.
     @Test func aClickKeepsThatCopyAndOutranksTheFolderRule() throws {
@@ -119,6 +124,7 @@ struct DuplicatesTests {
         #expect(session.resolution(of: group)?.keep == [suffixed])
     }
 
+    // Validates: APP-060
     @Test func keptCopiesAreSetAsideAndALaterCopyIsTheOnlyOneOffered() throws {
         let print = Self.copy("Print/IMG_1.jpg").copy.id
         let dated = Self.copy("2024/IMG_1.jpg").copy.id
@@ -135,6 +141,7 @@ struct DuplicatesTests {
         #expect(withNewcomer.defaultKeep == [print, dated])
     }
 
+    // Validates: APP-060
     /// ADR 0046 §8: an Immich account's copy is never moved to the Trash. Whatever a click,
     /// a rule or the default chooses, it stays, and only the library's copies go; two
     /// copies in one account move nothing, and the header says why.
@@ -170,6 +177,7 @@ struct DuplicatesTests {
         #expect(DuplicateFolderBucketPresentation.map(bucket, session: DuplicatesSession(), withLibrary: false).rule == nil)
     }
 
+    // Validates: APP-060
     /// A library folder that mirrors an account is one folder header; keeping the library's
     /// side would move the account's copies, so it is not offered, and the row says why.
     @Test func aRuleRowNeverOffersToRemoveAnAccountsCopies() throws {
@@ -200,6 +208,7 @@ struct DuplicatesTests {
         #expect(DuplicateGroupPolicy.hasCopySuffix(".hidden copy"))
     }
 
+    // Validates: APP-060
     @Test func theTallyCountsEveryActiveGroupAndWhatTheActMoves() throws {
         let preselected = try Self.onlyGroup([Self.copy("a/IMG_1.jpg"), Self.copy("b/IMG_1 copy.jpg")])
         let waiting = try DuplicateGroupPolicy.group(
@@ -230,6 +239,7 @@ struct DuplicatesTests {
         #expect(session.picks.isEmpty)
     }
 
+    // Validates: APP-060
     /// One rule decides every group in a folder, or in a pair of folders.
     @Test func aFolderRuleDecidesEveryGroupInThatFolder() throws {
         let one = try Self.onlyGroup([Self.copy("2026/10/a_001.jpg", born: 10), Self.copy("2026/10/a.jpg", born: 90)])
@@ -253,6 +263,7 @@ struct DuplicatesTests {
         #expect(Set(buckets.map(\.id)) == [.folders(oneFolder), .folders(pair)])
     }
 
+    // Validates: APP-060
     /// The bar's L1 is what will happen; the count of items with duplicates is its L3, and
     /// is L1 only while nothing would move.
     @Test func theBarNamesTheActAndKeepsItsTitleWhenDisabled() {
@@ -298,6 +309,7 @@ struct DuplicatesTests {
         ))
     }
 
+    // Validates: APP-060
     @Test func theNounFollowsWhatTheGroupsHold() {
         #expect(DuplicateItemNoun.covering([.video, .video]) == .videos)
         #expect(DuplicateItemNoun.covering([.image, .raw]) == .photos)
@@ -306,6 +318,7 @@ struct DuplicatesTests {
         #expect(DuplicateItemNoun.covering([]) == .items)
     }
 
+    // Validates: APP-060
     /// A group is its date and why it keeps what it keeps, over its photos tagged Keep or
     /// Trash, each with its size; where each copy is goes in its tooltip.
     @Test func aGroupSaysWhyAndTagsEachPhotoKeepOrTrash() throws {
@@ -332,6 +345,7 @@ struct DuplicatesTests {
         #expect(DuplicateGroupPresentation.map(undated, session: session).title == "No Date")
     }
 
+    // Validates: APP-060
     /// A group whose copies hold work that cannot be combined tags nothing and asks for a
     /// click. A kept group says so.
     @Test func aGroupThatWaitsAsksForAClick() throws {
@@ -349,6 +363,7 @@ struct DuplicatesTests {
         #expect(keptHeader.tiles.isEmpty)
     }
 
+    // Validates: APP-060
     @Test func versionTilesCarryTheSizeThatTellsThemApart() {
         let ids = ["IMG_1.HEIC", "IMG_1_001.HEIC"].map {
             MediaAssetID(libraryRootPath: Self.photos, relativePath: MediaRelativePath(rawValue: $0))
@@ -382,6 +397,7 @@ struct DuplicatesTests {
         ])
     }
 
+    // Validates: APP-060
     @Test func sizesThatTieAtTheShownPrecisionGetTheDecimalsThatTellThemApart() {
         let bytes: [Int64] = [39_133_184, 39_100_416, 38_821_888, 38_805_504, 38_801_408, 38_793_216]
         let copies = bytes.enumerated().map { index, size in
@@ -404,6 +420,7 @@ struct DuplicatesTests {
         #expect(Set(DuplicateTileFacts.distinguishingSizes(of: twins).values) == ["39 MB"])
     }
 
+    // Validates: APP-060
     /// ← and → walk every copy across groups; ↑ and ↓ keep the place in the next group, or
     /// take its last copy when it is shorter.
     @Test func theArrowKeysWalkTheTilesInReadingOrder() {
@@ -433,6 +450,7 @@ struct DuplicatesTests {
         #expect(mixed.target(from: ids[3], .right) == ids[4])
     }
 
+    // Validates: APP-060
     /// A folder's header offers what fits its folders: two folders, either one or the
     /// default; one folder, how to choose within it. It says how many, how much and why.
     @Test func aFolderRowOffersWhatFitsItsFolders() throws {
@@ -484,6 +502,7 @@ struct DuplicatesTests {
         )
     }
 
+    // Validates: APP-060
     /// The list is three sections by the attention a group needs: what only a click
     /// decides, files of one photo, then exact copies under their folders, the folder with
     /// the most groups first and three or more folders last.
@@ -537,6 +556,7 @@ struct DuplicatesTests {
         #expect(keptConflict.section == .choose)
     }
 
+    // Validates: APP-060
     /// A folder's rule governs the exact copies under its header; files of one photo
     /// differ in their pixels and are decided by their own photos.
     @Test func aFolderRuleLeavesFilesOfOnePhotoToTheirPhotos() {
@@ -551,6 +571,7 @@ struct DuplicatesTests {
         #expect(tiles.map(\.caption) == ["4000 × 3000 · Camera original", "1000 × 750"])
     }
 
+    // Validates: APP-060
     /// An exact-copy group is one picture beside its copies' names: what the copies share
     /// is said once, and each line carries what tells its copy apart and the work it holds.
     @Test func exactCopiesAreToldApartByNameOrFolder() throws {
@@ -572,6 +593,7 @@ struct DuplicatesTests {
             == ["2026/08 ▸ b.jpg", "Imports ▸ b (1).jpg"])
     }
 
+    // Validates: APP-060
     /// A group's photos take its own aspect from the copies' upright pixel size, bounded by
     /// 180 pt each way, so a picture fills its cell; square when no size is known.
     @Test func aGroupsCellsTakeItsOwnAspect() throws {
@@ -584,6 +606,7 @@ struct DuplicatesTests {
         #expect(DuplicateGroupPresentation.map(landscape, session: DuplicatesSession()).cell == CGSize(width: 180, height: 135))
     }
 
+    // Validates: APP-060
     /// A closed folder header shows the pictures of its first five groups, each group's
     /// kept copy.
     @Test func aFolderHeaderPreviewsItsFirstGroups() throws {
@@ -601,6 +624,7 @@ struct DuplicatesTests {
         #expect(header.previews.allSatisfy { !$0.id.relativePath.fileName.contains("_001") })
     }
 
+    // Validates: APP-083
     /// ADR 0042: while Duplicates compares within each library, a copy in another library is
     /// no duplicate of it, and the same digest in two libraries is two groups.
     @Test func copiesGroupWithinEachLibraryUnlessDuplicatesComparesAcrossThem() throws {
@@ -626,6 +650,7 @@ struct DuplicatesTests {
         #expect(across[0].copies.count == 4)
     }
 
+    // Validates: APP-083
     /// The Store's read, the Duplicates scope and a group's scope agree on the reach, and a
     /// change of reach is a change of which files are copies.
     @Test func theStoreComparesWithinEachLibraryUntilToldToCompareAcross() async throws {
@@ -687,6 +712,7 @@ struct DuplicatesTests {
         await store.shutdown()
     }
 
+    // Validates: APP-060
     @Test func theStoreGroupsVisibleCopiesWithCurrentDigestsAndRemembersKeepAll() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -738,6 +764,7 @@ struct DuplicatesTests {
         await store.shutdown()
     }
 
+    // Validates: APP-060
     /// The act carries a moved copy's choice and edit onto the kept copy in the hiding write,
     /// and undo — once the moved copy is back — takes them back off.
     @Test func movingACopyCarriesItsWorkOntoTheKeptCopyAndUndoTakesItBack() async throws {

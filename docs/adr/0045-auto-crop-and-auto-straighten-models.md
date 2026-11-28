@@ -12,7 +12,7 @@ by hand-made rules ("Subject", "Thirds") for cropping. Neither held up when meas
 (`docs/research/2026-11-01-auto-straighten-and-crop-suggestions.md`):
 
 - **Vision's horizon** reports confidence 1.0 on every answer. Against calibrated iPhone gravity
-  on 114 of the owner's photos, it was off by more than 5° on 22 of the 59 it answered, and
+  on 114 of the reference library's photos, it was off by more than 5° on 22 of the 59 it answered, and
   nothing distinguishes those answers from its good ones.
 - **The hand-made crops** were the weakest class in the literature. The rule of thirds alone
   barely predicts aesthetic ratings (Amirshahi et al. 2014), and saliency-only cropping was
@@ -74,7 +74,7 @@ exists only for iPhone back-camera photos.
     from a flexible shape. The functions share one copy of the weights.
   - The random starting bases of its NMF block are fixed to one seeded tensor, so a photo always
     reads the same.
-  - Neither half precision nor the fixed bases changed accuracy on the owner's 114 photos, and
+  - Neither half precision nor the fixed bases changed accuracy on the reference library's 114 photos, and
     half precision keeps the weight file under GitHub's 100 MB limit.
 - **GeoCalib's solver** is ported to Swift (`PerspectiveFieldSolver`). It matches GeoCalib's own
   solver to a median 0.0006° of roll on all 114 photos, with the same step count on every one and
@@ -85,7 +85,7 @@ exists only for iPhone back-camera photos.
   of the gravity reading and none is off by more than 5°. About 0.35 s per photo.
 - **Auto crop:** FocalNet crops about 15% of photos (45 of 300). Where it does, Swift and Python
   choose the same crop (44 of 44); the two disagree about cropping at all on 6 of 300, borderline
-  photos where resizing differs. About 0.1 s per photo. The owner rated its crops good in a blind
+  photos where resizing differs. About 0.1 s per photo. Its crops were rated good in a blind
   A/B.
 
 **Licences and attribution:**
@@ -100,7 +100,7 @@ exists only for iPhone back-camera photos.
   from its right ones presents a made-up fix as a correction.
 - **FrameLite** (Apache-2.0, vision-language model): it had the best benchmark scores
   (FCDB IoU 0.717 against FocalNet's 0.656 and 0.643 uncropped), but it needs about 2 GB of
-  weights and 8 s per photo here. The owner ruled that out.
+  weights and 8 s per photo here, which rules it out.
 - **GAIC** (MIT): an older ranker whose custom region-pooling operations do not convert to Core
   ML. FocalNet does the same job at 19 MB.
 - **ProCrop:** non-commercial, no-derivatives licence, and its code and weights are unreleased.

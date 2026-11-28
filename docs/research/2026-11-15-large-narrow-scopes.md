@@ -19,20 +19,20 @@ a large share of the catalog. What fact, known before the read, chooses the plan
 
 ## Method
 
-No owner data was read (owner's rule, 2026-11-15). Two generated catalogs, both built by tests
+No data from the reference library was read (by rule). Two generated catalogs, both built by tests
 that were never committed and deleted afterwards:
 
 - **The benchmark catalog** (`BenchmarkLibrary`, 15,000 stills, one folder, no RAW): temporary
   per-phase `Benchmark.measure` cases on the commit before #766 (`92c9c229`) and on
   `734db9e6`, one Debug test process each (`script/check.sh --only`, no deterministic hash seed,
   so the counts are good to a percent or two).
-- **An owner-shaped catalog** made with SQL after `CatalogStore.migrator`: 166,000 rows, 16,000
+- **A reference-shaped catalog** made with SQL after `CatalogStore.migrator`: 166,000 rows, 16,000
   in a library of month folders (one in twenty a RAW) and 150,000 in an account, one folder
   each; capture times spread over 2011–2026 independently of the rows' keys; every row given an
   `asset_metadata` row with a 1.1 KB metadata record and 50,000 of them located in nested
   clusters assigned independently of the keys (Helsinki 300, Finland 2,500 with it, Europe
   20,000, Europe and North America 35,000, the world 50,000); three people of 24, 1,660 and
-  16,218 photos. Its All Media date walk with a location test reads 62,946 pages, the owner's
+  16,218 photos. Its All Media date walk with a location test reads 62,946 pages, the reference catalog's
   55,704 (#766), so a row costs about what it does there. A first version without the padding and
   with clustered keys read 7,400 and was set aside: it made every plan look cheap.
 - **Measures**, as #765: the pages a fresh read-only connection with no memory map misses
@@ -62,7 +62,7 @@ itself: the day index's rows read with each still's burst and sorted, against a 
 index that hands them over in order (47 M). The match grew 5 M, because it judges its first row
 by the stacks that hold it rather than by stacks already built.
 
-### The plans on an owner-shaped catalog
+### The plans on a reference-shaped catalog
 
 Pages (warm ms), the order with every stack held unless noted:
 
@@ -84,7 +84,7 @@ Pages (warm ms), the order with every stack held unless noted:
 - **A seek costs per row, a walk per catalog.** An area's seek reads about 2.8 pages a row (an
   `asset_metadata` row and a `media_asset` row by key, each on its own page); the walk a fixed
   62,946 for the order and about 26,000 for the types and the count. A person's seek reads about
-  0.6 pages a photo here (1.2 on the owner's catalog, #765); the walk about 2,600 (3,820 there).
+  0.6 pages a photo here (1.2 on the reference catalog, #765); the walk about 2,600 (3,820 there).
 - **A person's walk tests each row with one seek of `idx_face_person_photo`** (`EXISTS`, as
   before #765). Testing membership in the person's photo list instead read the same pages and
   ran three times slower warm (354 ms for the 16,218-photo person).
@@ -111,7 +111,7 @@ The ratios are the walk's rows per sought row at which the two plans read the sa
   Europe (20,000) now walks: its order reads 8 % more pages than the seek did and its types 53 %
   fewer.
 - **Person, 40.** 2,600 / 0.6 ≈ 4,400 photos here (ratio 38); 3,820 / 1.2 ≈ 3,200 on the
-  owner's catalog (ratio 52). 40 sits between. The 1,660-photo person keeps the seek, which is
+  reference catalog (ratio 52). 40 sits between. The 1,660-photo person keeps the seek, which is
   six times faster warm than the walk.
 - **Day, 2.** Pages always favour the seek, so the ratio is the CPU's: on the benchmark catalog
   the seek costs about 0.5 µs a sought row more than the walk (7.6 ms over 14,625 rows), and the
@@ -135,7 +135,7 @@ Rejected:
   so statistics would change nothing it decides.
 - **Changing the benchmark fixture.** One day holding the whole catalog is a real shape (a
   library imported from a card with no capture metadata), and it is the one that exercises the
-  walk; the owner-shaped catalog above covers the seek.
+  walk; the reference-shaped catalog above covers the seek.
 
 ## Conclusions
 

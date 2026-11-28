@@ -8,6 +8,7 @@ import Testing
 /// "Checking the card…" until the walk ends; a fixed library's is utility work.
 @Suite(.testScope)
 struct ScanLanePriorityTests {
+    // Validates: APP-017
     @Test func aCardIsWalkedAtTheUsersPriorityAndALibraryInTheBackground() async throws {
         let temp = try makeTestDirectory()
         let libraryURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

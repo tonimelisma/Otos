@@ -135,9 +135,9 @@ app not running). That walk read more than the 545 MB table, but this survey all
 
 Rates. The retained log cannot give them (section 5). Measured instead on this Mac by
 `script/survey.sh` on a generated library of 156 photos in a sandbox home, under the same
-build load, all read from stored previews and thumbnails as on the owner's catalog:
+build load, all read from stored previews and thumbnails as on the reference catalog:
 
-| Product | Rate | Time to drain the owner's backlog, app running |
+| Product | Rate | Time to drain the reference backlog, app running |
 | --- | --- | --- |
 | Text readings | 156 in 276 s (1.8 s each) | 85,834 × 1.8 s ≈ **43 h** |
 | Descriptions | about 4.5 s each (36 measured; 3.5 to 9.4 s) | 53,077 ≈ **66 h**; all 138,889 ≈ 174 h |
@@ -172,10 +172,10 @@ download rate, which the session survey measures.
 
 ## 6. What this says, before any session
 
-1. "It eats up all disk space" is the thumbnails folder: 52.9 GiB, 93 % of it HEIC previews
+1. The disk growth is the thumbnails folder: 52.9 GiB, 93 % of it HEIC previews
    and video face frames. About 35 GiB of those previews belong to a remote account whose
-   originals are not on this Mac. Whether the previews should exist at that size is a product
-   question for the owner. The files no row names are 1,000 thumbnails (11 MiB) and 3 others,
+   originals are not on this Mac. Whether the previews should exist at that size is an open product
+   question. The files no row names are 1,000 thumbnails (11 MiB) and 3 others,
    left by an older build. The 3.58 GiB first counted here was a census error (section 2).
 2. Otos holds no downloaded originals. The provider has evicted them.
 3. The machine has 16 GB RAM with about 100 MB free and 4 GB of swap before Otos starts. The

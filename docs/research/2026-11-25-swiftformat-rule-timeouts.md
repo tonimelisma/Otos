@@ -32,5 +32,5 @@ rule.
 
 `script/lint-tools.sh swiftformat-lint <path>` lints one file at a time and drops the
 per-file progress lines. `script/lint.sh` (the Ubuntu job) and `script/check.sh`'s fast gate
-both use it. On the owner's Mac SwiftFormat's cache keeps a lint to the files that changed;
+both use it. On the test Mac SwiftFormat's cache keeps a lint to the files that changed;
 on a fresh runner the lint costs about 100 s more.

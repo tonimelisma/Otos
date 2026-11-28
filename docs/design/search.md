@@ -1,5 +1,7 @@
 # Search — Spec
 
+GOVERNS: `OtosKit/Services/SearchQueryEncoder.swift`, `OtosKit/Views/CatalogToolbarControls.swift`
+
 Keyword search: a toolbar field that narrows whatever scope is shown to the photos and videos
 its text describes, in any language. Cites `docs/design/design-system.md` by ID; rules are not
 restated. Decision record: `docs/adr/0048-keyword-search.md`.

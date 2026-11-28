@@ -31,6 +31,7 @@ struct PacedClaimsStayHeldTests {
         return (store, coordinator, asset.id)
     }
 
+    // Validates: ENR-035
     @Test func aPacedRowIsClaimedOncePerPacingNotOncePerPass() async throws {
         let (store, coordinator, row) = try await pacedLibrary()
         for _ in 0 ..< 3 {
@@ -49,6 +50,7 @@ struct PacedClaimsStayHeldTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-035
     /// A change that may have resized the row gives its claim back, so the ledger compares its
     /// source at the next claim (ENR-007); found unchanged, it is held again, and stays held.
     @Test func aMembershipChangeNamingAPacedRowGivesItsClaimBackOnce() async throws {
@@ -65,6 +67,7 @@ struct PacedClaimsStayHeldTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-035
     /// The session's shape (2026-11-18): a video whose enrichment writes its products but cannot
     /// read its faces — written, still owing, and paced. Every pass after it, woken by each
     /// completion, finds the video held: it is read once, claimed once more to be held, and
@@ -124,6 +127,7 @@ struct PacedClaimsStayHeldTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-036
     /// A RAW whose camera's support Apple could not deliver is not developed, and that is no
     /// fact about the file: it is paced for that cause, its claim held, and read once across
     /// later passes — never marked unreadable, which only `.transient` does.

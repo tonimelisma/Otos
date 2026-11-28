@@ -179,6 +179,7 @@ struct ImmichClientTests {
         #expect(login == ImmichLogin(accessToken: "tok", userID: "u1", name: "A", email: "a@example.com"))
     }
 
+    // Validates: APP-063
     @Test func failuresAreClassifiedByStatusAndTransportCode() async throws {
         let session = ImmichStubProtocol.session(host: "fail.test") { request, _ in
             switch request.url?.path {
@@ -199,6 +200,7 @@ struct ImmichClientTests {
         }
     }
 
+    // Validates: APP-063, APP-065
     /// `GET /api/assets/{id}` decodes as Immich 3.3.6 writes an asset: a Live Photo's
     /// motion part, read on its own (ADR 0046 §2), which has no thumbhash: Immich makes no
     /// previews of a hidden asset.
@@ -230,6 +232,7 @@ struct ImmichClientTests {
         #expect(detail.pathChecksum == ImmichAsset.pathChecksum(checksum: "YSh/w9kgVtWGbzD5f2uUP5/HYag=", libraryID: "lib-1"))
     }
 
+    // Validates: APP-063, APP-065
     @Test func theSyncStreamIsReadAsLines() async throws {
         let asset: [String: Any] = [
             "id": "24d2", "ownerId": "o", "originalFileName": "jpeg.jpg",
@@ -290,6 +293,7 @@ struct ImmichClientTests {
         ])
     }
 
+    // Validates: APP-063
     /// The stream is received whole before a line of it is read, so reading it needs no
     /// connection: a Store slower than the server never leaves the transfer waiting until
     /// URLSession times it out. A refused stream is an error, never an empty one.
@@ -345,6 +349,7 @@ struct ImmichClientTests {
         #expect(try ImmichSyncEvent(line: Data(other.utf8)) == .ignored(type: "PartnerV1", ack: "PartnerV1|1"))
     }
 
+    // Validates: APP-063
     /// An asset of a type or visibility this version does not know is one line ignored and
     /// acknowledged, never a stream that cannot be read: a newer server never stops a pass.
     @Test func anAssetOfAnUnknownKindIsIgnored() throws {
@@ -428,6 +433,7 @@ struct ImmichClientTests {
         ])
     }
 
+    // Validates: APP-066
     /// A ranged read's status is judged when its headers arrive: a server that ignores
     /// `Range` and starts sending the whole file (a 200) is refused at once, and its
     /// transfer cancelled before the body is received.
@@ -444,6 +450,7 @@ struct ImmichClientTests {
         #expect(transfer.range == "bytes=0-99")
     }
 
+    // Validates: APP-066
     /// A 206 is the range asked for: its body is the read.
     @Test func aRangedReadAnsweredPartiallyIsItsBody() async throws {
         let body = Data((0 ..< 100).map { UInt8($0) })
@@ -458,6 +465,7 @@ struct ImmichClientTests {
         #expect(try result.get() == body)
     }
 
+    // Validates: APP-066
     /// A ranged read its caller stops waiting for is cancelled: its transfer ends, and it
     /// settles as cancellation, never as a server that did not answer.
     @Test func aRangedReadCanBeCancelled() async throws {
@@ -478,6 +486,7 @@ struct ImmichClientTests {
         try await waitUntil { transfer.stopped }
     }
 
+    // Validates: APP-063
     /// The token round-trips through the Keychain under a service only this test uses,
     /// and the test removes its item.
     @Test func aSessionTokenRoundTripsThroughTheKeychain() throws {

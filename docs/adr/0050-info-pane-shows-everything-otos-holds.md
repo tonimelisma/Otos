@@ -12,10 +12,9 @@ video duration, frame rate and codec, every timestamp role), confirmed faces, co
 the import an item arrived in, and its edit. The one fact photographers expect most, the
 exposure, MediaMetadata did not read at all.
 
-On 2026-11-11 the owner asked why the pane was so empty, asked what it could hold and how
-it should be organized ("read apple HIG, think CRAP design principles … follow similar
-design patterns as edit sidebar"), and then said to build it, to add what the library
-lacked first, and to "put everything." The survey behind the layout compared Photos'
+On 2026-11-11 the pane was too empty. It now holds everything Otos knows, organized by
+Apple's HIG and the CRAP design principles, following the edit sidebar's patterns, with
+what the library lacked added first. The survey behind the layout compared Photos'
 Info window (date, then a camera block with the exposure line, then a map), Preview's
 inspector (General plus folding Exif, GPS and IPTC sections), Lightroom desktop's Info
 panel and Lightroom Classic's Metadata panel.
@@ -56,15 +55,15 @@ primary location and Places (ADR 0040); confirmed faces (ADR 0047); how search r
   logged (`op=photo.info.place phase=lookupFailed`) and leaves `Unknown`. Places stays
   without place names (ADR 0040).
 
-- **In This Photo shows what search recognised** (owner, 2026-11-12: list everything Otos
-  identified in the image, show text only with confidence, in the Mac's language, a label
-  click searches, no sidebar row for text). Between People and Location, the section holds:
+- **In This Photo shows what search recognised** (2026-11-12: everything Otos identified
+  in the image, text only with confidence, in the Mac's language, a label click searches,
+  no sidebar row for text). Between People and Location, the section holds:
   - the scene labels that pass Vision's high-precision test, stored with the search
     embedding (ADR 0048), most confident first, without a label that only repeats a more
     specific one: Vision names every ancestor with a label ("Machine, Vehicle, Automobile")
     and publishes no taxonomy, so its scores' own hierarchy is shipped
-    (`SceneLabelHierarchy.tsv`, made by `script/scene-label-hierarchy.sh` from stored
-    readings), and an ancestor is left out when a shown descendant scores within 0.05 of it.
+    (`SceneLabelHierarchy.tsv`, derived once from the stored scene readings of a reference
+    library), and an ancestor is left out when a shown descendant scores within 0.05 of it.
     An ancestor seen in its own right scores well above (an automobile at 0.52 beside its
     licence plate at 0.34) and stays; leaving out every ancestor would have shown a car as
     "License plate" (`docs/research/2026-11-19-info-labels-and-text.md`). Each name once (every language names some
@@ -121,14 +120,13 @@ primary location and Places (ADR 0040); confirmed faces (ADR 0047); how search r
   and a Mac without the language's pack could not name them at all.
 - **Checking a translated name by SigLIP reading it.** Its Finnish is too weak: it rejected
   "ihmiset" (people) and "aikuinen" (adult), the commonest labels.
-- **A sidebar row for photos with text.** Finding photos by their text is the search field's
-  (owner, 2026-11-12).
+- **A sidebar row for photos with text.** Finding photos by their text is the search field's.
 
 ## Consequences
 
 - Moving search's text reading to the accurate level and storing confident labels (ADR 0048)
   makes every embedding and text reading owed once: about 25 minutes of embedding and 30 of
-  text reading on the owner's library, in the background, during which In This Photo reads
+  text reading on the reference library, in the background, during which In This Photo reads
   `Not Checked Yet` for photos not yet re-read.
 
 - An item enriched before MediaMetadata 0.9.4 shows `Unknown` exposure until its local

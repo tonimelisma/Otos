@@ -71,8 +71,8 @@ actor FaceAnalyzer {
 
     /// Vision's capture quality below which a face is not read. Read on the 2560 px preview,
     /// Vision scores a face about 0.015 lower than on the original at full resolution, so
-    /// 0.28 here admits as many faces as the bake-off's 0.3 did on originals: of the owner's
-    /// 5,471 faces read from originals, 123 are not found and 153 others are, against 212 and
+    /// 0.28 here admits as many faces as the bake-off's 0.3 did on originals: of a reference
+    /// library's 5,471 faces read from originals, 123 are not found and 153 others are, against 212 and
     /// 91 at 0.3 (`docs/research/2026-11-12-faces-from-the-preview.md`).
     static let minimumQuality: Float = 0.28
 
@@ -80,7 +80,7 @@ actor FaceAnalyzer {
     /// capture quality says how well a face was photographed, not whether it is one: lace, a
     /// bucket, a storefront and drawings passed it and grouped into a person of their own.
     /// Vision's image classifier, shown a square twice the face box, says whether a person is
-    /// there. Measured on the owner's catalog
+    /// there. Measured on the reference catalog
     /// (`docs/research/2026-11-12-face-person-admission.md`): every face the user named reads
     /// 0.28 or more, while 7 of that group's 9 objects read under 0.13.
     static let minimumPersonConfidence: Float = 0.2

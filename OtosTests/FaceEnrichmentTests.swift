@@ -10,6 +10,7 @@ import Testing
 struct FaceEnrichmentTests {
     // MARK: - Enrichment
 
+    // Validates: ENR-022
     /// A still's faces are not an enrichment product: a library still whose metadata,
     /// rendering and digest are current is not claimed, whether or not its faces were read,
     /// so no original is downloaded for them.
@@ -26,6 +27,7 @@ struct FaceEnrichmentTests {
 
     // MARK: - The catalog
 
+    // Validates: ENR-023
     /// A reading's faces are stored with its stamp and read back as they were found; a
     /// later reading replaces every one of them.
     @Test func aReadingStoresItsFacesAndTheNextReplacesThem() async throws {
@@ -43,6 +45,7 @@ struct FaceEnrichmentTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-023
     /// A reading of a preview of bytes the row's preview was not made from is rejected
     /// whole: no faces are stored and the row still owes them.
     @Test func aReadingOfOtherBytesStoresNoFaces() async throws {
@@ -57,6 +60,7 @@ struct FaceEnrichmentTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-023
     /// What the user said about a face outlives a new reading of the same source that does not
     /// find it (an analysis revision, an edit hiding part of the photo): a named face and a
     /// face marked not a face stay as they were read, and a found face keeps its mark, so it
@@ -96,6 +100,7 @@ struct FaceEnrichmentTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-023
     /// A rename seen as file events moves the row, and its faces go with it (ADR 0034).
     @Test func aRenamedPhotoKeepsItsFaces() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["before.jpg"])
@@ -117,6 +122,7 @@ struct FaceEnrichmentTests {
         await library.store.shutdown()
     }
 
+    // Validates: ENR-023
     /// A photo proven deleted takes its faces with it.
     @Test func aRemovedPhotoTakesItsFacesWithIt() async throws {
         let library = try await ScannedLibrary.make(in: makeTestDirectory(), files: ["a.jpg", "b.jpg"])

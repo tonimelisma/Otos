@@ -1,6 +1,6 @@
 # Zero-byte media files: what the system and other tools do
 
-Date: 2026-08-19. Plan 0096 owner decision Q4, defect D19.
+Date: 2026-08-19. Plan 0096 decision Q4, defect D19.
 
 ## Question
 
@@ -31,8 +31,8 @@ sitting beside intact originals (`20260814_164104.heif`, 5,410,816 bytes;
 root (`2026/05/20260514_195133.jpg`, `2026/05/20260515_191748.avi`), so five
 rows catalog-wide.
 
-`-safeBackup-NNNN` is the Microsoft OneDrive client's protective-copy naming;
-`<host>` is this Mac's host name. The `abraunegg/onedrive` maintainer describes
+`-safeBackup-NNNN` is the Microsoft OneDrive client's protective-copy naming,
+after the Mac's host name. The `abraunegg/onedrive` maintainer describes
 the trigger as the client being "about to replace or remove a local file" when
 "there's any chance the current on-disk content might be different to what
 OneDrive expects" — it backs the local file up first. Microsoft's own guidance

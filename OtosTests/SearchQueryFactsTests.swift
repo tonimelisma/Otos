@@ -23,6 +23,7 @@ struct SearchQueryFactsTests {
         date?.span(at: Self.now, in: Self.calendar).map { Self.calendar.dateComponents([.year, .month], from: $0.start) }
     }
 
+    // Validates: APP-074
     @Test func aMonthNarrowsToItsMostRecentOccurrence() {
         let september = parse("beach in September")
         #expect(september.pictureText == "beach")
@@ -35,6 +36,7 @@ struct SearchQueryFactsTests {
         #expect(possessive.pictureText == "swing")
     }
 
+    // Validates: APP-074
     @Test func yearsAndRelativeSpans() throws {
         let year = parse("pool 2025")
         #expect(year.pictureText == "pool")
@@ -47,6 +49,7 @@ struct SearchQueryFactsTests {
         #expect(parse("September").pictureText.isEmpty)
     }
 
+    // Validates: APP-074
     /// A query no translation reads is searched for the month in the user's own languages.
     @Test func anUntranslatedMonthIsReadInTheUsersLanguage() {
         let found = SearchQueryParser.takeNativeMonth("rand septembris", languages: ["et"])
@@ -58,6 +61,7 @@ struct SearchQueryFactsTests {
         #expect(month(SearchQueryParser.takeNativeMonth("märtsis", languages: ["et"])?.month) == DateComponents(year: 2026, month: 3))
     }
 
+    // Validates: APP-074
     /// A month name is a whole word in the user's language, never the start of another word:
     /// Estonian "mai" is not "mail" or "main", Dutch "mei" is not "meisje", French "mars" is not
     /// "marsh" or "maison".
@@ -69,6 +73,7 @@ struct SearchQueryFactsTests {
         #expect(SearchQueryParser.takeNativeMonth(text, languages: [language]) == nil)
     }
 
+    // Validates: APP-068
     /// "Today" is the day the query is answered, not the day it was read.
     @Test func aRelativeDateIsAnsweredOnTheDayItIsAsked() throws {
         let today = try #require(parse("today").date)
@@ -77,12 +82,14 @@ struct SearchQueryFactsTests {
         #expect(today.span(at: tomorrow, in: Self.calendar)?.start == tomorrow)
     }
 
+    // Validates: APP-074
     /// "May" is a word as well as a month: it is the month only beside "in", "of" or a year.
     @Test func mayIsAMonthOnlyWhenItReadsAsOne() {
         #expect(parse("kids who may play").date == nil)
         #expect(month(parse("beach in May").date) == DateComponents(year: 2026, month: 5))
     }
 
+    // Validates: APP-074
     /// A month Translation wrote is a month only when the text it translated names that month
     /// in its language. Translation capitalises a caption's first word, so case says nothing:
     /// Swedish "tåg" (train) can come back "March".
@@ -101,6 +108,7 @@ struct SearchQueryFactsTests {
         #expect(month(parse("march").date) == DateComponents(year: 2026, month: 3))
     }
 
+    // Validates: APP-074
     /// A joining word goes only with a fact taken out beside it.
     @Test func aQueryWithoutAFactKeepsItsJoiningWords() {
         #expect(parse("at").pictureText == "at")
@@ -108,6 +116,7 @@ struct SearchQueryFactsTests {
         #expect(parse("dog in 2025").pictureText == "dog")
     }
 
+    // Validates: APP-074
     @Test func aNameIsTakenAsACandidatePlace() {
         let dog = parse("Dog in San Francisco")
         #expect(dog.placeName == "San Francisco")
@@ -125,6 +134,7 @@ struct SearchQueryFactsTests {
         #expect(skyline.pictureText == "skyline")
     }
 
+    // Validates: APP-074
     @Test func aNameInALanguageTheTaggerDoesNotKnowIsItsCapitalisedRun() {
         let dog = SearchQueryParser.parse("koer San Franciscos", places: .capitalised)
         #expect(dog.placeName == "San Franciscos")
@@ -136,6 +146,7 @@ struct SearchQueryFactsTests {
         #expect(SearchQueryParser.parse("Dog in San Francisco", places: .capitalised).placeName == "San Francisco")
     }
 
+    // Validates: APP-074
     /// Read as typed, a capitalised word is a place under the same rules as a tagged name: not
     /// the first half of a compound, and not a sentence's first word alone.
     @Test(arguments: ["Ferris wheel", "Christmas tree", "Orange cat", "Nice sunset", "Teddy bear at home"])
@@ -145,6 +156,7 @@ struct SearchQueryFactsTests {
         #expect(parse.pictureText == text)
     }
 
+    // Validates: APP-074
     /// Maps saying a name is nowhere is a fact; any other error is a lookup that failed, which
     /// the encoder does not remember.
     @Test func onlyMapsNotFindingANameMakesItNoPlace() {
@@ -153,6 +165,7 @@ struct SearchQueryFactsTests {
         #expect(!SearchPlaces.isNowhere(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)))
     }
 
+    // Validates: APP-074
     @Test func mapsNamesAPlaceWithItsCaseEnding() {
         #expect(SearchPlaces.names("San Francisco", as: "San Franciscos"))
         #expect(SearchPlaces.names("Walnut Creek", as: "Walnut Creekis"))
@@ -163,6 +176,7 @@ struct SearchQueryFactsTests {
         #expect(!SearchPlaces.names("Paris", as: "Parisienne"))
     }
 
+    // Validates: APP-074
     @Test func aRecognitionOutsideTheUsersLanguagesIsDistrustedWhenOneOfThemCannotBeRead() {
         let estonian = ["et", "en"]
         #expect(SearchQueryEncoder.trusted(.finnish, preferring: estonian, untranslatable: ["et"]) == nil)
@@ -171,6 +185,7 @@ struct SearchQueryFactsTests {
         #expect(SearchQueryEncoder.trusted(.german, preferring: ["fi", "en"], untranslatable: []) == .german)
     }
 
+    // Validates: APP-074
     @Test func namedPeopleAreTakenBeforeTranslation() {
         let abby = SearchPerson(id: PersonID(rawValue: 1), name: "Abby")
         let abbyRose = SearchPerson(id: PersonID(rawValue: 2), name: "Abby Rose")
@@ -178,15 +193,17 @@ struct SearchQueryFactsTests {
         #expect(found.people == [abbyRose.id])
         #expect(found.rest == "rannalla")
         #expect(SearchQueryEncoder.takePeople([abby], from: "abbyn kanssa").people.isEmpty)
-        #expect(SearchQueryEncoder.takePeople([abby], from: "Äino").people == [abby.id])
+        #expect(SearchQueryEncoder.takePeople([abby], from: "Ábby").people == [abby.id])
     }
 
+    // Validates: APP-074
     @Test func aPlaceHoldsWhatIsWithinItsRadius() {
         let place = SearchPlace(name: "Walnut Creek", latitude: 37.9015, longitude: -122.0618, radiusMeters: 15000)
         #expect(place.contains(latitude: 37.95, longitude: -122.05))
         #expect(!place.contains(latitude: 37.78, longitude: -122.42))
     }
 
+    // Validates: APP-074
     /// Facts narrow without a picture: the scope's order and day sections stay.
     @Test func factsAloneKeepTheScopesOrder() {
         let ids = (0 ..< 3).map { MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/L"), relativePath: MediaRelativePath(rawValue: "\($0).jpg")) }
@@ -198,6 +215,7 @@ struct SearchQueryFactsTests {
         #expect(kept.dayBuckets == [Self.now, nil])
     }
 
+    // Validates: APP-074
     /// The Store answers a date span from capture times.
     @Test func theStoreAllowsWhatWasCapturedInTheSpan() async throws {
         let temp = try makeTestDirectory()

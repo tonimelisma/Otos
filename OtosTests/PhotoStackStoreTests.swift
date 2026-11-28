@@ -8,6 +8,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct PhotoStackStoreTests {
+    // Validates: ARC-062
     @Test func theOrderIsReadWithItsPairs() async throws {
         try await withLibrary(["a/DSC1.ARW", "a/DSC1.JPG", "a/DSC2.JPG", "b/DSC1.JPG"]) { library in
             let ordered = try await library.ordered()
@@ -20,6 +21,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: APP-094
     /// Shown separately (Settings), the Store builds no pair: the order holds both files as
     /// photos of their own, and paired again the pair is back.
     @Test func separatelyTheOrderHoldsNoPair() async throws {
@@ -36,6 +38,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: ARC-062
     /// A filter that shows only RAWs still reads the pair, so the RAW is known to be one.
     @Test func aFilterNeverUnpairs() async throws {
         try await withLibrary(["DSC1.ARW", "DSC1.JPG"]) { library in
@@ -45,6 +48,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: ARC-062
     @Test func makeKeyPhotoIsKeptOnTheChosenMemberAndUndoes() async throws {
         try await withLibrary(["DSC1.ARW", "DSC1.JPG"]) { library in
             let raw = library.id("DSC1.ARW"), jpeg = library.id("DSC1.JPG")
@@ -57,6 +61,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: ARC-062
     /// Stills whose metadata carries one burst identifier are read as one burst with the
     /// order, and a burst's key choice is kept apart from a pair's (ADR 0052).
     @Test func stillsSharingABurstIdentifierAreReadAsOneBurst() async throws {
@@ -88,6 +93,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: ARC-062
     /// A camera's continuous frames never stack, though their metadata carries the frame
     /// number the camera recorded: the number says where a frame stands in its sequence, not
     /// which sequence (ADR 0052). Burst A culled to its frame 2 and burst B, another day in
@@ -128,6 +134,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: ARC-062
     /// An import batch reads the stacks of its own folders and bursts, not every candidate of
     /// its libraries, and they are the stacks the whole library has for its rows: a pair
     /// whose RAW is not in the batch, and a burst whose other frame is in another folder,
@@ -180,6 +187,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: APP-002
     /// An import batch counts the photos its grid shows (ADR 0052: a stack counts once): a
     /// pair imported together and a burst's frames are one photo each, and a pair whose
     /// files came in two batches is a file in each.
@@ -235,6 +243,7 @@ struct PhotoStackStoreTests {
         }
     }
 
+    // Validates: APP-002
     /// Only the batches the window shows are counted: the sidebar's newest five, an older
     /// batch while it is selected, and every batch while All Imports lists them. A batch not
     /// shown has no count rather than one made up.

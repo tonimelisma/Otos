@@ -16,6 +16,7 @@ struct FaceTileDecodeMemoryTests {
     static let face = CGRect(x: 0.48, y: 0.4, width: 0.04, height: 0.053)
     static let decodes = 12
 
+    // Validates: APP-072
     @Test(arguments: ["heic", "jpeg"])
     func whatAFaceTileDecodeCostsByFormat(format: String) async throws {
         let directory = try makeTestDirectory()

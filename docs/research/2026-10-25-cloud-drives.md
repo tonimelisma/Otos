@@ -11,7 +11,7 @@ others; **[L]** observed on this Mac; **[U]** unconfirmed or inferred.
 
 ## What is installed here
 
-- OneDrive (`~/Library/CloudStorage/OneDrive-Personal`, File Provider domain
+- OneDrive (`~/Library/CloudStorage/OneDrive`, File Provider domain
   `com.microsoft.OneDrive.FileProvider/OneDrive`) [L]. The library's photos are here.
 - An iCloud Drive File Provider exists, but no iCloud Drive folder is in use; a stale
   2024 `iCloudDrive-iCloudDrive (…)` directory holds only two app containers [L].
@@ -118,7 +118,7 @@ Capture One users report OneDrive downloading every image [E,
 
 ## Measured: remote changes on OneDrive (experiment R2, 2026-10-25)
 
-FSEvents on this Mac while the owner changed a test file on OneDrive's side. Round 1
+FSEvents on this Mac while the user changed a test file on OneDrive's side. Round 1
 started with the file downloaded; round 2 with it cloud-only:
 
 | Remote change | Local event | Inode | Size | Birth time | mtime |

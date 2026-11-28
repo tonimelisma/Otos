@@ -85,6 +85,7 @@ struct CatalogChangeNamingTests {
 
     private static let ownState = CatalogStoreChange.changed(.membership, rows: .none)
 
+    // Validates: ARC-018
     /// The load names which roots the Store reaches, and no row; the shutdown, which ends every
     /// scan and watch and writes nothing, names the roots' own state.
     @Test func theLoadNamesReachAndTheShutdownTheRootsOwnState() async throws {
@@ -94,6 +95,7 @@ struct CatalogChangeNamingTests {
         #expect(try await sent.sent { await store.shutdown() } == [Self.ownState])
     }
 
+    // Validates: ARC-018
     /// A library or an account added has no rows yet: its add names the roots' own state, and
     /// an empty library's first walk names nothing more.
     @Test func aLibraryOrAccountAddedWithNoRowsNamesNoRow() async throws {
@@ -121,6 +123,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A Trash mark and its clear name the presence of the rows they hid or showed, and the
     /// copy-key triggers' copies and choices; a mark that hides nothing sends nothing.
     @Test func aTrashMarkAndItsClearNameThePresenceOfTheirRows() async throws {
@@ -135,6 +138,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A file the Trash queue moved marks its row with its place in the Trash: its presence.
     @Test func aTrashReportNamesThePresenceOfItsRows() async throws {
         let (library, store, sent) = try await Self.makeLibrary(names: ["a.jpg"])
@@ -160,6 +164,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A rescan that finds a file's size and dates changed names its file's facts — its
     /// presence, the date and kind they stand for, and what is named beside them — and the
     /// row, never every kind: its faces, record, place and search readings stay.
@@ -181,6 +186,7 @@ struct CatalogChangeNamingTests {
         await rescanning.shutdown()
     }
 
+    // Validates: ARC-018
     /// A removal whose delete fails leaves the library as it was and names the root's own
     /// state; it is rescanned, and its rows did not change.
     @Test func aRemovalThatFailsNamesTheRootsOwnState() async throws {
@@ -202,6 +208,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A camera attached names its reach, unnamed; one that returns names its retained rows'
     /// presence too, and its detach names the root's own state.
     @Test func aCameraAttachNamesItsReachAndItsDetachItsOwnState() async throws {
@@ -237,6 +244,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A file erased from a camera leaves the catalog: its row's presence, unnamed, since the
     /// Live Photo partner it may leave is not read.
     @Test func anErasedFileNamesThePresenceOfItsRow() async throws {
@@ -262,6 +270,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A file event's reconcile names what it wrote: a file removed, its row's presence.
     @Test func aFileEventsReconcileNamesWhatItWrote() async throws {
         let temp = try makeTestDirectory()
@@ -286,6 +295,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A walk that pairs a companion with its photo names which rows exist (a companion is a
     /// file a row lists with it), never every kind.
     @Test func aWalkThatPairsACompanionNamesMembership() async throws {
@@ -296,6 +306,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A settled import names what the copy carries: its row, batch and companions, its digest,
     /// choice and edit, and the products it took from its source, naming the copy.
     @Test func aSettledImportNamesWhatTheCopyCarries() async throws {
@@ -332,6 +343,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// A Trash move undone puts the file back at its path: the reconcile names the row's file
     /// facts, never every kind.
     @Test func aTrashMoveUndoneNamesTheFileFactsOfItsRow() async throws {
@@ -365,6 +377,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// The duplicates act names the moved copy's presence and the work it carried onto the
     /// kept copy, naming both; its undo names only the work it took back.
     @Test func aDuplicatesMoveAndItsUndoNameTheCarriedWork() async throws {
@@ -389,6 +402,7 @@ struct CatalogChangeNamingTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-018
     /// The duplicates act's carried work names what it wrote onto the kept copy: a choice is
     /// the user's choices, an edit an edit of a photo Duplicates holds.
     @Test func carriedWorkNamesWhatItWrote() {

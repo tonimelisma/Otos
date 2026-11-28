@@ -72,6 +72,7 @@ struct EnrichmentHoldEndingTests {
         #expect(schedule.hasDemand(for: later))
     }
 
+    // Validates: ENR-009
     @Test func aTransferRunningWhenItsRowGoesEndsWithdrawn() throws {
         var schedule = EnrichmentSchedule(retrySchedule: .production)
         let row = id("running.mov")
@@ -101,6 +102,7 @@ struct EnrichmentHoldEndingTests {
 
     // MARK: - The coordinator, at the facts the Store reports
 
+    // Validates: ENR-009
     /// The user deletes a folder of cloud videos while one waits out its pacing. The Store's
     /// change for the deletion ends the hold: no transfer is spent on the row once the pacing
     /// passes, and its claim is given back.
@@ -149,6 +151,7 @@ struct EnrichmentHoldEndingTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-009
     /// The user removes a library while one of its rows waits out its pacing: the next pass
     /// drops the hold, so nothing of the removed library is fetched again.
     @Test func aRemovedLibrarysHeldRowIsNeverFetchedAgain() async throws {
@@ -176,6 +179,7 @@ struct EnrichmentHoldEndingTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-009
     /// A ready row whose read found it dataless becomes a demand like a routed one: at the
     /// outstanding limit it is held for a slot, never one more transfer promised.
     @Test func aRowFoundDatalessAtTheLimitIsHeld() async throws {
@@ -204,6 +208,7 @@ struct EnrichmentHoldEndingTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ENR-009
     /// A cloud-only library: thousands of rows need their bytes and the hand-off has 16 slots,
     /// none of which comes back. The rows held for a slot take places in the claim window, so
     /// what the coordinator holds stays within the window and the hand-off however many rows
@@ -247,6 +252,7 @@ struct EnrichmentHoldEndingTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-009, ENR-011
     /// ENR-011: a cloud library whose downloads never start fills its window with held
     /// demands, and a card attached after them is still read in full, none of its rows on
     /// screen: each root has a window of its own, so held downloads take no other root's room.

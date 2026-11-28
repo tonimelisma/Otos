@@ -1,10 +1,10 @@
 # What took the machine to warning after launch on a934ef17 (2026-11-17)
 
 Sources: the installed app's unified log for two read-only launch-kind tours of a934ef17 on the
-owner's library (pid 78993, 84 s; pid 78640, 624 s), the system log of the same seconds
+reference library (pid 78993, 84 s; pid 78640, 624 s), the system log of the same seconds
 (`/usr/bin/log show`, every process: `modelmanagerd`, `TGOnDeviceInferenceProviderService`,
 `launchd`), the scorecard JSONs of both tours, and the app's log of the 12031093 launch tour
-an hour earlier (pid 24748). Nothing was launched on the owner's data for this note. The
+an hour earlier (pid 24748). Nothing was launched on the reference data for this note. The
 system log keeps info-level lines of other processes only for minutes: the model service's
 lines below exist for the short tour only, captured while they were still kept.
 
@@ -117,7 +117,7 @@ repetition.
 
 ## After the fix: re-admitted a few points higher, it dipped again (installed b1429daa)
 
-A read-only idle tour of the installed b1429daa on the owner's library (617.3 s, launched at
+A read-only idle tour of the installed b1429daa on the reference library (617.3 s, launched at
 45 % available) was at warning for 128.4 s across 13 dips; `memory pressure caused` failed.
 From the app's own log of that session, seconds from launch, the last grant before each
 warning and the kernel's shares:
@@ -157,8 +157,8 @@ A load is admitted against the line plus the room it has been seen to take (ADR 
 decision 8): the share at its grant less the lowest share read until the hold it raised, and
 for a description, before any is seen, a floor of 35 points (the cold loads above took 31 and
 34 points; 12031093's cold request from 69–70 % did not dip). A description therefore needs
-67 % available. On the owner's machine, which launched at 45 % and stayed between 24 % and
-54 %, no description is written in such a session; that is the owner's decision
+67 % available. On the test Mac, which launched at 45 % and stayed between 24 % and
+54 %, no description is written in such a session; that is a product decision
 (descriptions are optional background work).
 
 ## The sandbox tour, before and after the rule

@@ -2,7 +2,7 @@
 
 ## Question
 
-Plan 0116's footprint target is 700 MB. The People pass's first run on the owner's library
+Plan 0116's footprint target is 700 MB. The People pass's first run on the reference library
 left about 278 MB more in the footprint than before it. On macOS 27 a block `malloc` frees
 stays in the footprint until the allocator reuses it
 (`2026-11-16-freed-memory-stays-in-the-footprint.md`), so what a step holds live at its most,
@@ -10,7 +10,7 @@ not what it keeps, is what it can leave behind. Which steps of a pass hold the m
 
 ## Method
 
-A throwaway test (not kept) on the generated owner-shaped catalog (`OwnerShapedCatalog`,
+A throwaway test (not kept) on the generated reference-shaped catalog (`ReferenceShapedCatalog`,
 scale 1: 102,979 faces, 748 people, unit vectors one direction per person, no face the user
 named), `OTOS_SCALE_TEST=1`, alone. It ran each step of a pass in turn, keeping what a pass
 keeps, and sampled every malloc zone's `size_in_use` every 2 ms (`liveHeapBytes`), with
@@ -53,7 +53,7 @@ the same comparisons (`KernelDifferentialTests`, `FaceAssignmentPolicyTests`).
 | Grouping every leftover face | 86 → **35** (21 in the guarded test) | 308 → 260 |
 | Ranker | 30 → **15** | 428 → **386** |
 
-`PeopleStoreTests.peopleCostsOnTheOwnersShape` now guards both: grouping holds at most 48 MB
+`PeopleStoreTests.peopleCostsOnTheReferenceShape` now guards both: grouping holds at most 48 MB
 live, building the ranker at most 24 MB.
 
 ## What is left

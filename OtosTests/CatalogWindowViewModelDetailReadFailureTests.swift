@@ -13,6 +13,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelDetailReadFailureTests {
+    // Validates: ARC-059, APP-023
     @Test func aFailedReadPublishesNoPanePreviewAndTheNextReconcileDoes() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -30,6 +31,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: APP-023
     /// The screen-sized decode stays in the slot, so only the zoom report can ask again
     /// for full resolution: a failed read must not count as having asked.
     @Test func aFailedFullResolutionReadDecodesNothingAndTheNextZoomAsksAgain() async throws {
@@ -78,6 +80,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: ARC-059
     @Test func aFailedReadLeavesTheFocusedKindUnknownAndTheNextFocusReadsIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let id = library.ids[0]
@@ -94,6 +97,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: ARC-059, APP-046
     @Test func aFailedReadOpensNoEditTargetAndTheNextRefreshDoes() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
             let model = library.makeEditModel()
@@ -114,6 +118,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: ARC-059, APP-013
     @Test func aFailedReadShowsNoSharedChoiceAndTheNextTargetChangeDoes() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
             let model = library.makeEditModel()
@@ -133,6 +138,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: APP-041
     @Test func aFailedAssetReadShowsNoOtherAssetsInfoAndNoInventedFacts() async throws {
         try await withEditableLibrary(fileCount: 2) { library in
             let model = library.makeEditModel()
@@ -153,6 +159,7 @@ struct CatalogWindowViewModelDetailReadFailureTests {
         }
     }
 
+    // Validates: APP-041
     /// The place name is looked up for the item the pane shows; an answer for an item the
     /// pane has left is dropped, never shown under the next one (APP-041, ADR 0050).
     @Test func thePlaceNameIsLookedUpForTheItemShownAndAStaleAnswerIsDropped() async throws {

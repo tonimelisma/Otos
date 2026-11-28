@@ -9,7 +9,7 @@ import Testing
 /// is scrolled from place to place, decoding the visible tiles and the look-ahead either way.
 /// Counted, never timed: the orders still alive, the edit each index holds, the tiles the store
 /// keeps. Over a backlog of publications none of them may grow with the number of publications.
-/// At the owner's size (`OTOS_SCALE_TEST=1`, run alone) the process footprint is bounded too.
+/// At the reference size (`OTOS_SCALE_TEST=1`, run alone) the process footprint is bounded too.
 @MainActor
 @Suite(.testScope, .serialized)
 struct GridBacklogMemoryTests {
@@ -166,6 +166,7 @@ struct GridBacklogMemoryTests {
         return census
     }
 
+    // Validates: APP-015
     /// After a thousand backlog publications, scrolled to many places: the window holds the
     /// published order and the one the grid shows, an index's edit stays smaller than its order, and the
     /// tile store keeps the visible tiles and its off-screen limit, whatever the run's length.
@@ -178,13 +179,13 @@ struct GridBacklogMemoryTests {
         #expect(census.tiles >= census.visible + census.offscreenLimit, "the store keeps what it is designed to keep: \(census)")
     }
 
-    /// The process footprint at the owner's size: a 160,000-photo library, 1,500 backlog
+    /// The process footprint at the reference size: a 160,000-photo library, 1,500 backlog
     /// publications, scrolled to a hundred places, grows at most `footprintGrowthLimit` past the
     /// window it settled to.
     static let footprintGrowthLimit: UInt64 = 150 * 1_048_576
 
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func aBacklogAtTheOwnersSizeStaysWithinItsFootprint() throws {
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
+    func aBacklogAtTheReferenceSizeStaysWithinItsFootprint() throws {
         let census = Self.run(photos: 160_000, publications: 1500, visible: 90, scrollEvery: 15)
         let url = SourceTree.root.appending(path: "build/grid-backlog-memory/run.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

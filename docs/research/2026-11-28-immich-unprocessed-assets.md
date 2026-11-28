@@ -2,16 +2,16 @@
 
 ## Question
 
-The owner's Activity popover counted 934 Immich items as "sent only when you open them", and
-the grid showed them as gray placeholders. The owner asked whether Otos can tell such items
+The user's Activity popover counted 934 Immich items as "sent only when you open them", and
+the grid showed them as gray placeholders. The question was whether Otos can tell such items
 apart from the server's own records, whether they should be shown at all, and why Otos's
 one-copy rule (ADR 0054) did not hide the ones that are copies of library files.
 
 ## Method
 
 All of it read-only:
-- Otos's catalog on the owner's Mac, opened with `sqlite3 -readonly … ?mode=ro`.
-- The Immich server's database (`<host>`, Immich v3.4.2), inside `BEGIN READ ONLY … ROLLBACK`.
+- Otos's catalog on the test Mac, opened with `sqlite3 -readonly … ?mode=ro`.
+- The test Immich server's database (Immich v3.4.2), inside `BEGIN READ ONLY … ROLLBACK`.
 - Immich's server source at the `v3.4.2` tag (`server/src`).
 
 ## What the server holds
@@ -24,7 +24,7 @@ Of 149,438 assets on the server (not deleted, timeline or archive):
 | Read, no images yet | 901 | yes | set | no |
 | **Not read at all** | **942** | **none** | **none** | **no** |
 
-- **Where the 942 came from.** They are all external-library assets: `libraryId` is set, 931 under `/srv/OneDrive`, 11 under `/srv/Spillover`. All 1,647 assets added in the four days before were too; none was an upload.
+- **Where the 942 came from.** They are all external-library assets: `libraryId` is set, 931 under one external library's folder, 11 under another's. All 1,647 assets added in the four days before were too; none was an upload.
 - **Why they have no size.** A normal upload writes `fileSizeInByte` into `asset_exif` when the asset is created (`asset-media.service.ts`). A library scan creates the asset row and queues `AssetExtractMetadata`, and the server's queues then held 247,640 metadata jobs and 19,231 thumbnail jobs. So until the metadata job runs, an external-library asset has no metadata row at all, and no size.
 - **Checksums are of paths, not bytes.** Every external-library asset's checksum is `sha1-path`, a hash of its path, so it says nothing about content (ADR 0054 already treats it so).
 

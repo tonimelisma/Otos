@@ -39,7 +39,7 @@ nonisolated struct MachineConditions: Equatable, Sendable {
     /// - Memory at `warning` holds every kind but a description. A download, a text page and
     ///   a heavy load each hold hundreds of megabytes in Otos or in a process it drives, or
     ///   fill the file cache with an original. A description's memory is the system language
-    ///   model's, which macOS swaps out with the other apps (the owner, 2026-11-18); a
+    ///   model's, which macOS swaps out with the other apps; a
     ///   description held at warning loaded the model, raised the level and was held again,
     ///   over and over.
     /// - A `serious` or `critical` thermal state holds every kind: the system is throttling.

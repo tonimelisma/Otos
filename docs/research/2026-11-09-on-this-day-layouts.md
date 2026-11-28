@@ -1,13 +1,13 @@
 # On This Day as a full content pane: layouts
 
-Date: 2026-11-09. This is research for plan 0114 (closed; see ADR 0049), done after the owner placed On This Day
+Date: 2026-11-09. This is research for plan 0114 (closed; see ADR 0049), done after On This Day was placed
 as a sidebar scope whose whole content pane is the collection of years. It asks what a
 browsable collection of stories looks like when it is the main UI rather than a strip
 above another grid.
 
 Sources:
 - Immich's web source on GitHub `main`.
-- The owner's own Immich v3.3.0, from screenshots dated 2026-11-09.
+- The test Immich server (v3.3.0), from screenshots dated 2026-11-09.
 - Vendor help pages and press, cited inline.
 
 The Immich public demo (`demo.immich.app`) shows no memories today: its only memory is
@@ -26,7 +26,7 @@ Two surfaces share one `MemoryCard` (`web/src/lib/components/memories/MemoryCard
 - The title is white `text-lg` at the bottom left, "N years ago" from `memoryLaneTitle`
   in `web/src/lib/utils.ts`.
 - One On This Day memory per year (`memory.data.year`).
-- The owner's instance shows exactly this: three landscape cards, `1 year ago`,
+- The test instance shows exactly this: three landscape cards, `1 year ago`,
   `2 years ago` and `3 years ago`, above the `Today` section of the timeline, with a
   chevron to scroll.
 
@@ -37,7 +37,7 @@ https://github.com/immich-app/immich/pull/28675; `web/src/routes/(user)/memories
 - "Upcoming" and "Current" headers, a total count, and a favourites filter.
 - It is a grid of landscape cards, not circles.
 
-**The viewer** (`MemoryViewer.svelte`, and the owner's screenshot).
+**The viewer** (`MemoryViewer.svelte`, and the test instance's screenshot).
 - Top row: Close and the title (`1 year ago`) at the leading edge. Then Play/Pause, a
   segment bar (one dash per asset) and the position `1/20`, then mute.
 - The stage is a rounded black panel. The date and place sit at its top left in white
@@ -87,11 +87,11 @@ an assumption.
 | Layout | Evidence | Verdict |
 | --- | --- | --- |
 | Wrapping grid of circles | None as a full page. Circles are avatars in strips, crop scene photos, and leave a few-year pane mostly empty. | Rejected |
-| Grid of landscape key-photo cards, `N years ago` over a bottom gradient | Immich's memories page and strip cards; Apple's memory cards in spirit | **Chosen by the owner** |
+| Grid of landscape key-photo cards, `N years ago` over a bottom gradient | Immich's memories page and strip cards; Apple's memory cards in spirit | **Chosen** |
 | By-year vertical feed | Facebook; old Timehop | Scannable, but shows content inline, competing with play-to-watch |
 | Hero for the newest year plus smaller cards | No exact precedent | Arbitrary hierarchy |
 | Centred carousel of portrait cards | Immich's viewer peeks; Google and Ente strips | A navigation idiom inside a player, not a browse surface |
 
-The owner chose the photo-card grid on 2026-11-09 from four options: photo cards, story
+The photo-card grid was chosen on 2026-11-09 from four options: photo cards, story
 balls, a by-year feed, and a hero plus smaller cards. ADR 0049 and `docs/design/on-this-day.md` record the
 card geometry Otos adopted.

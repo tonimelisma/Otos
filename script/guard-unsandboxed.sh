@@ -12,6 +12,7 @@ check_root() {
     echo "FAIL: ARC-002 forbids security-scoped access" >&2; return 1
   fi
 }
+# Validates: ARC-002
 self_test() {
   local d; d="$(mktemp -d)"; trap 'rm -rf "$d"' RETURN
   if check_root "$d/missing" 2>/dev/null; then echo "guard-unsandboxed self-test failed (a missing scan root passed)" >&2; return 1; fi

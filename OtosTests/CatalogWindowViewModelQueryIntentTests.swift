@@ -4,6 +4,7 @@ import Testing
 
 @Suite(.serialized, .testScope)
 struct CatalogWindowViewModelQueryIntentTests {
+    // Validates: APP-014
     @MainActor
     @Test func normalizedNoOpQueryIntentDoesNotBumpOrRollbackGeneration() async throws {
         let temp = PreferencesDomain.suite(UUID().uuidString)
@@ -26,6 +27,7 @@ struct CatalogWindowViewModelQueryIntentTests {
         #expect(requests.allSatisfy { $0.descriptor == .default && $0.generation == 0 })
     }
 
+    // Validates: ARC-016, APP-014
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackToggledBackQueryIntent() async throws {
         let temp = PreferencesDomain.suite(UUID().uuidString)

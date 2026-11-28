@@ -46,6 +46,7 @@ struct CatalogProjectionLifecycleTests {
         await storeReleased.wait()
     }
 
+    // Validates: ARC-018, ARC-027
     @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
         let temp = try makeTestDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

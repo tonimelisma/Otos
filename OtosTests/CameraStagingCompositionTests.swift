@@ -9,6 +9,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CameraStagingCompositionTests {
+    // Validates: APP-018
     @Test func theWindowsCameraMonitorStagesWhereTheStoreLoadsTheCamera() async throws {
         let temp = try makeTestDirectory()
         let database = temp.appending(path: "catalog.sqlite")

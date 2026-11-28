@@ -2,7 +2,7 @@
 
 Two costs remained after the launch fixes of 2026-11-01 (#548, #549): about 1.4 s per
 duplicates build and about 1 s before the window's first frame. This note records what
-each one is, measured on the owner's Mac (Xcode 27.2, Debug builds as installed, ADR 0030).
+each one is, measured on the test Mac (Xcode 27.2, Debug builds as installed, ADR 0030).
 
 ## The duplicates build
 
@@ -23,7 +23,7 @@ to free disk; the figures below are its only record).
   | Comparing renders | 34 %: the pixel loop, unoptimized in Debug, over every proposed pair |
   | Proposing pairs | 11 %, done twice per build |
 
-- Inputs on the owner's catalog:
+- Inputs on the reference catalog:
   - stills: 14,164;
   - stills without capture metadata, each tested against its whole aspect bucket:
     1,631, making about 690,000 hash comparisons;
@@ -38,7 +38,7 @@ Changes (ADR 0042, "The groups have their own owner"):
 
 All builds below found the same groups: 164 groups, 54 same-photo, 375 copies, 1,651
 pairs, 2,462 stills detailed. Timings are from the installed app's `duplicates.groups
-phase=built` log lines, read from the owner's library.
+phase=built` log lines, read from the reference library.
 
 | Build | Candidates ms | Details ms | Compare ms | Total ms |
 |---|---|---|---|---|

@@ -54,7 +54,7 @@ is no path in the seam that registers, removes, or edits a root. The whole seam 
 the catalog.
 
 **A sandbox home may be given a library; nothing else may.** A tour or a survey of a
-generated library (`script/sandbox-library.sh`, camera-size photos or, at the owner's
+generated library (`script/sandbox-library.sh`, camera-size photos or, at the reference
 library size, small ones in a folder tree) launches the dev build with
 `OTOS_SANDBOX_LIBRARY=<folder>`, and `SandboxLibrary` adds that folder once the catalog's
 first load has applied, through the window's own `addLibrary` intent, the one Settings ▸

@@ -63,8 +63,8 @@ import OSLog
 /// (`optionsRequested`, `optionsCovered`), and its answer is kept and republished in the step
 /// it ends in. An intent on the same row — a sort, a filter, a search — is built while the
 /// options are read; one for another row cancels the read, whose answer is then never kept.
-/// On the owner's catalog a search, a clear and a sort each waited 15–23 s for the options
-/// read of the pass before them (`docs/research/2026-11-16-window-reads-owner-catalog.md`).
+/// On the reference catalog a search, a clear and a sort each waited 15–23 s for the options
+/// read of the pass before them (`docs/research/2026-11-16-window-reads-reference-catalog.md`).
 ///
 /// What the user asked for is never queued behind work for what they left (ADR 0032). A
 /// pass's build runs in a task the pass waits on (`inFlight`); an intent that changes what is
@@ -1270,8 +1270,8 @@ private extension CatalogProjection {
     /// or removed) while the window shows no item. The cadence spares the main actor the
     /// apply of a shown grid that a background change reorders; a window that shows no item
     /// has no grid to reorder, and what it waits for is its first rows — a newly added
-    /// library's first scan batch, which waited for the next tick (0.9 s at the owner's
-    /// library size, `docs/research/2026-11-17-a-new-library-at-the-owners-size.md`).
+    /// library's first scan batch, which waited for the next tick (0.9 s at the reference
+    /// library's size, `docs/research/2026-11-17-a-new-library-at-the-reference-size.md`).
     private func publishesAtOnce(_ change: CatalogStoreChange) -> Bool {
         if publishedBeforeCatalogLoad {
             return true

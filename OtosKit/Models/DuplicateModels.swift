@@ -216,8 +216,8 @@ nonisolated struct DuplicateGroup: Equatable, Sendable, Identifiable {
     }
 }
 
-/// The list's three sections, in order of the attention a group needs (owner direction,
-/// 2026-11-14; `docs/design/duplicates.md`).
+/// The list's three sections, in order of the attention a group needs
+/// (`docs/design/duplicates.md`).
 nonisolated enum DuplicatesSection: Int, CaseIterable, Comparable, Sendable {
     /// The copies hold work that cannot be combined: only a click decides.
     case choose

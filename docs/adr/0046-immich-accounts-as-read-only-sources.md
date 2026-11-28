@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The owner wants Immich photos in Otos (2026-11-07): the user logs in to an Immich server
+Immich photos belong in Otos (2026-11-07): the user logs in to an Immich server
 from Otos; the account appears in the sidebar like a local library; its photos appear in
 the grid, loupe and compare like any other photo; every Otos feature that does not change
 the media works on them. When the server cannot be reached, Otos still shows them. The
@@ -24,7 +24,7 @@ Verified facts (`docs/research/2026-11-07-immich-api.md`, measured against Immic
   RAW development is libvips, never RAW9. Every size and format is server admin
   configuration a client cannot choose
   (`docs/research/2026-11-07-immich-derived-assets.md`).
-- Downloading every original to render it would move about 350 GB for the owner's
+- Downloading every original to render it would move about 350 GB for the reference library's
   14,000 stills; Immich's thumbnails and previews are about 6 GB.
 - When the server is offline, Immich can serve nothing.
 
@@ -187,7 +187,7 @@ of the file's own status immediately before the read. The executor gains an `imm
    name, so a reader never sees half a file;
 3. the existing priorities and per-root breaker throughout. Only the user's work —
    interactive or command priority — downloads an original, because an account's
-   originals are never downloaded to render the library (owner, 2026-11-09). Locality says
+   originals are never downloaded to render the library. Locality says
    so, so no background or device request reaches the executor; its refusal of one stays
    as the boundary's own guard.
 
@@ -241,7 +241,7 @@ reads leave out. Restoring it in Immich shows it again. Since v84 the trash is
 size, which only its metadata gives, and none of the server's images, which it makes only
 after. The server's own timeline and search leave such an asset out (they join its metadata),
 and an external library's scan lists one long before its metadata job runs — 942 on the
-owner's server on 2026-11-28, which Otos showed as placeholders. It shows once the server
+test Immich server on 2026-11-28, which Otos showed as placeholders. It shows once the server
 reports its size; the account's Activity row counts the ones waiting
 (`docs/research/2026-11-28-immich-unprocessed-assets.md`). `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
 resync: rows the resync does not list are purged only after it completes. The resync is
@@ -376,7 +376,7 @@ Consequences per product:
   Otos renders it.
 - A RAW shows libvips's development until RAW9 renders it, which happens lazily: when its
   original is downloaded for full-resolution zoom, an edit, export or hand-off. No
-  background job downloads RAWs to render them (owner decision, 2026-11-09).
+  background job downloads RAWs to render them.
 - An edited still always shows Otos's rendering. It is never owed Immich's images, so none
   is fetched for it or written to it, even when its file changes.
 - Duplicates compares render signatures only within one pipeline (ADR 0042), so an
@@ -460,7 +460,7 @@ Pros:
 
 Cons:
 
-- About 350 GB for the owner's 14,000 stills: 47 minutes at 1 Gbit/s, 39 hours at
+- About 350 GB for the reference library's 14,000 stills: 47 minutes at 1 Gbit/s, 39 hours at
   20 Mbit/s, plus about 4.3 hours of RAW9 rendering, against about 6 GB for Immich's
   images.
 - Until it finishes, an account shows nothing the user can browse offline.
@@ -503,7 +503,7 @@ Cons:
 
 ## Living Documentation Impact
 
-- `AGENTS.md` (also `CLAUDE.md`): the source-of-truth, identity, deletion-proof, and
+- `CLAUDE.md`: the source-of-truth, identity, deletion-proof, and
   byte-read principles are restated for sources that are not folders, each in the
   increment that implemented it.
 - ADR 0005: unreachable roots that `showsRowsWhileUnreachable` stay browsable.

@@ -1,6 +1,6 @@
 # Research: grid day-header pinning and the macOS 26+ scroll edge effect (2026-09-04)
 
-The owner reported two defects in the Date-sort grid (DES-069, APP-030): the pinned
+Two defects were reported in the Date-sort grid (DES-069, APP-030): the pinned
 day header at the top of the viewport flickers and reads as see-through while
 scrolling, and a second header lower down lags the tiles it belongs to.
 
@@ -302,8 +302,8 @@ The first pass fixed the flicker and the lag and left the appearance wrong. Ship
 screenshots showed three things: the bar painted `bar` while the in-flow header
 painted nothing, so the two read as unrelated; at a day boundary the bar named a day
 with none of its content on screen while the incoming header sat immediately beneath
-it; and the bar clipped the top row of tiles. The owner's summary was that the old,
-flickering version "looked nicer".
+it; and the bar clipped the top row of tiles. In review, the old,
+flickering version looked nicer.
 
 It did, and the reason is worth stating plainly: **the old version had exactly one
 date on screen.** A pinned header does not add a second rendering — the pinned thing
@@ -398,13 +398,13 @@ ownership, then performance — it wins on each.
 
 The cost, stated plainly because it is the whole cost: **the inline day label is
 gone.** The day is read from the bar, not from text between the rows, and a day run
-is marked by the section inset alone. That was an owner decision, taken with D on the
+is marked by the section inset alone. That was a product decision, taken with D on the
 table as the alternative.
 
 ## Correction (2026-09-05): C was the wrong half
 
 Shipping C — the bar as the only rendering, no in-flow header — removed the day
-labels from the middle of the grid, and the owner wanted them. Re-examining the
+labels from the middle of the grid, and they were wanted. Re-examining the
 screenshots that motivated it, the diagnosis was wrong.
 
 A bar reading "Yesterday" with "Last Wednesday" arriving beneath it **is not a bug**.
@@ -512,7 +512,7 @@ rule, and because the bar is shown only when content is scrolled under it, the l
 contextual for free: at the top of the grid the header renders and no line is drawn,
 because nothing is underneath yet.
 
-C is what an earlier increment shipped and the owner rejected. E reintroduces the
+C is what an earlier increment shipped and was rejected. E reintroduces the
 translucency that started this thread, and Apple's own Photos carries a live bug in that
 direction — its date indicator stops showing entirely under Reduce Transparency. F
 remains unreachable from `NavigationSplitView`.

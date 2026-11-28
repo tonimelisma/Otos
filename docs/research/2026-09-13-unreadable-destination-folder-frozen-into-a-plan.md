@@ -1,6 +1,6 @@
 # Research: an unreadable destination folder, frozen into a plan (2026-09-13)
 
-The owner imported 368 items from a card into a OneDrive library at 17:52, saw it
+The user imported 368 items from a card into a OneDrive library at 17:52, saw it
 complete, and forty minutes later found the import bar reading `0 new items · 0 KB`,
 `⚠ Otos couldn't check 368 names in Camera Roll`, with an enabled `Import 0 Items`
 button — on the batch row that held all 368 items, safely in the library.

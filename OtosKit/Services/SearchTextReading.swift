@@ -9,7 +9,7 @@ import Vision
 /// Search text reading guide (ADR 0048)
 ///
 /// Text in a photo — a sign, a menu, a screenshot's message — is what an image embedding reads
-/// worst: searched for a word Vision reads in the owner's photos, SigLIP put a photo holding it
+/// worst: searched for a word Vision reads in the reference library's photos, SigLIP put a photo holding it
 /// in its top 10 for 21% of them (`docs/research/2026-11-09-keyword-search.md` §9). So the
 /// stored preview of each still is read for text, and a query whose words appear in it
 /// matches.
@@ -19,7 +19,7 @@ import Vision
 /// the default device a reading stalled for 32 s under load, on the CPU it takes a median
 /// 0.15 s. The fast level, which search read with before, reports only two confidences and
 /// misreads texture as text at both (`*•9>•'•` at 0.5, beside real menu lines); the accurate
-/// level reports 1.0 for the lines it is sure of, and on the owner's previews those read
+/// level reports 1.0 for the lines it is sure of, and on the reference library's previews those read
 /// cleanly (`docs/research/2026-11-12-text-and-labels-in-the-info-pane.md`). Every line from
 /// 0.3 is kept with its confidence and its box: search matches them all, and the Info pane and
 /// the description's facts show the lines a person reads as the photo's text (`shown`).
@@ -95,7 +95,7 @@ nonisolated enum SearchTextReading {
     /// description is told: each line Vision is certain of, once, in reading order, without a
     /// phone screenshot's status bar. `sceneLabels` are the photo's confident scene labels.
     ///
-    /// Measured on the owner's library (`docs/research/2026-11-19-info-labels-and-text.md`):
+    /// Measured on the reference library (`docs/research/2026-11-19-info-labels-and-text.md`):
     /// 3,792 stills showed a line more than once ("dreamforce" three times, one banner per
     /// stand), and every phone screenshot began with its clock, signal and battery
     /// ("23:11 1", "25", "SOS"). Those lines end within the top `statusBarDepth` of a phone's

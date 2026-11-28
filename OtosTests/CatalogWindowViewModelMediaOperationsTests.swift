@@ -84,6 +84,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
 
     // MARK: - An import moves the user to its batch, once
 
+    // Validates: APP-002
     /// `import-bar.md` row 6: the selection leaves the card's row for the batch the run
     /// is copying into once the sidebar draws that batch's row. The presentation names the
     /// batch as soon as its first item is in the catalog; the row exists only once a window
@@ -113,6 +114,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation?.sourcePath == Self.cardPath)
     }
 
+    // Validates: APP-002
     /// A short run can finish before the batch's row is drawn; the row's first appearance
     /// still moves the user, and the bar's Done comes with them.
     @Test func aRunThatFinishesBeforeItsRowAppearsStillMovesTheUser() {
@@ -136,6 +138,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation?.state == completed)
     }
 
+    // Validates: APP-002
     @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
         let model = makeModel()
         let withRow = [ImportBatchSummary(batchID: Self.batchID, photoCount: 1)]
@@ -152,6 +155,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation?.runBatchID == Self.batchID)
     }
 
+    // Validates: APP-002
     @Test func aUserElsewhereWhenTheRowAppearsStaysThereAndIsNeverPulledLater() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
@@ -171,6 +175,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
+    // Validates: APP-002
     /// A batch whose row never appears (its items left the catalog first) is not waited on
     /// for ever: leaving the card's row ends the wait, and the row appearing later, with the
     /// user back on the card, does not pull them.
@@ -200,6 +205,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.importBatchesAwaitingTheirRow.isEmpty)
     }
 
+    // Validates: APP-002
     @Test func aRunThatIsNotCopyingDoesNotMoveTheUser() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
@@ -215,6 +221,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
+    // Validates: APP-002
     @Test func anExecutingImportDoesNotMoveTheUserFromAllImports() {
         let model = makeModel()
         model.selectSidebar(.allImports)
@@ -224,6 +231,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
 
     // MARK: - The bar is drawn on the card's row and on its latest run's batch row
 
+    // Validates: APP-002, APP-029
     /// The 2026-10-01 report's run, seen from its batch: the batch a just-cancelled run
     /// produced draws that card's bar — the Stopped report and the remainder's Import —
     /// for as long as the card is attached, the same bar the card's own row draws.
@@ -240,6 +248,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation == Self.cancelled)
     }
 
+    // Validates: APP-029
     /// Every run state — in flight, failed, settled incomplete — draws the bar on the
     /// run's batch row, where `Show them` is not offered: the items it names are on the
     /// card, not in the batch's grid. The card's row offers it.
@@ -265,6 +274,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         }
     }
 
+    // Validates: APP-029
     /// A batch row draws only its own run's bar: an older batch from the same card, once a
     /// newer run has started, and a batch whose card is gone draw none.
     @Test func aBatchRowThatIsNotTheCardsLatestRunShowsNoBar() {
@@ -288,6 +298,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation == nil)
     }
 
+    // Validates: APP-002, APP-029
     /// Ejecting the card the user is standing on resolves through the ordinary
     /// fallback; the selection does not jump to the batch that card produced.
     @Test func ejectingTheSelectedCardFallsBackNormally() {
@@ -311,6 +322,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation == nil)
     }
 
+    // Validates: APP-029
     /// APP-029: `sessionPreferences(for:)` reads straight off the live
     /// presentation. A second ViewModel-owned copy, wholesale-replaced from the
     /// coordinator on every frame, would race an optimistic write from
@@ -341,6 +353,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
     }
 
+    // Validates: APP-029
     /// The 2026-09-13 shape: two runs refused before any copy, seconds apart.
     /// The bar stays on the card through both refusals.
     @Test func aSecondRefusedRunLeavesTheFooterMounted() {

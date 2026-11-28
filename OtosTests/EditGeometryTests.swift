@@ -7,6 +7,7 @@ import Testing
 /// then crop — as recipe math, as rendered pixels, and back again for the picker.
 @Suite(.testScope)
 struct EditGeometryTests {
+    // Validates: APP-048
     @Test func fourQuarterTurnsAndTwoFlipsComeBackToTheStart() {
         let crop = EditCrop(left: 0.1, top: 0.2, width: 0.3, height: 0.4)
         var recipe = EditRecipe(straighten: 5, crop: crop)
@@ -20,6 +21,7 @@ struct EditGeometryTests {
         #expect(abs((flippedTwice.crop?.left ?? 0) - 0.1) < 1e-9)
     }
 
+    // Validates: APP-048
     /// A mirror reverses a rotation's sense: turning a once-flipped photo right is a left
     /// turn of what lies under the flip, and flipping reverses the straighten angle.
     @Test func aTurnOverOneFlipMovesTheOtherWayAndAFlipReversesStraighten() {
@@ -30,6 +32,7 @@ struct EditGeometryTests {
         #expect(EditRecipe().turned(clockwise: false).quarterTurns == 3)
     }
 
+    // Validates: APP-048
     @Test func theEditedSizeFollowsTurnsAndTheCrop() {
         let original = CGSize(width: 6000, height: 4000)
         #expect(EditRecipe(quarterTurns: 1).outputSize(ofOriginal: original) == CGSize(width: 4000, height: 6000))
@@ -38,6 +41,7 @@ struct EditGeometryTests {
         #expect(abs(cropped.cropLongEdgeFraction(ofOriginal: original) - 0.5) < 1e-9)
     }
 
+    // Validates: APP-048
     @Test func dragsMoveAndResizeTheCropInsideTheFrame() {
         let crop = EditCrop(left: 0.2, top: 0.2, width: 0.4, height: 0.4)
         #expect(crop.moved(by: CGSize(width: 0.9, height: 0)) == EditCrop(left: 0.6, top: 0.2, width: 0.4, height: 0.4))
@@ -53,6 +57,7 @@ struct EditGeometryTests {
         #expect(abs(tooFar.width - tooFar.height) < 1e-9)
     }
 
+    // Validates: APP-048
     @Test func anAspectIsTheLargestOfItsShapeInTheFrame() {
         let frame = CGSize(width: 96, height: 64)
         let square = EditCrop.largest(pixelRatio: 1, frame: frame, around: CGPoint(x: 0.5, y: 0.5))
@@ -62,6 +67,7 @@ struct EditGeometryTests {
         #expect(CropAspect.free.longOverShort(frame: CGSize(width: 96, height: 64)) == nil)
     }
 
+    // Validates: APP-048
     @Test func aPointOnTheEditedPhotoMapsBackToTheDevelopedOne() {
         let size = CGSize(width: 96, height: 64)
         let turned = EditGeometry(recipe: EditRecipe(quarterTurns: 1), developedSize: size)
@@ -78,6 +84,7 @@ struct EditGeometryTests {
         #expect(EditGeometry.fillScale(degrees: 0, frame: size) == 1)
     }
 
+    // Validates: APP-048
     @Test func turnsFlipsAndCropsMoveThePixels() async throws {
         let url = try makeTestDirectory().appending(path: "split.jpg")
         try writeSplitJPEG(to: url)
@@ -102,6 +109,7 @@ struct EditGeometryTests {
         #expect(kept.red > 0.6 && kept.blue < 0.3)
     }
 
+    // Validates: APP-048
     /// Straighten keeps the frame's size and fills it to the corners.
     @Test func straighteningKeepsTheFrameFilled() async throws {
         let url = try makeTestDirectory().appending(path: "gray.jpg")
@@ -116,6 +124,7 @@ struct EditGeometryTests {
         #expect(corner.green > 0.5)
     }
 
+    // Validates: APP-048
     /// A crop is developed from a frame large enough that the crop still reaches the
     /// requested size.
     @Test func aCropIsDevelopedLargeEnoughToReachTheRequestedSize() async throws {
@@ -129,6 +138,7 @@ struct EditGeometryTests {
         #expect(max(rendered.image.width, rendered.image.height) == 64)
     }
 
+    // Validates: APP-046
     /// A RAW's scale factor is a function of the native size read when it was opened: the
     /// edited long edge reaches the size asked for, a crop is developed larger, and nothing
     /// is developed beyond full resolution.
@@ -142,6 +152,7 @@ struct EditGeometryTests {
         #expect(ImageRenderer.rawScaleFactor(nativeSize: native, outputLongEdge: nil, recipe: .neutral) == 1)
     }
 
+    // Validates: APP-048
     /// The picker samples the pixel under the click on the photo as shown: with the photo
     /// flipped, a click on its left half samples the original's right half.
     @Test func thePickerSamplesThePixelUnderTheClickThroughTheGeometry() async throws {
@@ -163,6 +174,7 @@ struct EditGeometryTests {
         #expect(abs(flipped.temperature) <= 2)
     }
 
+    // Validates: APP-048
     /// A line drawn falling to the right is leveled by a counterclockwise turn, one drawn
     /// nearer vertical is made plumb, and a click draws no line.
     @Test func aDrawnLineIsLeveledOrMadePlumb() throws {

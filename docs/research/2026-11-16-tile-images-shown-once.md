@@ -6,7 +6,7 @@
 shows unless its pixels are an IOSurface, and keeps the copy with the image. It moved the
 full-size view to Image I/O's IOSurface decode; the grid's thumbnails (`ThumbnailStore.load`:
 decode, then draw into a bitmap context) and the face tiles (drawn into a `MappedImage`) kept
-the old forms. The owner's app at rest after a tour, by `footprint` category: CoreAnimation
+the old forms. The installed app on the reference library at rest after a tour, by `footprint` category: CoreAnimation
 62 MB in 254 regions, CG Raster Data 55 MB in 468, IOSurface 12 MB. What holds each, and what
 does each tile cost in the form it is shown?
 
@@ -20,15 +20,15 @@ does each tile cost in the form it is shown?
   `Image(decorative:)` in a `LazyVGrid`.
 - **The window, as the tour uses it** (`ImageMemoryTests`, `OTOS_SCALE_TEST=1`, alone):
   - `theGridHoldsEachThumbnailOnce`: `ContentView` in a 1512 × 945 window at a backing scale
-    of 2 over a generated catalog of the owner's shape (scale 0.02), its first 1,300 stored
+    of 2 over a generated catalog of the reference library's shape (scale 0.02), its first 1,300 stored
     thumbnails written as 256 px JPEGs; All Media's first screenful, then three scroll steps of
     300 tiles, each waiting until every visible tile shows its thumbnail
     (`op=ui.mediaGrid.visibleThumbnails`'s report).
   - `thePeopleGalleryHoldsOnlyItsTiles`: the gallery's first 24 tiles in a 1200 × 800 window.
   - `theTourPhotoStepsInTheWindow`: the loupe and Compare steps of the tour.
   - Each ran before and after the change on the same machine, under the usual parallel load.
-- **The owner's library was not measured.** The brief for this work forbids launching the
-  installed app, so the at-rest numbers above are the owner's own, from before.
+- **The reference library was not measured.** The brief for this work forbids launching the
+  installed app, so the at-rest numbers above are the reference library's, from before.
 
 ## 1. Which form is copied
 
@@ -120,7 +120,7 @@ tile always shows it at its stored size or larger, and it is decoded at its stor
 - The Places map, the Info pane's face tiles, On This Day and Duplicates in the window. All
   decode thumbnails through `ThumbnailStore.load` and face tiles through `FaceCrop`, so they
   take the same form, but their own holders were not measured.
-- The owner's library at rest and its session peak (`script/scorecard.sh --tour`), because the
+- The reference library at rest and its session peak (`script/scorecard.sh --tour`), because the
   installed app is not launched for this work.
 
 ## Conclusion

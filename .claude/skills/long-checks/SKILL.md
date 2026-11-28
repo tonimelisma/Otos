@@ -5,9 +5,10 @@ description: Supervise a full script/check.sh run on a Mac (or read CI's) — he
 
 # Supervising a check that builds
 
-Where Xcode is installed, `script/check.sh` runs with `run_in_background: true`; the guard
-hook enforces it. A hung process never completes and never reports, so a wait on
-completion alone is unbounded. A long check is watched, not awaited.
+Where Xcode is installed, run `script/check.sh` with `run_in_background: true`, and never
+`verify.sh`, `test.sh` or `build.sh` directly: `check.sh` orders the gates and supervises
+them. A hung process never completes and never reports, so a wait on completion alone is
+unbounded (one waited 9 h 40 m). A long check is watched, not awaited.
 
 - **Arm a `Monitor`** that emits the log's newest heartbeat every 60 seconds. Stop it in
   the same action that reads the result. The log's path is `check.sh`'s first line

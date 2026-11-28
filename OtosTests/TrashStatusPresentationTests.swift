@@ -43,6 +43,7 @@ struct TrashStatusPresentationTests {
         #expect(download.secondaryLine == "1 item waiting to move to the Trash")
     }
 
+    // Validates: APP-027
     @Test func decisionPromptsNameTheActAndItsCount() {
         let root = LibraryRootPath(rawValue: "/Pictures")
         let one = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "Trip/IMG_1.MOV"))
@@ -62,6 +63,7 @@ struct TrashStatusPresentationTests {
         #expect(TrashDecisionPrompt.deleteTitle == "Delete")
     }
 
+    // Validates: APP-027
     @Test func decisionsOfOneKindMergeWithoutDuplicates() {
         let root = LibraryRootPath(rawValue: "/Pictures")
         let one = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "1.jpg"))
@@ -75,12 +77,14 @@ struct TrashStatusPresentationTests {
 /// The large-download question (Plan 0104): asked only above 100 MB of downloads and
 /// only while the preference allows it.
 struct LargeTrashDownloadPromptTests {
+    // Validates: APP-045
     @Test func asksOnlyAboveTheThresholdWhileThePreferenceIsOn() {
         #expect(LargeTrashDownloadPrompt.asks(bytes: 100_000_001, preference: true))
         #expect(!LargeTrashDownloadPrompt.asks(bytes: 100_000_000, preference: true))
         #expect(!LargeTrashDownloadPrompt.asks(bytes: 5_000_000_000, preference: false))
     }
 
+    // Validates: APP-045
     @Test func titleNamesSizeAndCount() {
         let root = LibraryRootPath(rawValue: "/Pictures")
         let one = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "Trip/clip.mov"))
@@ -96,6 +100,7 @@ struct LargeTrashDownloadPromptTests {
         #expect(LargeTrashDownloadPrompt.confirmTitle == "Download and Move to Trash")
     }
 
+    // Validates: APP-045
     /// A download with sizes the catalog does not know states the known part as a lower
     /// bound, asks only when that part is already over the threshold, and the status bar
     /// states no figure when no size is known.

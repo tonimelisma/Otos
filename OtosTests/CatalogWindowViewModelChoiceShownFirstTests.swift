@@ -10,6 +10,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct CatalogWindowViewModelChoiceShownFirstTests {
+    // Validates: APP-086
     @Test func aChoiceShowsOnItsTileTheToolbarAndTheUndoMenuBeforeItsWriteReturns() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let held = HeldChoiceWrites(store: library.store)
@@ -41,6 +42,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-026, APP-086
     @Test func aFailedWriteWithdrawsTheChoiceSelectsItsItemsAndSaysSo() async throws {
         try await withCatalogedLibrary(fileCount: 2) { library in
             let held = HeldChoiceWrites(store: library.store, failing: [1])
@@ -68,6 +70,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-086
     /// ⌘Z pressed while the act's write is held: the tile shows what it showed before at once,
     /// and the undo is written after the act, from the priors the act's write reported.
     @Test func anUndoBeforeTheWriteLandsShowsAtOnceAndWritesAfterIt() async throws {
@@ -97,6 +100,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-086
     /// A second choice on the same item before the first lands is the one shown, and the
     /// first one's failure leaves it shown.
     @Test func aSecondChoiceOnTheSameItemWinsWhateverTheFirstComesTo() async throws {
@@ -122,6 +126,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-086
     /// The user leaves the scope while the write is held: the failure still withdraws the
     /// choice, and selects nothing the new scope does not show.
     @Test func aScopeChangeMidWriteLeavesTheWithdrawalToTheTiles() async throws {
@@ -143,6 +148,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-086
     /// Two identical copies of one photo in the window (ADR 0054: two files of one library
     /// with the same bytes, as a library's own view shows them): a choice on one shows on
     /// both in the step that applies it, as the catalog writes it on both, and a failed write
@@ -205,6 +211,7 @@ struct CatalogWindowViewModelChoiceShownFirstTests {
         }
     }
 
+    // Validates: APP-086
     /// The overlay alone: a read that started before the landing never retires a choice; the
     /// first read that started after it does.
     @Test func onlyAReadStartedAfterTheLandingRetiresAChoice() {

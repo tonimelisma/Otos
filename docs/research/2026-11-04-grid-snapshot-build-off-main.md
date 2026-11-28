@@ -76,7 +76,7 @@ mutation gate's existing exclusive slot, and keep `dataSource.apply` where it is
 removes the quadratic term from the main thread without touching AppKit's data source or
 layout. The linear layout term remains: about 20–40 ms today, about 150–200 ms for a
 library spanning 1,500–2,000 days. Removing that would mean a different layout model,
-which is out of scope (the owner rejected replacing tried and true AppKit parts for it).
+which is out of scope (replacing tried and true AppKit parts for it was rejected).
 
 ## Sources
 

@@ -6,6 +6,7 @@ import Testing
 struct FilesystemReconcilerTests {
     private let root = LibraryRootPath(rawValue: "/tmp/otos-test-root")
 
+    // Validates: ARC-041
     /// ARC-041: a path's catalog name never depends on whether it is a directory right
     /// now. A file that became a directory keeps the name its row has, so a file event for
     /// it reconciles that row.

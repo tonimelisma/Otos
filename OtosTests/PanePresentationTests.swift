@@ -49,6 +49,7 @@ struct PanePresentationTests {
         #expect(unknown == pane)
     }
 
+    // Validates: APP-020
     /// One thing at the pane's center (DES-086): the wait while bytes or a player are
     /// coming, else why a video cannot play, else nothing — and only for the pane's asset.
     @Test func paneOverlayShowsTheWaitOrWhyNeverBoth() {

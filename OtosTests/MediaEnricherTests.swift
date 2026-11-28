@@ -31,6 +31,7 @@ struct MediaEnricherTests {
         SourceTree.mediaFixtures
     }
 
+    // Validates: ARC-035, ENR-013
     @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {
         let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -63,6 +64,7 @@ struct MediaEnricherTests {
         #expect(FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
     }
 
+    // Validates: ENR-016
     /// ADR 0035: a still is developed once into a staged 2560 px HEIC preview, and its grid
     /// thumbnail is drawn from that same rendering — both staged, neither published.
     @Test func aStillGetsARenderedPreviewAndAThumbnailDrawnFromIt() async throws {
@@ -91,6 +93,7 @@ struct MediaEnricherTests {
                 .path(percentEncoded: false)))
     }
 
+    // Validates: ENR-013, ENR-016
     /// ADR 0009: a card's metadata pass reads metadata and makes a provisional QuickLook
     /// thumbnail, with no rendering and no digest — the import waits on that pass alone.
     @Test func aCardsMetadataPassMakesAProvisionalThumbnailAndNoRendering() async throws {
@@ -115,6 +118,7 @@ struct MediaEnricherTests {
         #expect(result.contentHash == nil)
     }
 
+    // Validates: ENR-016
     /// An edited photo's thumbnail must show its edit, which only a rendering does, so its
     /// metadata pass makes no provisional thumbnail (ADR 0036).
     @Test func anEditedPhotosMetadataPassMakesNoProvisionalThumbnail() async throws {
@@ -136,6 +140,7 @@ struct MediaEnricherTests {
         #expect(result.rendering == nil)
     }
 
+    // Validates: ENR-016
     /// A rendering alone — a card's later pass, or an edit — develops the still without
     /// reading its metadata again (ADR 0009).
     @Test func aRenderingScopeDevelopsWithoutReadingMetadata() async throws {
@@ -156,6 +161,7 @@ struct MediaEnricherTests {
         #expect(result.provisionalThumbnail == nil)
     }
 
+    // Validates: ENR-005
     /// A HEIF that records its rotation only in its `irot` property (as Sony cameras write
     /// it) is cataloged with that orientation, so the catalog turns its stored size upright.
     @Test func aHeifTurnedByItsIrotPropertyIsReadWithItsOrientation() async throws {
@@ -175,6 +181,7 @@ struct MediaEnricherTests {
         #expect(result.metadata?.metadata.orientation == 6)
     }
 
+    // Validates: ENR-005
     /// ADR 0039: Otos stores what the library reports, as it reports it — geometry from
     /// `result.geometry`, the codec by its stable identifier, and the extraction revision
     /// the record was read with.
@@ -190,6 +197,7 @@ struct MediaEnricherTests {
         #expect(mapped.pixelWidth != nil)
     }
 
+    // Validates: APP-041
     /// A still's exposure is stored as the library reports it and put back unchanged.
     @Test func aStillsExposureIsStoredAsTheLibraryReportsIt() throws {
         let result = MediaMetadataReader.read(url: fixtureDirectory.appending(path: "ios-heic-offset-date.heic"))
@@ -201,6 +209,7 @@ struct MediaEnricherTests {
         #expect(record.exposureTimeDenominator == 345)
     }
 
+    // Validates: ENR-005
     /// Kind is MediaMetadata's (ADR 0039): the type the bytes settled, camera RAW included;
     /// else the kind the bytes showed; else the type the extension names.
     @Test func kindIsTheLibrarysFromBytesThenExtension() {
@@ -219,6 +228,7 @@ struct MediaEnricherTests {
         #expect(kind(.unknown, .unknown, "unknownext", nil) == nil)
     }
 
+    // Validates: ENR-016
     /// ADR 0035: a video keeps its Quick Look thumbnail and gets no preview.
     @Test func aVideoGetsNoPreview() async throws {
         let temp = try makeTestDirectory()
@@ -263,6 +273,7 @@ struct MediaEnricherTests {
         #expect(result.sourceMTimeSeconds == 1000)
     }
 
+    // Validates: ARC-034
     @Test func datalessRegressionRoutesBackToDownload() async throws {
         // A missing/unreadable path reports unknown status, so the gate refuses to read.
         let temp = try makeTestDirectory()
@@ -281,6 +292,7 @@ struct MediaEnricherTests {
         }
     }
 
+    // Validates: ARC-034, ENR-015
     @Test func evictionAfterHashGateSkipsMetadata() async throws {
         let temp = try makeTestDirectory()
         let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
@@ -306,6 +318,7 @@ struct MediaEnricherTests {
         #expect(checker.callCount == 2)
     }
 
+    // Validates: ARC-034, ENR-015
     @Test func evictionAfterMetadataGateSkipsThumbnail() async throws {
         let temp = try makeTestDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails")
@@ -333,6 +346,7 @@ struct MediaEnricherTests {
         #expect(!FileManager.default.fileExists(atPath: thumbnailDirectory.path))
     }
 
+    // Validates: ENR-015
     @Test func materializedEnrichmentUsesOneGatePerBytePhase() async throws {
         let temp = try makeTestDirectory()
         let checker = SequencedReadinessChecker([.materialized, .materialized, .materialized])
@@ -357,6 +371,7 @@ struct MediaEnricherTests {
         #expect(checker.callCount == 3)
     }
 
+    // Validates: ENR-013, ENR-015
     /// ENR-013: a `.removableVolume` source (ADR 0018) is never hashed in place, so
     /// its enrichment performs no full-file read. Assert against a spy hasher rather
     /// than elapsed time — a regression that hashes-and-discards would still return a

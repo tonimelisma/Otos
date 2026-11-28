@@ -82,6 +82,7 @@ struct LoupeVideoPreparationTests {
         try await waitUntil { model.loupeVideoState != nil }
     }
 
+    // Validates: APP-020
     @Test func focusingAVideoPreparesItPausedWithoutAClick() async throws {
         let (store, id) = try await makeVideoCatalog()
         let model = await makeModel(store: store, previewOutcome: .unavailable)
@@ -96,6 +97,7 @@ struct LoupeVideoPreparationTests {
         #expect(state.isPlaying == false)
     }
 
+    // Validates: APP-020
     @Test func focusMovingOffAVideoTearsDownItsPreparation() async throws {
         let (store, id) = try await makeVideoCatalog()
         let model = await makeModel(store: store, previewOutcome: .unavailable)
@@ -109,6 +111,7 @@ struct LoupeVideoPreparationTests {
         #expect(model.loupeVideoPrepareTask == nil)
     }
 
+    // Validates: APP-020
     /// The defect this pins: a video whose bytes could not come left the pane as it was,
     /// so a click on it did nothing anyone could see. Now the pane says why, and Try Again
     /// shows its wait in the frame it is pressed (DES-086, DES-120) and asks by the same
@@ -136,6 +139,7 @@ struct LoupeVideoPreparationTests {
         #expect(source.attempts == 2)
     }
 
+    // Validates: APP-020
     /// Opening a video shows its wait from the frame it is opened in, once its kind is
     /// known, rather than a poster that looks finished.
     @Test func aVideoBeingPreparedIsShownAsAWait() async throws {

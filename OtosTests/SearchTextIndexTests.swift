@@ -8,7 +8,7 @@ import Testing
 /// reading in memory gave (`SearchTextQuery.matches(folded:)`).
 @Suite(.testScope)
 struct SearchTextIndexTests {
-    /// Readings in the scripts and shapes the owner's photos hold and the ways matching treats
+    /// Readings in the scripts and shapes the reference library's photos hold and the ways matching treats
     /// them: case and diacritics, `ß`, full-width forms, decomposed accents, numbers beside
     /// letters, apostrophes and hyphens, scripts written without spaces (Chinese, Japanese) and
     /// with (Korean, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai), emoji, long words.
@@ -45,11 +45,13 @@ struct SearchTextIndexTests {
         "a b c d e",
     ]
 
+    // Validates: ENR-028
     @Test func sqliteHasFTS5() throws {
         let options = try DatabaseQueue().read { db in try String.fetchAll(db, sql: "PRAGMA compile_options") }
         #expect(options.contains("ENABLE_FTS5"))
     }
 
+    // Validates: ENR-028
     /// The differential: every query cut from the corpus — each run of 2, 3, 5 and 9 characters
     /// at every position, as folded and as written, each word alone and with a word of another
     /// reading — is answered by the index exactly as matching every reading answers it.
@@ -94,6 +96,7 @@ struct SearchTextIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-028
     /// A match reads the text index first, then each row it returns by key: its folded row by
     /// its integer key, its reading's source and its asset by theirs. No table is scanned.
     @Test func aMatchReadsTheIndexFirstAndEachRowByItsKey() throws {
@@ -111,6 +114,7 @@ struct SearchTextIndexTests {
         #expect(plan.dropFirst().allSatisfy { !$0.hasPrefix("SCAN") }, "\(plan)")
     }
 
+    // Validates: ENR-028
     /// The index follows its readings: written with a reading, replaced when it is read again,
     /// emptied by a reading with no text, matching nothing once its preview changes, and gone
     /// with its asset when the asset is proven deleted (by cascade, through its trigger).

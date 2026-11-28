@@ -15,6 +15,7 @@ private let localOriginals = ClosureMaterializationRequester { _ in .cancelled }
 @Suite(.testScope)
 @MainActor
 struct HandOffTests {
+    // Validates: APP-051
     @Test func eachPhotoIsHandedOverInTheFormItsEditCalls() {
         func form(_ name: String, video: Bool = false, _ recipe: EditRecipe = .neutral) -> HandOffForm {
             let id = MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/P"), relativePath: MediaRelativePath(rawValue: name))
@@ -27,6 +28,7 @@ struct HandOffTests {
         #expect(form("c.mov", video: true, EditRecipe(trimEnd: 2)) == .trimmedVideo)
     }
 
+    // Validates: APP-051
     /// A full disk is classified by the error's typed chain — Foundation's out-of-space
     /// code, a POSIX `ENOSPC` beneath another error, AVFoundation's `diskFull` — and never
     /// by its wording.
@@ -45,6 +47,7 @@ struct HandOffTests {
         #expect(!MediaFileWriter.isDiskFull(AVError(.unknown)))
     }
 
+    // Validates: APP-051
     /// Every way a photo can fail a hand-off is classified by its type — never by its text —
     /// into its own cause, and a cancellation is no failure at all.
     @Test func aFailureIsClassifiedByItsType() {
@@ -64,6 +67,7 @@ struct HandOffTests {
             == .sourceUnavailable(.cameraDisconnected))
     }
 
+    // Validates: APP-051
     /// The alert names the one photo's cause in its own terms (ADR 0046 §6): a full disk as
     /// one, a folder's provider or a source by the name the sidebar shows, a RAW's missing
     /// camera support as macOS's, never "the original may be unavailable" for all of them.
@@ -88,6 +92,7 @@ struct HandOffTests {
             == "One photo couldn’t be downloaded from “Pictures”. Nothing was revealed.")
     }
 
+    // Validates: APP-051
     /// An original a source stages has no file until Otos copies it: one not yet staged is
     /// fetched as the user's work before it is handed over, and a drag promises it rather
     /// than offering a path with nothing there. A source that cannot send it fails the
@@ -155,6 +160,7 @@ struct HandOffTests {
         #expect(requests.withLock { $0 } == 4)
     }
 
+    // Validates: APP-051
     /// A cloud-only original is downloaded before Copy, Share or Open hands it over, so the
     /// receiver reads a file that is there (ADR 0012). A drag and a reveal take it as it is;
     /// a download the provider does not deliver fails with its own cause.
@@ -193,6 +199,7 @@ struct HandOffTests {
         #expect(preparer.readyURL(for: item, as: .handOffFile) == id.fileURL)
     }
 
+    // Validates: APP-051
     /// Reveal in Finder takes the original, never the file a hand-off gives: an edited
     /// photo not yet staged is fetched as its original, and nothing is rendered for it.
     @Test func aRevealFetchesTheStagedOriginalOfAnEditedPhoto() async throws {
@@ -236,6 +243,7 @@ struct HandOffTests {
         #expect(!FileManager.default.fileExists(atPath: handOff.path(percentEncoded: false)))
     }
 
+    // Validates: APP-051
     /// One answer says whether a photo's file is ready, and the status bar counts what it
     /// does not answer. An original that is there is ready; an edit to render is not; an
     /// original missing from its folder is not either, and preparing it says why, for every
@@ -262,6 +270,7 @@ struct HandOffTests {
         }
     }
 
+    // Validates: APP-051
     /// An actor is reentrant, so two asks for one photo's file — a drag's promise and a
     /// Copy — each joined to the same preparation get the same file, rendered once, with
     /// nothing left behind beside it.
@@ -285,6 +294,7 @@ struct HandOffTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false)) == ["photo.jpg"])
     }
 
+    // Validates: APP-051
     /// The one who cancels stops waiting at once; another ask for the same photo keeps its
     /// preparation, and receives the file when it is made. The work runs once.
     @Test func aCancelledAskLeavesThePreparationToTheOtherAsk() async throws {
@@ -315,6 +325,7 @@ struct HandOffTests {
         #expect(gate.entered == 1)
     }
 
+    // Validates: APP-012, APP-051
     /// Cancel stops the download in flight — the hand-off's work is cancelled, not only
     /// its bar hidden — and the lane goes on to the next hand-off. ⌘C claims the pasteboard
     /// at once, so a paste while the photo downloads pastes nothing, never what was there.
@@ -344,6 +355,7 @@ struct HandOffTests {
         #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] == [ids[0].fileURL])
     }
 
+    // Validates: APP-012
     /// The pasteboard is newest-wins: a Copy while another is still being prepared cancels
     /// it, and only the newer one is written.
     @Test func aNewerCopySupersedesOneStillBeingPrepared() async throws {
@@ -366,6 +378,7 @@ struct HandOffTests {
         #expect(gate.entered == 1)
     }
 
+    // Validates: APP-012
     /// A Copy that finishes after something else wrote the pasteboard leaves that alone:
     /// what the person copied since is what they paste.
     @Test func aCopyThatFinishesAfterAnotherWriteLeavesItAlone() async throws {
@@ -388,6 +401,7 @@ struct HandOffTests {
         #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])?.isEmpty ?? true)
     }
 
+    // Validates: APP-051
     /// A promised photo the grid held no details for is named and written only once its
     /// details are read: an edited HEIC arrives as its rendered JPEG, under a JPEG's name,
     /// declared as an image when the drag began. A read that failed fails the promise.
@@ -415,6 +429,7 @@ struct HandOffTests {
         #expect(delivered?.localizedDescription == "Otos couldn’t read this photo from its catalog.")
     }
 
+    // Validates: APP-051
     @Test func aMixedSelectionCopiesAsOneFilePerPhoto() async throws {
         try await withEditableLibrary(fileCount: 3) { library in
             let ids = library.ids
@@ -459,6 +474,7 @@ struct HandOffTests {
         }
     }
 
+    // Validates: APP-038, APP-051
     @Test func aPreparedFileIsReusedAndAPromiseDeliversIt() async throws {
         let directory = try makeTestDirectory()
         let url = directory.appending(path: "photo.jpg")
@@ -494,6 +510,7 @@ struct HandOffTests {
         #expect(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    // Validates: APP-051
     @Test func aTrimmedVideoIsHandedOverAsItsRange() async throws {
         let directory = try makeTestDirectory()
         let fixture = SourceTree.mediaFixtures.appending(path: "mov-no-embedded-capture-date.mov")

@@ -17,6 +17,7 @@ struct HotAssetTableMigrationTests {
     /// The removed columns, which no read after v71 names.
     private static let removedColumns: Set = ["sort_key", "render_gray", "render_signature_source"]
 
+    // Validates: APP-090
     @Test func theRebuildKeepsEveryAssetAndEveryRowThatRefersToOne() async throws {
         let queue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(queue, upTo: Self.before)
@@ -78,6 +79,7 @@ struct HotAssetTableMigrationTests {
         }
     }
 
+    // Validates: APP-090
     /// After the rebuild the triggers work as before: a choice on a copy is every copy's, a
     /// removed copy leaves its photo alone, a new thumbnail makes its signature owed, and a
     /// move and a deletion carry the gray with the row.
@@ -317,6 +319,7 @@ struct CatalogCompactionTests {
         return (pool, url)
     }
 
+    // Validates: APP-090
     @Test func aCatalogWithFreePagesIsRewrittenOnceAndKeepsItsRows() throws {
         let (pool, url) = try Self.catalogWithFreePages()
         var told = 0
@@ -343,16 +346,18 @@ struct CatalogCompactionTests {
         #expect(told == 1)
     }
 
-    /// The owner's catalog after v71: 162,334 of 687,016 pages free (23.6 %, 634 MB of 2.8 GB),
+    // Validates: APP-090
+    /// The reference catalog after v71: 162,334 of 687,016 pages free (23.6 %, 634 MB of 2.8 GB),
     /// which a quarter's rule left in place. A tenth and 256 MB owe it; a smaller share, or
     /// fewer bytes, do not.
-    @Test func theOwnersFileAfterV71IsOwedItsCompaction() {
+    @Test func theReferenceFileAfterV71IsOwedItsCompaction() {
         let minimum = CatalogStore.compactionMinimumFreeBytes
         #expect(CatalogStore.compactionOwed(pages: 687_016, freePages: 162_334, pageSize: 4096, minimumFreeBytes: minimum))
         #expect(!CatalogStore.compactionOwed(pages: 687_016, freePages: 68000, pageSize: 4096, minimumFreeBytes: minimum))
         #expect(!CatalogStore.compactionOwed(pages: 200_000, freePages: 60000, pageSize: 4096, minimumFreeBytes: minimum))
     }
 
+    // Validates: APP-090
     @Test func aCatalogWithoutRoomAboveTheFloorIsLeftForTheNextOpen() throws {
         let (pool, url) = try Self.catalogWithFreePages()
         let pages = try pool.read { db in try Int.fetchOne(db, sql: "PRAGMA page_count") ?? 0 }

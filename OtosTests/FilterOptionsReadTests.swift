@@ -7,7 +7,7 @@ import Testing
 /// The filter's options are read beside the window, never before it or before the next pass
 /// (ADR 0005): a sort, a search or a filter on the same row is built and shown while the
 /// options read is parked, and an intent for another row cancels the read, whose answer is
-/// never kept. On the owner's catalog a search, a clear and a sort each waited 15–23 s for
+/// never kept. On the reference catalog a search, a clear and a sort each waited 15–23 s for
 /// the options read of the pass before them.
 @Suite(.testScope)
 struct FilterOptionsReadTests {
@@ -54,11 +54,12 @@ struct FilterOptionsReadTests {
         )
     }
 
-    /// The places All Media offers on a catalog of the owner's shape, read by walking its rows
+    // Validates: ENR-030
+    /// The places All Media offers on a catalog of the reference shape, read by walking its rows
     /// and finding each located row's cell by its coordinate, are what every located row's
     /// stored cell names: the oracle joins the tables as the planner likes and counts in SQL.
     @Test func thePlacesWalkFindsWhatEveryLocatedRowsCellNames() async throws {
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.05)
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.05)
         let queue = try makeTestDatabaseQueue(path: catalog.databaseURL.path(percentEncoded: false))
         defer { try? queue.close() }
         let language = PlaceNameLanguage(Locale.current)
@@ -104,6 +105,7 @@ struct FilterOptionsReadTests {
         #expect(walked == oracle)
     }
 
+    // Validates: ARC-019
     @Test func aSortIsShownWhileTheOptionsReadIsParked() async throws {
         let gate = ArrivalGate()
         let rows = AskedRows()
@@ -126,6 +128,7 @@ struct FilterOptionsReadTests {
         await window.store.shutdown()
     }
 
+    // Validates: ARC-019
     @Test func anIntentForAnotherRowCancelsTheOptionsReadAndKeepsNothingOfIt() async throws {
         let gate = ArrivalGate()
         let rows = AskedRows()

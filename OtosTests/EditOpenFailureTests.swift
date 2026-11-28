@@ -14,6 +14,7 @@ import Testing
 @Suite(.testScope)
 @MainActor
 struct EditOpenFailureTests {
+    // Validates: APP-046, APP-055
     @Test func aFailedOpenSaysTheOriginalIsUnreadableAndTheNextFileEventOpensIt() async throws {
         try await withEditableLibrary(fileCount: 1) { library in
             let status = OriginalStatusStub(path: library.ids[0].fileURL)
@@ -42,6 +43,7 @@ struct EditOpenFailureTests {
         }
     }
 
+    // Validates: APP-046
     /// The original comes back exactly as it was — a volume mounted again — so no catalog row
     /// changes; the change at its path opens it.
     @Test func aChangeAtTheOriginalsPathOpensItWithNoCatalogChange() async throws {
@@ -63,6 +65,7 @@ struct EditOpenFailureTests {
         }
     }
 
+    // Validates: APP-046
     /// An original that returned between the failed read and the watch's start is found by
     /// the one look taken once the watch is armed.
     @Test func anOriginalBackBeforeTheWatchStartedIsOpened() async throws {
@@ -80,6 +83,7 @@ struct EditOpenFailureTests {
         }
     }
 
+    // Validates: APP-046
     /// The same photo's target writers (here, opening it in the loupe) open it again too: the
     /// refresh holds only for a target that is open or opening.
     @Test func aTargetRefreshOpensAPhotoWhoseOpenFailed() async throws {

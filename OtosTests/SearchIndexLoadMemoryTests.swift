@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// ADR 0048: what the search index's launch pass costs the process on a catalog of the
-/// owner's shape (165,787 embeddings, 75,795 text readings of which 12,633 hold text), by the
+/// reference library's shape (165,787 embeddings, 75,795 text readings of which 12,633 hold text), by the
 /// kernel's own footprint (`ProcessResourceSample`). The first index builds the vector file
 /// from the catalog; a second, as at the next launch, maps it and runs its first pass: the
 /// vectors opened, the embeddings reconciled, the backlogs asked. The mapped vectors are clean,
@@ -12,9 +12,9 @@ import Testing
 /// must read no stored vector and no text reading: a query's words are matched by the
 /// catalog's text index (`theLaunchPassReadsNoTextReading` guards that at every check). Then a
 /// query's words are read from that index as the window reads them, each with the rows its
-/// statement visited (`StatementVisits`). At the owner's size only on demand
+/// statement visited (`StatementVisits`). At the reference size only on demand
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only SearchIndexLoadMemoryTests`); it writes
-/// `build/search-index-memory/owner.txt`. A measurement, not a benchmark.
+/// `build/search-index-memory/reference.txt`. A measurement, not a benchmark.
 @Suite(.testScope, .serialized)
 struct SearchIndexLoadMemoryTests {
     /// The search index's share of the 700 MB whole-app target (`docs/scorecard-targets.json`).
@@ -24,10 +24,10 @@ struct SearchIndexLoadMemoryTests {
     /// two-letter prefix most of them hold, a Japanese word one reading in eighteen holds.
     static let queries = ["open", "ca", "営業"]
 
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
     func theLaunchPassAddsLittleToTheFootprint() async throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let vectorDirectory = try #require(store.searchIndexDirectory)
@@ -89,7 +89,7 @@ struct SearchIndexLoadMemoryTests {
         peakBeforeMB=\(mb(before.peakFootprintBytes)) peakAfterMB=\(mb(after.peakFootprintBytes)) \
         passVisited=\(passLoops.values.reduce(0, +))
         """
-        let url = SourceTree.root.appending(path: "build/search-index-memory/owner.txt")
+        let url = SourceTree.root.appending(path: "build/search-index-memory/reference.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(([line] + reads).joined(separator: "\n").utf8).write(to: url)
     }

@@ -13,6 +13,7 @@ struct BrowserPlaceTests {
 
     // MARK: - Stored format
 
+    // Validates: APP-043
     @Test func aPlaceRoundTripsThroughPreferences() {
         let preferences = PreferencesDomain.suite(UUID().uuidString).makeDefaults()
         let ids = makeIDs(3)
@@ -42,6 +43,7 @@ struct BrowserPlaceTests {
         #expect(BrowserPlace.load(from: preferences, today: Self.today) == place)
     }
 
+    // Validates: APP-043, APP-057, APP-058
     @Test func everyScopeKindRoundTrips() {
         let scopes: [SidebarSelection] = [
             .allMedia,
@@ -65,6 +67,7 @@ struct BrowserPlaceTests {
         }
     }
 
+    // Validates: APP-069
     /// On This Day is saved without its day and reopens on the day it is reopened, since
     /// it always asks about today (ADR 0049).
     @Test func onThisDayReopensOnTheDayItIsLoaded() throws {
@@ -86,6 +89,7 @@ struct BrowserPlaceTests {
         #expect(!json.contains("2026"))
     }
 
+    // Validates: APP-043
     /// An unreadable place costs the user their position, never their launch: every way
     /// the stored value can be wrong loads as "nothing stored".
     @Test func anUnreadablePlaceLoadsAsNothing() throws {
@@ -112,6 +116,7 @@ struct BrowserPlaceTests {
 
     // MARK: - Relaunch
 
+    // Validates: APP-043
     /// The very first query asks for the restored collection, so launch never shows the
     /// default collection first.
     @Test func launchStartsFromTheRestoredQuery() {
@@ -125,6 +130,7 @@ struct BrowserPlaceTests {
         #expect(model.sidebarSelection == place.descriptor.scope)
     }
 
+    // Validates: APP-043
     /// Grid: surviving selection comes back and the grid is told to center on the saved
     /// middle item, which puts the viewport back where it was. A selected item that is gone
     /// is dropped, not guessed at.
@@ -144,6 +150,7 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
+    // Validates: APP-043
     @Test func loupeReopensOnTheFocusedItem() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let ids = makeIDs(4)
@@ -157,6 +164,7 @@ struct BrowserPlaceTests {
         #expect(model.focusedAssetID == ids[2])
     }
 
+    // Validates: APP-043
     @Test func compareReopensOnTheSavedPair() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let ids = makeIDs(5)
@@ -170,6 +178,7 @@ struct BrowserPlaceTests {
         #expect(Set(model.comparePair.members) == [ids[1], ids[3]])
     }
 
+    // Validates: APP-043
     /// A restored library that was removed is a different collection: the launch default
     /// applies with the sort carried over, unfiltered as any other row is entered, and
     /// nothing from the old place is applied.
@@ -195,6 +204,7 @@ struct BrowserPlaceTests {
         #expect(model.gridSelection == .empty)
     }
 
+    // Validates: APP-043
     /// All Media is only a row with two or more fixed libraries; a remembered All Media
     /// in a one-library set is gone too, so the launch default applies.
     @Test func aRememberedAllMediaWithOneLibraryFallsBackToTheDefault() {
@@ -214,6 +224,7 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
+    // Validates: APP-043
     /// A Duplicates group is saved as the list it was reached from, and the list has one
     /// presentation: a group left in Loupe reopens as the list, never as a Loupe over it.
     @Test func aDuplicatesGroupLeftInLoupeReopensAsTheList() {
@@ -238,6 +249,7 @@ struct BrowserPlaceTests {
         #expect(model.pendingPlaceRestore == nil)
     }
 
+    // Validates: APP-061
     /// Return on a picture opens its group: two copies side by side in Compare, more in
     /// Loupe, before Projection has published the group's scope.
     @Test func openingAGroupShowsTwoCopiesInCompareAndMoreInLoupe() {
@@ -273,6 +285,7 @@ struct BrowserPlaceTests {
         #expect(model.viewMode == .loupe)
     }
 
+    // Validates: APP-060
     /// A click keeps that copy; ⌘⌫ on the list moves the selected groups' copies tagged
     /// Trash and never the kept one, so Select All then ⌘⌫ cannot empty a group (ADR 0042).
     /// Double-click opens the group of the photo clicked, whatever the selection holds.
@@ -312,6 +325,7 @@ struct BrowserPlaceTests {
         #expect(model.sidebarSelection == .duplicateGroup(group.id))
     }
 
+    // Validates: APP-043, APP-044
     /// Before the catalog loads, the sidebar draws no row at all — not even the one the user
     /// left, whose lone presence would read as the whole sidebar (APP-044).
     @Test func beforeTheCatalogLoadsTheSidebarDrawsNoRow() {
@@ -329,6 +343,7 @@ struct BrowserPlaceTests {
         }
     }
 
+    // Validates: APP-090
     /// DES-121: while the catalog opens past the first frame, the window says what the open
     /// is doing and the sidebar shows the rows that stand for the libraries the open read;
     /// within the first frame it shows nothing, and once loaded the rows follow the catalog.
@@ -376,6 +391,7 @@ struct BrowserPlaceTests {
         #expect(model.showsPlacesRow)
     }
 
+    // Validates: APP-090
     /// An open of one library shows no All Media row; one of none shows no fixed row; a single
     /// update names no step.
     @Test func theOpeningRowsAreTheLibrariesTheOpenRead() {
@@ -392,6 +408,7 @@ struct BrowserPlaceTests {
         #expect(failed.isFailed)
     }
 
+    // Validates: APP-060
     /// Until the groups are first built nothing about duplicates is known: a selected
     /// Duplicates row shows without a count, and there is nothing to move.
     @Test func duplicatesNotYetBuiltClaimNoCount() {
@@ -409,6 +426,7 @@ struct BrowserPlaceTests {
         #expect(!model.canMoveDuplicatesToTrash)
     }
 
+    // Validates: APP-043
     /// Once loaded, the rows follow the catalog: All Media with two fixed libraries.
     @Test func afterTheCatalogLoadsTheRowsFollowTheLibraries() {
         let domain = PreferencesDomain.suite(UUID().uuidString)
@@ -427,6 +445,7 @@ struct BrowserPlaceTests {
         #expect(!model.showsDuplicatesRow)
     }
 
+    // Validates: APP-043
     /// Once the user goes somewhere else before the catalog has loaded, the old place
     /// would be a surprise jump — it is dropped.
     @Test func aUserChoiceBeforeLoadDropsThePendingPlace() {
@@ -442,6 +461,7 @@ struct BrowserPlaceTests {
 
     // MARK: - Quit
 
+    // Validates: APP-043
     @Test func quitSavesWhereTheUserIs() throws {
         let domain = PreferencesDomain.suite(UUID().uuidString)
         let model = makeViewModel(domain)
@@ -461,6 +481,7 @@ struct BrowserPlaceTests {
         #expect(saved.focus == ids[5], "the grid saves its middle visible item")
     }
 
+    // Validates: APP-043
     /// Quitting before the catalog loaded must not overwrite the user's real place with
     /// the launch defaults.
     @Test func quitBeforeRestoreKeepsTheStoredPlace() {
@@ -476,6 +497,7 @@ struct BrowserPlaceTests {
 
     // MARK: - Tour session
 
+    // Validates: APP-043
     /// A tour session's preferences are session-only (ADR 0020): its filter, sort, search,
     /// selection, Compare, inspector, zoom and scope are the session's alone, and what the
     /// user has stored is byte for byte as it was — whether the tour puts the window back
@@ -484,13 +506,13 @@ struct BrowserPlaceTests {
     func aTourSessionLeavesTheStoredPreferencesByteIdentical(restoresFirst: Bool) throws {
         let base = PreferencesDomain.suite(UUID().uuidString)
         let stored = try #require(base.makeDefaults() as? InMemorySuitePreferenceStore)
-        let ownersPlace = BrowserPlace(
+        let usersPlace = BrowserPlace(
             descriptor: CatalogQueryDescriptor(scope: .library(pictures)),
             viewMode: .grid,
             focus: nil,
             selection: []
         )
-        ownersPlace.save(to: stored)
+        usersPlace.save(to: stored)
         stored.set(5, forKey: CatalogWindowViewModel.gridColumnCountDefaultsKey)
         stored.set(126.5, forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
         stored.set("file", forKey: CatalogWindowViewModel.foldedInfoSectionsDefaultsKey)
@@ -500,7 +522,7 @@ struct BrowserPlaceTests {
         let session = PreferencesDomain.sessionOnly(base)
         let model = makeViewModel(session)
         let ids = makeIDs(9)
-        model.applyState(loadedState(descriptor: ownersPlace.descriptor, ids: ids))
+        model.applyState(loadedState(descriptor: usersPlace.descriptor, ids: ids))
         #expect(model.pendingPlaceRestore == nil, "the stored place was restored, so quit saves")
         #expect(model.gridColumnCount == 5, "the session reads the user's settings")
         #expect(model.foldedInfoSections == [.file] && model.foldedEditSections == [.color, .light])
@@ -508,7 +530,7 @@ struct BrowserPlaceTests {
         tourIntents(on: model, ids: ids)
         if restoresFirst {
             model.setInspectorPane(nil)
-            model.setQueryDescriptor(ownersPlace.descriptor)
+            model.setQueryDescriptor(usersPlace.descriptor)
             model.setSearchText("")
         }
         // Quit: the one moment the place is written.
@@ -528,6 +550,7 @@ struct BrowserPlaceTests {
         }
     }
 
+    // Validates: APP-043
     /// The control: the same intents in an ordinary session write the stored place and zoom,
     /// so the tour test above holds only because its domain is session-only.
     @Test func anOrdinarySessionWritesWhatTheTourDoesNot() {

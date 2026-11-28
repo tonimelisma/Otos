@@ -4,21 +4,21 @@ import GRDB
 import SQLite3
 import Testing
 
-/// Every order the window can ask for, on a generated catalog of the owner's shape: each sort
+/// Every order the window can ask for, on a generated catalog of the reference shape: each sort
 /// under each kind of scope, with no filter and with each filter the window offers. For each,
 /// the plan, whether it sorts in a temporary b-tree, whether its walk is covering, the pages a
 /// cold connection reads, the rows SQLite visits for each row returned, and the time. A
-/// measurement at the owner's size, on demand
+/// measurement at the reference size, on demand
 /// (`OTOS_SCALE_TEST=1 script/check.sh --only OrderReadSurveyTests`): it writes a 2.3 GB file.
-/// The report goes to `build/order-survey/owner.txt`, and each read's SQL with its arguments
+/// The report goes to `build/order-survey/reference.txt`, and each read's SQL with its arguments
 /// written in, to `build/order-survey/sql/`, so the same reads can be asked of another catalog
 /// read-only with `sqlite3`.
 @Suite(.testScope, .serialized)
 struct OrderReadSurveyTests {
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func everyOrderTheWindowAsksForOnTheOwnersShape() throws {
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
+    func everyOrderTheWindowAsksForOnTheReferenceShape() throws {
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let path = catalog.databaseURL.path(percentEncoded: false)
         let queue = try makeTestDatabaseQueue(path: path)
         try queue.writeWithoutTransaction { db in
@@ -41,7 +41,7 @@ struct OrderReadSurveyTests {
             lines.append(measured.line)
             try Data((measured.literalSQL + ";\n").utf8).write(to: sqlDirectory.appending(path: "\(read.name).sql"))
         }
-        let url = SourceTree.root.appending(path: "build/order-survey/owner.txt")
+        let url = SourceTree.root.appending(path: "build/order-survey/reference.txt")
         try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
         try FileManager.default.removeItem(at: directory)
     }

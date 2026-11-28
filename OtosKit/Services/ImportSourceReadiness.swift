@@ -5,7 +5,7 @@ import Foundation
 /// and activity — no coordinator or catalog state beyond what's already on the
 /// row, and fully unit-tested without a live device or filesystem.
 ///
-/// Owner decision, 2026-08-17: gate, not stream. While a source is still being
+/// Gate, not stream. While a source is still being
 /// read there is no partial/growing total — the bar holds state A until
 /// readiness proves `.ready`, never showing a count that might still change.
 nonisolated enum ImportSourceReadiness: Equatable, Sendable {

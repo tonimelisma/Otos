@@ -21,7 +21,7 @@ import GRDB
 /// v62), generated from `best_capture_local` by `daySQL` and `monthSQL`, and `indexName` is
 /// led by them: a match seeks the day's rows, a few hundred of a catalog of hundreds of
 /// thousands, where testing the date of every row before the end walked the whole capture
-/// index (29,000 pages on the owner's catalog,
+/// index (29,000 pages on the reference catalog,
 /// `docs/research/2026-11-15-proportional-small-scopes.md`).
 nonisolated struct AnniversaryMatch: Equatable, Sendable {
     enum Unit: String, Sendable {

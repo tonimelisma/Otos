@@ -111,6 +111,7 @@ private let fastRetry = MediaTrashCoordinator.RetryPolicy(delays: [.milliseconds
 
 @Suite(.testScope)
 struct MediaTrashCoordinatorTests {
+    // Validates: ARC-055, MED-001, APP-001, APP-008, APP-027
     @Test func pendingItemsAreTrashedCompanionFirstAndTheirRowsLeave() async throws {
         let fixture = try await TrashFixture.make()
         let calls = TrashCallRecorder()
@@ -141,6 +142,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-058, APP-027
     @Test func pendingItemsAreHiddenFromMediaQueriesUntilMoved() async throws {
         let fixture = try await TrashFixture.make()
         let hidden = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
@@ -155,6 +157,7 @@ struct MediaTrashCoordinatorTests {
         #expect(try await catalogStoreTestState(fixture.store).testAssets.map(\.id) == [fixture.id])
     }
 
+    // Validates: ARC-055, MED-001, APP-001, APP-008, APP-027
     @Test func aFailedMoveUnhidesTheItemAndReportsIt() async throws {
         let fixture = try await TrashFixture.make()
         let coordinator = MediaTrashCoordinator(
@@ -178,6 +181,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: MED-001, APP-027
     @Test func datalessMembersDownloadAtCommandPriorityWithoutHoldingTheLease() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg", "a.xmp"])
@@ -212,6 +216,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-027
     @Test func aTransientDownloadFailureStaysPendingAndRetries() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -243,6 +248,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: MED-001, APP-027
     @Test func aDefinitiveDownloadFailureAsksAndDeleteImmediatelyRemovesTheFiles() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -274,6 +280,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-027
     @Test func restoringAFailedDownloadUnhidesTheItem() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -297,6 +304,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-027
     @Test func theDiskFloorAsksOnceAndKeepWaitingDownloadsWhenRoomAppears() async throws {
         let fixture = try await TrashFixture.make(primaryBytes: 1000)
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -332,6 +340,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-058, APP-027
     @Test func pendingItemsResumeInANewCoordinator() async throws {
         let fixture = try await TrashFixture.make()
         // The intent was recorded by an earlier session whose coordinator never ran.
@@ -352,6 +361,7 @@ struct MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-027
     @Test func withdrawingAPendingDownloadUnhidesWithoutTouchingFiles() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -397,6 +407,7 @@ extension MediaTrashCoordinatorTests {
         })
     }
 
+    // Validates: APP-039
     @Test func undoPutsATrashedItemBackWithItsCurationChoice() async throws {
         let fixture = try await TrashFixture.make()
         _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.id])
@@ -424,6 +435,7 @@ extension MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-039
     @Test func undoOfAStillPendingItemWithdrawsIt() async throws {
         let fixture = try await TrashFixture.make()
         let local = LocalFiles(dataless: ["a.jpg"])
@@ -447,6 +459,7 @@ extension MediaTrashCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-039
     @Test func undoNeverOverwritesAFileThatNowHasThePath() async throws {
         let fixture = try await TrashFixture.make()
         let (_, executor) = try Self.scratchTrash()
@@ -471,6 +484,7 @@ extension MediaTrashCoordinatorTests {
 }
 
 extension MediaTrashCoordinatorTests {
+    // Validates: ARC-058
     /// Relaunch: a fresh Store on the same catalog file, not yet started by anyone, and a
     /// coordinator that starts first. The pending intent must still be found and drained.
     @Test func pendingItemsResumeBeforeTheCatalogIsStartedElsewhere() async throws {
@@ -505,6 +519,7 @@ extension MediaTrashCoordinatorTests {
         await relaunched.shutdown()
     }
 
+    // Validates: APP-045
     @Test func downloadBytesCountOnlyCloudOnlyMembers() async throws {
         let fixture = try await TrashFixture.make(primaryBytes: 1000)
         let local = LocalFiles(dataless: ["a.jpg"])

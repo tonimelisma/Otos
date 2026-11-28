@@ -63,6 +63,7 @@ struct ReorganizationRecoveryObservationTests {
 
 @Suite(.testScope)
 struct ActiveReorganizationJournalTests {
+    // Validates: ARC-031, ARC-051
     @Test func journalRoundTripsThroughStore() async throws {
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -131,6 +132,7 @@ struct ActiveReorganizationJournalTests {
 
 @Suite(.testScope)
 struct ReorganizationLeaseTests {
+    // Validates: ARC-051, ARC-055
     @Test func leaseDefersScanUntilRelease() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -159,6 +161,7 @@ struct ReorganizationLeaseTests {
 
 @Suite(.testScope)
 struct ReorganizationSettlementTests {
+    // Validates: ARC-018, ARC-051, ARC-052
     @Test func setBasedSwapRemapsWithoutCollision() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -330,6 +333,7 @@ struct ReorganizationSettlementTests {
 
 @Suite(.testScope)
 struct ReorganizationExecutorMoveTests {
+    // Validates: ARC-051
     @Test func executesSingleMoveAndMarksComplete() async throws {
         let fixture = try await ExecutorFixture.make(files: ["old.jpg": [0x11, 0x22]])
         let sourceInode = try fixture.inode("old.jpg")
@@ -351,6 +355,7 @@ struct ReorganizationExecutorMoveTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-051
     /// A component that cannot finish is undone: the step that moved is moved back, the
     /// folder the component created is removed, the journal is deleted, and the foreign
     /// file that stopped it is untouched.
@@ -379,6 +384,7 @@ struct ReorganizationExecutorMoveTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: ARC-051
     /// A rollback that cannot put a file back keeps the journal, marked blocked, so the
     /// next launch's recovery can try again.
     @Test func aRollbackThatCannotRestoreAFileKeepsTheJournalBlocked() async throws {

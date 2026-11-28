@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 struct FilesystemNameKeyTests {
+    // Validates: ARC-050, ARC-056
     @Test func caseInsensitiveCollapsesSpelling() {
         let caps = VolumeNamespaceCapabilities.caseInsensitive
         let upper = FilesystemNamespaceSemantics.nameKey(
@@ -131,6 +132,7 @@ struct ReorganizationPlannerTests {
         #expect(plan.components.isEmpty)
     }
 
+    // Validates: ARC-050
     @Test func dateTimePolicyUsesCanonicalAppleExtension() throws {
         let item = media(path: "IMG_1.HIF", contentTypeIdentifier: "public.heif")
         let plan = try plan(snapshot(media: [item]))
@@ -139,6 +141,7 @@ struct ReorganizationPlannerTests {
         ])
     }
 
+    // Validates: ARC-050
     /// `Photo.JPG` → `Photo.jpg` is one name on a case-insensitive volume, so a direct
     /// rename cannot change the spelling: the file steps aside to a temporary name in its
     /// own folder first. The temporary name is built from the member's path alone, never
@@ -165,6 +168,7 @@ struct ReorganizationPlannerTests {
         #expect(try moves(plan(snapshot)) == expected)
     }
 
+    // Validates: ARC-050
     @Test func undatableMediaIsBlockedAndStaysOutOfTheMoves() throws {
         let good = media(path: "good.jpg", compact: 20_260_710_120_001)
         let bad = media(path: "bad.jpg", compact: nil, modified: nil)
@@ -176,6 +180,7 @@ struct ReorganizationPlannerTests {
         #expect(moves(plan) == [["good.jpg -> 2026/07/20260710_120001.jpg"]])
     }
 
+    // Validates: ARC-050
     /// Two sources compete for the date name a file that stays already holds: neither
     /// lands on it, and they take the import policy's suffixes in naming order.
     @Test func competingSourcesTakeImportSuffixesAroundAStayingFile() throws {
@@ -201,6 +206,7 @@ struct ReorganizationPlannerTests {
         ])
     }
 
+    // Validates: ARC-050
     @Test func aFileHoldingTheFolderNameBlocksTheItem() throws {
         let item = media(path: "inbox/shot.jpg")
         let plan = try plan(snapshot(media: [item]), occupiedFolders: ["2026/07": "2026"])
@@ -215,6 +221,7 @@ struct ReorganizationPlannerTests {
         #expect(plan.components.isEmpty)
     }
 
+    // Validates: ARC-050
     /// A RAW and its JPEG name together, as import names them: when one name is taken,
     /// both take the same suffix.
     @Test func aRawAndItsJpegShareOneSuffix() throws {
@@ -260,6 +267,7 @@ struct ReorganizationPlannerTests {
         ]])
     }
 
+    // Validates: ARC-050
     /// Two files that swap names: one steps aside, the other takes its name, then the
     /// first takes the other's.
     @Test func aSwapStepsAsideOnce() throws {

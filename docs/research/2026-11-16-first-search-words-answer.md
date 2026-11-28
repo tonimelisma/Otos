@@ -3,7 +3,7 @@
 ## Question
 
 The words reading (`2026-11-16-first-search-while-the-encoder-loads.md`) was meant to put a
-first answer on screen while the text tower loads. The owner's next tour on final `main`
+first answer on screen while the text tower loads. The next tour of the reference library on final `main`
 3e8fa6d2 (installed app, read-only, the Mac with 67 MB free and 6.1 GB in swap) measured
 `search first searchMany first results 2269 ms` and `complete 2269 ms`: no early answer. Why,
 and what keeps a first search typed seconds after launch under 1 s?
@@ -91,6 +91,6 @@ about 1.1 s after the query. When the words reading runs as it does in a quiet p
 
 ## Not measured here
 
-- A tour on the owner's library after the change: the next tour.
+- A tour on the reference library after the change: the next tour.
 - Which of page-ins or the main actor made the 510 ms (C): the next tour's `spellMs` and
   `parseMs` say.

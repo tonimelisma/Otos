@@ -9,6 +9,7 @@ import Testing
 /// (`kFSEventStreamCreateFlagIgnoreSelf`).
 @Suite(.testScope)
 struct CatalogFilesystemWatcherLiveTests {
+    // Validates: ARC-041
     @Test func liveWatchersDeliverOnlyTheirOwnRootsAndStopIndependently() async throws {
         let temp = try makeTestDirectory()
         let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
@@ -46,6 +47,7 @@ struct CatalogFilesystemWatcherLiveTests {
         try await waitUntil { eventsB.fileNames().contains("c.jpg") }
     }
 
+    // Validates: ARC-025
     /// A stream started from an event ID replays what happened after it, then says so: a
     /// file written after the first stream's last event, while no stream watched, is
     /// delivered to a stream started from that event, with a later ID. Each wait is on a
@@ -82,6 +84,7 @@ struct CatalogFilesystemWatcherLiveTests {
         try await waitUntil { second.historyDone(path) }
     }
 
+    // Validates: ARC-025
     /// A folder made just before it is added, by another process, is current after its first
     /// walk: its real `FullHistory` chunk, which holds the folder's own creation, is read by
     /// nothing after the walk. The history is waited into the event database on a stream's

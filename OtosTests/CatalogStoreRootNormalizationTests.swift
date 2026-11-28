@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreRootNormalizationTests {
+    // Validates: ARC-004, APP-004
     @Test func addLibraryResolvesSymlinkedRootBeforeScanning() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
 
@@ -19,6 +20,7 @@ struct CatalogStoreRootNormalizationTests {
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
+    // Validates: ARC-041
     /// A library behind a link into `/private` (`/var`, `/tmp`): FSEvents reports a file in
     /// it by its real `/private` path, which, spelled as the catalog spells paths, belongs to
     /// the library and maps to the file's relative path.
@@ -41,6 +43,7 @@ struct CatalogStoreRootNormalizationTests {
         #expect(CatalogPath.catalogSpelling(ofEventPath: "/Users/me/Pictures") == "/Users/me/Pictures")
     }
 
+    // Validates: ARC-004
     @Test func startupResolvesSavedSymlinkedRootBeforeScanning() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
         let databaseURL = fixture.temp.appending(path: "db/catalog.sqlite")
@@ -64,6 +67,7 @@ struct CatalogStoreRootNormalizationTests {
         #expect(try await savedLibraryRootPaths(in: databaseURL) == [resolvedPath.rawValue])
     }
 
+    // Validates: ARC-004
     @Test func startupMigratesThumbnailPathsWhenNormalizingSavedRoot() async throws {
         let fixture = try makeSymlinkedOneDrivePicturesFixture()
         let databaseURL = fixture.temp.appending(path: "db/catalog.sqlite")

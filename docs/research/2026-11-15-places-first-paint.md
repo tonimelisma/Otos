@@ -5,7 +5,7 @@ Follows `2026-11-15-scope-returns-and-superseded-builds.md` (#774) and
 
 ## Question
 
-On the owner's catalog a click on Places took 7.5 s to its first state (70,372 located items;
+On the reference catalog a click on Places took 7.5 s to its first state (70,372 located items;
 the order read 6.4 s cold, 1.8 s read again). #774 put it on the map: it draws a stack for
 every located item, so its first paint needs the whole located order. The map draws at most a
 few dozen stacks (DES-103) and one count (DES-105). Is the first paint's read an aggregate per
@@ -13,7 +13,7 @@ visible cluster cell — a count and a representative — rather than the rows?
 
 ## Method
 
-No owner data was read (owner's rule, 2026-11-15). The owner-shaped catalog of #779, built
+No data from the reference catalog was read (by rule). The reference-shaped catalog of #779, built
 again by a test that was never committed and deleted afterwards: `CatalogStore.migrator`, then
 SQL — 166,000 rows (16,000 in a library of month folders, one in twenty a RAW; 150,000 in a
 second root, one folder each), capture times spread over 2011–2026 independently of the keys,
@@ -75,7 +75,7 @@ order still walks the capture index with no temporary sort.
 | Places count | 64,718 pages, 178 ms | 9,451 pages, 49 ms |
 
 "Before" is this catalog with the join by key; "after" the same catalog with the index. The
-index is 712 pages (2.8 MB) for 50,000 located rows; on the owner's 70,372 about 4 MB. First
+index is 712 pages (2.8 MB) for 50,000 located rows; on the reference catalog's 70,372 about 4 MB. First
 paint reads 2,863 pages at the world's zoom and at a city's alike: the read does not depend on
 the zoom, because the map clusters the held rows in memory. Nothing a user sees changes: the
 same rows, order, stacks, counts and clicks, so `MapClusterPolicy` and its tests are untouched.
@@ -101,11 +101,11 @@ compare in shape, not to the page.
 
 `projection.windowState.places` measures Places' window state on the benchmark catalog (every
 still located). Instructions are in the PR's DoD report. Its metadata records are small, so its
-pages fall less than the owner-shaped catalog's.
+pages fall less than the reference-shaped catalog's.
 
 ## Not established
 
-- The owner's 6.4 s cold read was on a machine under load 60–104; the share of it that was
+- The reference catalog's 6.4 s cold read was on a machine under load 60–104; the share of it that was
   the join's pages is inferred from the generated catalog, whose All Media walk reads about
-  what the owner's does (#779), not measured on the owner's catalog.
+  what the reference catalog's does (#779), not measured on the reference catalog.
 - Nothing was verified on the installed app after this change.

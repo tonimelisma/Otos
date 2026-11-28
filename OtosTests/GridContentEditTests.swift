@@ -49,6 +49,7 @@ struct GridContentEditTests {
         return (CatalogGridContent.Edit(removed: removed, inserted: positions), result)
     }
 
+    // Validates: ARC-023
     /// Composing edits drawn at random is applying them one by one: checked against the
     /// orders the edits make in turn.
     @Test func composedEditsMakeWhatApplyingThemInTurnMakes() throws {
@@ -91,6 +92,7 @@ struct GridContentEditTests {
         CatalogGridContent(orderedAssetIDs: items.map(\.id), dayBuckets: items.map(\.day), stacks: .empty)
     }
 
+    // Validates: ARC-023
     /// The edit between two orders drawn at random — photos moved, removed, added, or given
     /// another day where they stand — makes the new order from the old, keeping every item it
     /// does not name at its day.
@@ -143,6 +145,7 @@ struct GridContentEditTests {
 
     // MARK: - Lineage across skipped publications
 
+    // Validates: ARC-023
     /// A publication the window skipped need not be held: an act made from it is an edit
     /// of the order the window shows, by the two edits composed, once nothing holds it.
     @Test func anActIsAnEditOfTheOrderShownThroughAPublicationNothingHolds() throws {
@@ -175,6 +178,7 @@ struct GridContentEditTests {
         #expect(edit.size == 3)
     }
 
+    // Validates: ARC-023
     /// A new query's order is published whole: the grid reloads it.
     @Test func aNewQuerysOrderIsPublishedWhole() {
         let shown = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: (0 ..< 4).map(Self.id))
@@ -189,6 +193,7 @@ struct GridContentEditTests {
 
     // MARK: - A read's publication writes no table of its order
 
+    // Validates: ARC-064
     /// Reads drawn at random, each published after the last as the projection publishes them:
     /// every published index answers every position as the order itself does, through edits
     /// composed across the run and the table written again once the edit would outgrow it.
@@ -226,15 +231,16 @@ struct GridContentEditTests {
         #expect(rewritten > 0, "a run this long writes the table again")
     }
 
-    /// A read that moved one photo, published after the order the window shows at the owner's
+    // Validates: ARC-064
+    /// A read that moved one photo, published after the order the window shows at the reference library's
     /// size: its index is the shown order's carried through the edit, so it writes the moved
     /// photo's entry, never a table of the 160,000 (the 2026-11-18 daily run flagged a
     /// publication that wrote one and walked the order too). The same few entries at 16,000.
     @Test func aReadsPublicationIndexesItsEditNotItsOrder() throws {
         func published(dayCount: Int) throws -> (indexed: Int, visited: Int) {
-            let photos = dayCount * Self.ownerPhotosPerDay
+            let photos = dayCount * Self.referencePhotosPerDay
             var days = (0 ..< dayCount).map { day in
-                (0 ..< Self.ownerPhotosPerDay).map { Self.id(day * Self.ownerPhotosPerDay + $0) }
+                (0 ..< Self.referencePhotosPerDay).map { Self.id(day * Self.referencePhotosPerDay + $0) }
             }
             let shown = Self.grid(days)
             shown.content.prepareIndex()
@@ -243,29 +249,29 @@ struct GridContentEditTests {
             days[3].append(moved)
             let read = Self.grid(days).sharingContent(of: shown)
             let edit = try #require(read.content.edit(from: shown.content))
-            #expect(edit == CatalogGridContent.Edit(removed: [0], inserted: [4 * Self.ownerPhotosPerDay - 1]))
-            #expect(read.content.position(of: moved) == 4 * Self.ownerPhotosPerDay - 1)
+            #expect(edit == CatalogGridContent.Edit(removed: [0], inserted: [4 * Self.referencePhotosPerDay - 1]))
+            #expect(read.content.position(of: moved) == 4 * Self.referencePhotosPerDay - 1)
             #expect(read.content.position(of: Self.id(photos - 1)) == photos - 1)
             #expect(read.content.position(of: Self.id(1)) == 0)
             return (read.content.work.indexed, read.content.work.visited)
         }
-        let owner = try published(dayCount: Self.ownerDays)
-        let tenth = try published(dayCount: Self.ownerDays / 10)
-        #expect(owner.indexed <= 2, "a read's publication at 160,000 indexed \(owner.indexed)")
-        #expect(owner.indexed == tenth.indexed)
+        let reference = try published(dayCount: Self.referenceDays)
+        let tenth = try published(dayCount: Self.referenceDays / 10)
+        #expect(reference.indexed <= 2, "a read's publication at 160,000 indexed \(reference.indexed)")
+        #expect(reference.indexed == tenth.indexed)
         // The walk tells the two orders apart item by item: in proportion to the order, once.
-        #expect(owner.visited <= 2 * Self.ownerDays * Self.ownerPhotosPerDay + 8, "visited \(owner.visited)")
+        #expect(reference.visited <= 2 * Self.referenceDays * Self.referencePhotosPerDay + 8, "visited \(reference.visited)")
     }
 
-    // MARK: - An act on a reorder the grid has not shown, at the owner's size
+    // MARK: - An act on a reorder the grid has not shown, at the reference size
 
-    /// The owner's size: 160,000 photos over 5,000 days, newest first.
-    private static let ownerDays = 5000
-    private static let ownerPhotosPerDay = 32
+    /// The reference size: 160,000 photos over 5,000 days, newest first.
+    private static let referenceDays = 5000
+    private static let referencePhotosPerDay = 32
 
-    private static func ownerGrid() -> (grid: CatalogMediaGridState, days: [[MediaAssetID]]) {
-        let days = (0 ..< ownerDays).map { day in
-            (0 ..< ownerPhotosPerDay).map { id(day * ownerPhotosPerDay + $0) }
+    private static func referenceGrid() -> (grid: CatalogMediaGridState, days: [[MediaAssetID]]) {
+        let days = (0 ..< referenceDays).map { day in
+            (0 ..< referencePhotosPerDay).map { id(day * referencePhotosPerDay + $0) }
         }
         return (grid(days), days)
     }
@@ -273,15 +279,16 @@ struct GridContentEditTests {
     private static func grid(_ days: [[MediaAssetID]]) -> CatalogMediaGridState {
         var ids: [MediaAssetID] = []
         var buckets: [Date?] = []
-        ids.reserveCapacity(ownerDays * ownerPhotosPerDay)
-        buckets.reserveCapacity(ownerDays * ownerPhotosPerDay)
+        ids.reserveCapacity(referenceDays * referencePhotosPerDay)
+        buckets.reserveCapacity(referenceDays * referencePhotosPerDay)
         for (index, photos) in days.enumerated() {
             ids.append(contentsOf: photos)
-            buckets.append(contentsOf: repeatElement(day(ownerDays - index), count: photos.count))
+            buckets.append(contentsOf: repeatElement(day(referenceDays - index), count: photos.count))
         }
         return CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids, dayBuckets: buckets)
     }
 
+    // Validates: ARC-023
     /// The grid shows an order; a read that moved 200 photos to other days is published and
     /// the window skips it; a Move to Trash is made from it, then its Put Back. The grid
     /// takes each act in by the composed edit: it compares no item of the 160,000 and looks
@@ -290,14 +297,14 @@ struct GridContentEditTests {
     /// same order published whole is compared item by item, which is what an act on an
     /// unshown reorder cost before.
     @Test func anActOnAReorderTheGridHasNotShownIsTakenInByItsEdit() throws {
-        let (shownGrid, shownDays) = Self.ownerGrid()
+        let (shownGrid, shownDays) = Self.referenceGrid()
         let shown = CatalogWindowState.empty.replacingGrid(shownGrid).sharingUnchanged(with: nil)
         var movedDays = shownDays
         var generator = SplitMix(seed: 61)
         var moved = Set<MediaAssetID>()
         while moved.count < 200 {
-            let from = Int.random(in: 0 ..< Self.ownerDays, using: &generator)
-            let to = Int.random(in: 0 ..< Self.ownerDays, using: &generator)
+            let from = Int.random(in: 0 ..< Self.referenceDays, using: &generator)
+            let to = Int.random(in: 0 ..< Self.referenceDays, using: &generator)
             guard from != to, let photo = movedDays[from].first, !moved.contains(photo) else {
                 continue
             }

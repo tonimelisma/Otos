@@ -15,6 +15,7 @@ import VideoToolbox
 /// `build/measurements/image-memory.log` (`docs/research/2026-11-16-first-launch-footprint.md`).
 @Suite(.testScope, .serialized, .enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1"))
 struct FirstLaunchFootprintTests {
+    // Validates: ENR-031
     /// A 4K video read for its faces holds one full-resolution frame at a time: two read at
     /// once, as enrichment does (`videoEnrichCap`), stay within the bound.
     /// An iPhone records HDR HEVC (10-bit, HLG); an SDR H.264 is the other kind.

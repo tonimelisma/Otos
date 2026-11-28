@@ -6,7 +6,7 @@ After #773 and #775, visible tiles' detail reads still waited seconds for a conn
 background work ran: `op=catalog.store.query.tileDetail requested=25 waitMs=9368 execMs=8
 resumeMs=0 priority=userInitiated` on the two-reader `interactiveReader` pool that only those
 reads use. #774 saw slow passes on the main pool end within 50 ms of a tile read on the other
-pool that had waited as long. On the owner's launch of build 191ffe1a (19:54, catalog open
+pool that had waited as long. On the reference launch of build 191ffe1a (19:54, catalog open
 43 s after migrations v63–v64, a library scan, enrichment, metadata refresh, downloads):
 `query.order scope=importBatch waitMs=5780 execMs=23 resumeMs=0` and two tile reads waiting
 5.5–5.7 s finished at one instant; tile reads and `filterOptions` waiting 10.1 s finished
@@ -17,7 +17,7 @@ separate GRDB pools on one WAL database both wait on?
 ## Method
 
 All probes were temporary tests, never committed, on generated catalogs deleted afterwards.
-Nothing touched the owner's catalog or app. The Mac had 8 cores and ran other sessions'
+Nothing touched the reference catalog or the installed app. The Mac had 8 cores and ran other sessions'
 checks throughout.
 
 - **SQLite probe.** 166,000 rows written by `CatalogStore.upsertScannedFile` with a 1.1 KB
@@ -80,14 +80,14 @@ from the answer on the Store afterwards, which costs nothing unless one did. The
 `execMs` now includes that mapping. After the fix, the same probe: 547 tile reads in 30 s,
 p50 1.4 ms, p95 2.4 ms, max 47 ms; order reads `resumeMs` 0–6.
 
-### The owner's `waitMs` is still unexplained
+### The reference launch's `waitMs` is still unexplained
 
-The owner's lines put the seconds in `waitMs` with `resumeMs=0`, which the actor stall above
-does not produce; it explains the part of his 16.8 s click that no line carried (16.8 s
+The reference launch's lines put the seconds in `waitMs` with `resumeMs=0`, which the actor stall above
+does not produce; it explains the part of its 16.8 s click that no line carried (16.8 s
 against a 9.7 s `waitMs` and 71 ms of work), not the 9.7 s. What remains between a read's
 ask and its body is GRDB's pool queue, a free connection, `BEGIN` and the snapshot. The
 probes rule out every in-process holder they could build; left untested are the 2.5 GB file
-itself, memory pressure on the owner's Mac, and a lock held from outside the process (the
+itself, memory pressure on the test Mac, and a lock held from outside the process (the
 10.1 s waits sit just past GRDB's ten-second reader busy timeout, which is suggestive and not
 proof). Until a line says which, each read now reports the split:
 
@@ -123,5 +123,5 @@ connection straight back without running its body
 - What every Store read does share is the Store actor, and an order read held it for half a
   second per 166,000 rows: visible tiles waited a second at a time, invisibly. That work now
   runs in the read.
-- The owner's seconds-long `waitMs` remains unknown; the next one says whether it was a lock
+- The reference launch's seconds-long `waitMs` remains unknown; the next one says whether it was a lock
   (`lockMs`), a connection (`waitMs − lockMs`) or the Store (`storeMs`).

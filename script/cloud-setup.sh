@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # SessionStart hook (.claude/settings.json). Its output is added to the session's context,
-# so it says where the session runs and what that changes (AGENTS.md, "How A Session
-# Works"), in the few lines that apply there and nowhere else.
+# so it says where the session runs and what that changes (CLAUDE.md, "Where sessions run"), in the few lines that apply there and nowhere else.
 #
 # In a Claude Code cloud session — an Ubuntu VM with no Xcode, `CLAUDE_CODE_REMOTE=true` —
 # it also installs what the Linux-runnable gates need: the commands they call and the
-# pinned Linux lint binaries (AGENTS.md, "Cloud Sessions"). On the Mac it installs nothing:
-# the Mac has its tools from Xcode and `brew bundle`.
+# pinned Linux lint binaries (CLAUDE.md, "Where sessions run"). On a Mac it installs nothing:
+# a Mac has its tools from Xcode and `brew bundle`.
 #
 # It prints op= lines and always exits 0. A setup that fails must not stop the session
 # from starting; the gate that needed the missing tool fails by name when it runs.
@@ -14,11 +13,11 @@ set -uo pipefail
 
 if [[ "${CLAUDE_CODE_REMOTE:-}" != "true" ]]; then
   if [[ "$(uname -s)" == Darwin ]]; then
-    echo "op=session.where place=mac — a session on the owner's Mac: work in a dedicated worktree with dev builds, never install (Sparkle installs), verify through CI; production data is read-only. Procedures: the mac-session skill."
+    echo "op=session.where place=mac — a local session on a Mac: it may build and test natively, run the visual and end-to-end checks on generated libraries, and inspect the installed app read-only; it works in a dedicated worktree with dev builds, never installs (Sparkle installs), and verifies through CI; live checks on real data only when the person running the session asks. Procedures: the mac-session skill."
   fi
   exit 0
 fi
-echo "op=session.where place=cloud — a cloud VM with no Xcode: check.sh runs every gate in seconds; a full-tier change is verified by CI's Build And Test (the ci skill). The owner's Mac is never reached from here."
+echo "op=session.where place=cloud — a cloud VM with no Xcode: check.sh runs every gate in seconds; a full-tier change is verified by CI's Build And Test (the ci skill). No Mac is reached from here."
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

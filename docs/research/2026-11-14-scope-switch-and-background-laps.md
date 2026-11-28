@@ -1,8 +1,8 @@
-# Scope switches and background laps at owner scale (2026-11-14)
+# Scope switches and background laps at reference-library scale (2026-11-14)
 
 ## Question
 
-On the owner's catalog (164,517 assets: three libraries and an Immich account enriching in
+On the reference catalog (164,517 assets: three libraries and an Immich account enriching in
 the background) the installed app at `72dfc9b8` took 10–11 s from a sidebar click to paint,
 re-read the window every 2–3 s for as long as enrichment ran, and logged a planning wake and
 a WAL sample for every enrichment batch. Which reads does a scope switch wait for, which
@@ -10,7 +10,7 @@ reads repeat without a fact they depend on moving, and what do they cost?
 
 ## Method
 
-- **Logs.** The owner's 20-minute sample of the installed app (`op=` lines quoted below by
+- **Logs.** A 20-minute sample of the installed app (`op=` lines quoted below by
   count and timing only; no paths).
 - **A copy of the catalog.** An APFS clone of the read-only backup
   `build/catalog-backups/catalog-v53-before-v55.sqlite` (166,737 rows; roots 6 and 7 are

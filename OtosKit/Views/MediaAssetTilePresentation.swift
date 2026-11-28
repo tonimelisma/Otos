@@ -55,7 +55,7 @@ nonisolated struct TileStackPresentation: Equatable {
             switch collapsed.id.kind {
             case .pair:
                 // A RAW and its processed file are one photo, unmarked, as Lightroom shows
-                // them (owner, 2026-11-19: "let's not mark the pairs at all"); the loupe's and
+                // them; the loupe's and
                 // the edit panel's switch tell the files apart (DES-117).
                 break
             case .burst:

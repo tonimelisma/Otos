@@ -108,8 +108,8 @@ capture), but the reasoning path must not be reused.
 
 | root | kind | assets | metadata-stale | no digest |
 |---|---|---|---|---|
-| `…/OneDrive-Personal/Pictures/Camera Roll` | library | 26,235 | 11,122 | 13,830 |
-| `…/OneDrive-Personal/Family/Summer Photos` | library | 644 | 0 | 367 |
+| `…/OneDrive/Pictures/Camera Roll` | library | 26,235 | 11,122 | 13,830 |
+| `…/OneDrive/Family/Summer Photos` | library | 644 | 0 | 367 |
 | `/Volumes/4152150790` | removableVolume | 1,374 | 0 | 0 |
 | `/Volumes/CAMERA` | removableVolume | 139 | 0 | 0 |
 
@@ -214,7 +214,7 @@ provider looks exactly like data.
 ### 4b. Tooling defect found
 
 `smoke-run.sh --verify` cannot succeed on this machine. The default root
-`$HOME/Desktop/OneDrive/Pictures` resolves to `…/CloudStorage/OneDrive-Personal/Pictures`,
+`$HOME/Desktop/OneDrive/Pictures` resolves to `…/CloudStorage/OneDrive/Pictures`,
 an *ancestor* of the registered `…/Pictures/Camera Roll` root:
 
 ```

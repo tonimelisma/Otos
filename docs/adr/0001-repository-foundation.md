@@ -11,7 +11,7 @@ architecture, compatibility shims, and unverifiable work from becoming normal.
 
 ## Decision
 
-Use a comprehensive foundation with AGENTS.md, spec and ADR templates, local
+Use a comprehensive foundation with CLAUDE.md, spec and ADR templates, local
 scripts, fast remote CI, a shared Xcode scheme, fixture provenance, and
 instrumentation facade before product features are implemented.
 
@@ -55,5 +55,5 @@ raises the upfront bar, but it prevents drift.
 
 ## Reversal Plan
 
-If this foundation becomes too heavy, revise AGENTS.md and the scripts through a
+If this foundation becomes too heavy, revise CLAUDE.md and the scripts through a
 new ADR. Do not silently bypass the workflow.

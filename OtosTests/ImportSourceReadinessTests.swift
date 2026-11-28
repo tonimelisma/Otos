@@ -18,6 +18,7 @@ struct ImportSourceReadinessTests {
         )
     }
 
+    // Validates: ARC-047
     @Test func availableAndIdleIsReady() {
         #expect(ImportSourceReadiness.evaluate(state(availability: .available, activity: .idle)) == .ready)
     }

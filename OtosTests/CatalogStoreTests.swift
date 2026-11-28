@@ -5,6 +5,7 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreTests {
+    // Validates: ARC-003, ARC-018, ARC-038
     @Test func changeNotificationsAreCheapTypedSignals() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -37,6 +38,7 @@ struct CatalogStoreTests {
         await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
+    // Validates: APP-007
     /// APP-007: a library another owner is changing is not removed while it changes. The
     /// removal says who it waits for, the library stays cataloged and watched meanwhile,
     /// and the release of that owner's lease removes it — with no window in which another
@@ -78,6 +80,7 @@ struct CatalogStoreTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-043
     @Test func incompatibleLegacyDatabaseIsRefusedWithoutErase() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -133,6 +136,7 @@ struct CatalogStoreTests {
         #expect(rootCount == 1)
     }
 
+    // Validates: ARC-035, APP-004, APP-005
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -168,6 +172,7 @@ struct CatalogStoreTests {
         #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
     }
 
+    // Validates: APP-003
     /// APP-003: library order is a stored property of the root,
     /// user-owned via `moveLibrary(_:_:)` — not derived, and not a parallel
     /// list in preferences that would drift when a root is removed.
@@ -204,6 +209,7 @@ struct CatalogStoreTests {
         #expect(await reloadedStore.currentLibraries().map(\.path) == reordered)
     }
 
+    // Validates: APP-003
     /// Two quick ⌘↓ presses on the same library each apply to the order the Store holds
     /// when they arrive, so the library moves down twice — not down and back up, which
     /// is what two moves computed as positions from the same stale list would do.
@@ -234,6 +240,7 @@ struct CatalogStoreTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-054, APP-024
     @Test func mediaChoiceDefaultsPersistsAcceptsSameValueAndSurvivesReload() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -321,6 +328,7 @@ struct CatalogStoreTests {
         #expect(try await store.windowReads.mediaAssets(for: [destinationID])[destinationID]?.mediaChoice == .liked)
     }
 
+    // Validates: ARC-056
     /// ARC-056: an import onto a case-sensitive root keys the copy by that volume's name
     /// equality, so `2024/IMG_1.jpg` landing beside `2024/img_1.jpg` is a photo of its own,
     /// and the existing photo keeps its path and its overlay. The settlement is driven on the
@@ -402,6 +410,7 @@ struct CatalogStoreTests {
         #expect(rows == ["2024/IMG_1.jpg=notRated", "2024/img_1.jpg=liked"])
     }
 
+    // Validates: ARC-017, ARC-032
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -447,6 +456,7 @@ struct CatalogStoreTests {
         #expect(snapshot.libraries.count == 1)
     }
 
+    // Validates: ARC-033, APP-007
     @Test func removeLibraryDeletesCatalogRowsAndLeavesOriginalsUntouched() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -482,6 +492,7 @@ struct CatalogStoreTests {
         #expect(reloaded.testAssets.isEmpty)
     }
 
+    // Validates: ARC-009, ARC-033
     @Test func completedLaunchScanDeletesRowsForMissingFiles() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -508,6 +519,7 @@ struct CatalogStoreTests {
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["b.jpg"])
     }
 
+    // Validates: ARC-033
     /// ADR 0008 move witness: a file renamed into another folder outside Otos keeps its row
     /// and its like across the launch scan, while a copy whose original is then deleted is
     /// a new file with a new identifier and keeps nothing.
@@ -545,6 +557,7 @@ struct CatalogStoreTests {
         await secondStore.shutdown()
     }
 
+    // Validates: ARC-009
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -588,6 +601,7 @@ struct CatalogStoreTests {
         #expect(failed.libraries.first?.availability == .available)
     }
 
+    // Validates: ARC-009
     @Test func cancelledLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
         let temp = try makeTestDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

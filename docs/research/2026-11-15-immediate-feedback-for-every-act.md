@@ -2,7 +2,7 @@
 
 ## Question
 
-The owner, after using the installed build: a sidebar click and Move to Trash stall the window
+The user, after using the installed build: a sidebar click and Move to Trash stall the window
 instead of showing their result at once. Apple's HIG (Loading: show something as soon as
 possible, placeholders replaced as content arrives; Progress indicators: indeterminate while the
 duration is unknown, kept moving, in one place; Feedback: status beside what it describes) asks
@@ -85,7 +85,7 @@ or its catalog.
 | --- | --- | --- | --- |
 | Like / Dislike / Not Rated | the tiles' badges (in place), the panes, the toolbar control, the advance, `Undo Like`, and a photo leaving a choice filter it no longer matches | — (the write follows on the choice stream) | Fixed (DES-120, APP-086): `MediaChoiceOverlay` beside the one tile-detail read, Projection's `choose` hold |
 | Expand / collapse a stack | the members shown or hidden, from the collapse held | — (no read, no wait for a pass in flight) | Fixed (DES-120, APP-088): `CatalogProjection.showExpansion` |
-| Filter, sort | the control's new choice and `Filtered` in the subtitle; the grid keeps its items, still acting | a Projection read | Status shown at once; the content needs the read (a new order), as search's does — owner decision listed in the PR |
+| Filter, sort | the control's new choice and `Filtered` in the subtitle; the grid keeps its items, still acting | a Projection read | Status shown at once; the content needs the read (a new order), as search's does — product decision listed in the PR |
 | Search text | `Searching…` subtitle | the search reader | Status shown at once (ADR 0048) |
 | Select a library / import / any scope | the selected scope waiting | the scope's read | Fixed (DES-118) |
 | New name, merge | nothing until the store answers and People rebuilds | the People write and a build | A new person's ID and a merge's result are the store's; not shown ahead |
@@ -124,7 +124,7 @@ The acts DES-120 shows first, `script/bench.sh run` on 652d4b54 (same harness):
 - The hide itself is cheap and in proportion to the change past one copy of the order.
 - The grid's removal of a few items is not: its main-thread apply costs about what a
   whole-grid structural apply does, about 116 ms in Debug at 158,000 tiles. Which part of
-  `MediaGridStructuralApply` spends it was not profiled here. So Move to Trash at owner scale
+  `MediaGridStructuralApply` spends it was not profiled here. So Move to Trash at reference scale
   is one frame-dropping apply rather than the seconds it waited before, but not under 16 ms.
   Bringing a removal of N items down to cost in N is the grid structure's work (the reorder-build
   branch in flight), not this change's.
@@ -134,5 +134,5 @@ The acts DES-120 shows first, `script/bench.sh run` on 652d4b54 (same harness):
 - The waiting pane was not seen in a running build: ImageRenderer captures (light, dark,
   grayscale) show the bars and the indicator's position but cannot draw AppKit's spinner, and no
   sandboxed dev build was driven.
-- Whether a held return's state arrives within the frame of the click on the owner's machine:
+- Whether a held return's state arrives within the frame of the click on the test Mac:
   it decides whether such a return ever shows the indicator.

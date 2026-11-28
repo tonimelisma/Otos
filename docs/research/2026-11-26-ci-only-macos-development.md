@@ -4,9 +4,8 @@ Date: 2026-11-26. Sources fetched that day. ADR 0061 is built on this note.
 
 ## Question
 
-The owner (2026-11-26): "releases need to happen even from cloud. CI needs to be enough.
-cloud dev might be the only way we do dev for months. we can't be gated on a local env."
-What do current sources say about building, testing, looking at, measuring, diagnosing and
+Releases need to happen from cloud sessions too, and CI needs to be enough: cloud development
+may be the only development for months, so nothing can be gated on a local environment. What do current sources say about building, testing, looking at, measuring, diagnosing and
 releasing a native macOS app whose only Mac is a hosted CI runner, and which of Otos's
 Mac-only steps can move there?
 
@@ -81,7 +80,7 @@ Mac-only steps can move there?
 - Xcode Organizer's crash reports cover App Store and TestFlight apps only; a directly
   distributed app gets none. Third-party crash reporters send data off the machine.
   https://docs.sentry.io/platforms/apple/guides/macos/configuration/app-hangs
-- CI artifacts of a public repository are public: owner diagnostics never go there.
+- CI artifacts of a public repository are public: the user's diagnostics never go there.
 
 ### Release safety
 
@@ -91,8 +90,8 @@ Mac-only steps can move there?
   https://sparkle-project.org/documentation/publishing/, https://sparkle-project.org/documentation/upgrading/
 - Verify the copy that ships (`codesign --verify --deep --strict`), launch it, wait for a
   readiness report, and gate publishing on that. https://developer.apple.com/forums/thread/706442
-- Apple Development certificates are meant for development; this is accepted for an
-  owner-only app (ADR 0059) and expires yearly, renewed in Azure Key Vault from `<secrets-repo>`.
+- Apple Development certificates are meant for development; this is accepted for a
+  single-user app (ADR 0059) and expires yearly, renewed in Azure Key Vault from a private secrets repository.
 
 ### Runner facts
 
@@ -107,9 +106,9 @@ Mac-only steps can move there?
 
 ## Conclusions
 
-1. Every step that only the Mac did can move to CI except what reads the owner's own data:
-   the look at his library, the felt targets on his library, the evaluations on his private
-   data and the Core ML conversions from his research repositories.
+1. Every step that only the Mac did can move to CI except what reads the user's own data:
+   the look at the reference library, the felt targets on it, the evaluations on private
+   data and the Core ML conversions from private research repositories.
 2. The look moves to CI as captures of each surface, light and dark, from a tour of the dev
    app on a generated library, uploaded as artifacts the cloud session downloads and reads.
    The app must raise no TCC prompt in that tour.
@@ -118,6 +117,6 @@ Mac-only steps can move there?
 4. The weekly benchmark counts cannot move to CI: measured on 2026-11-26 (run 45870604355),
    the `xcode-27` runner's virtual Mac (`VirtualMac2,1`) reads zero instructions retired
    through `proc_pid_rusage`. Deterministic twin tests stay the only performance gate there.
-5. What the installed app experiences reaches a session only when the owner hands it over: a
+5. What the installed app experiences reaches a session only when the user hands it over: a
    diagnostics bundle the app writes on request, never uploaded to CI or anywhere public.
 6. CI needs a way to run one suite many times, since a cloud session has no `--only`.

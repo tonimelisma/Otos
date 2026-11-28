@@ -119,8 +119,7 @@ nonisolated enum MapClusterPolicy {
     /// circular mean, so items either side of the antimeridian average to it, not to the
     /// far side of the earth; the average latitude is the plain mean. MapKit clamps a
     /// camera wider than it can show about its center, so a library spread over more
-    /// than the map's zoom-out stays centered where it is on average (owner decision,
-    /// 2026-11-12). One point, or coincident points, get `minimumCameraMeters`.
+    /// than the map's zoom-out stays centered where it is on average. One point, or coincident points, get `minimumCameraMeters`.
     static func centeredBounds(_ coordinates: [PlaceCoordinate], padded: Bool = true) -> MapBounds? {
         guard !coordinates.isEmpty else {
             return nil
@@ -214,7 +213,7 @@ nonisolated enum MapClusterPolicy {
 
     /// How far north and south the map pans when no item lies beyond: past about 75°
     /// the Web Mercator map stretches land many times over (Greenland drawn the size of
-    /// Africa), so the polar regions stay off screen (owner decision, 2026-11-13).
+    /// Africa), so the polar regions stay off screen.
     static let panLatitudeLimit: Double = 75
     /// Room past the farthest item, so a stack on it is drawn whole, not on the edge.
     static let panItemMarginDegrees: Double = 2

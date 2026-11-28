@@ -136,6 +136,7 @@ struct PhotoSearchIndexTests {
         #expect(try await catalog.store.backgroundReads.searchTextCandidates(limit: 10).candidates.count == 2)
     }
 
+    // Validates: ENR-028
     /// A text reading that loses Vision's reader for its session's process ends the pass's
     /// reading with every still not read owed, and the retry after the backoff reads them in a
     /// new session: Otos reads text again without a relaunch.
@@ -157,6 +158,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: ENR-028
     /// A recognition that fails about one picture leaves that still owed and the pass reads
     /// the rest; a retry reads it again.
     @Test func aFailedRecognitionStaysOwedAndARetryReadsIt() async throws {
@@ -175,6 +177,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: ENR-028
     /// The index's shutdown while a text reading is in flight ends that reading's child and
     /// returns once it is gone, and the still being read, like every still not yet read, stays
     /// owed: it is not stamped as holding no text. `cat` stands in for a child mid-reading: it
@@ -213,6 +216,7 @@ struct PhotoSearchIndexTests {
         #expect(CGImageDestinationFinalize(destination))
     }
 
+    // Validates: ENR-027
     /// An embedding is written only for the thumbnail it was read from; once written the asset
     /// is no longer owed one and is current.
     @Test func anEmbeddingIsWrittenOnlyForTheThumbnailItWasReadFrom() async throws {
@@ -238,6 +242,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     /// A new thumbnail — a changed file, an edit — makes the embedding stale: the asset is
     /// owed one again and its old vector no longer counts.
     @Test func aNewThumbnailMakesTheEmbeddingStale() async throws {
@@ -255,6 +260,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     /// ADR 0005, "Keyed re-reads": a change that names its rows costs reads of those rows, never of the
     /// library. Once the index has settled, a new thumbnail for one photo is embedded again
     /// through reads by key: no whole-library currency read, no backlog walk and no text
@@ -311,6 +317,7 @@ struct PhotoSearchIndexTests {
         await index.shutdown()
     }
 
+    // Validates: ENR-028
     /// ADR 0048, "Text in the photo": the index's launch pass reads no text reading. A query's
     /// words are matched by the catalog's text index, so the pass that opens the vectors and
     /// reconciles the embeddings visits no row of the readings, of their folded text or of
@@ -380,6 +387,7 @@ struct PhotoSearchIndexTests {
         return (index, encoder)
     }
 
+    // Validates: APP-068
     /// ADR 0048, "The first query": with no intent to search, the window's first grid readies
     /// the first query as the last admitted load, so a query typed at once finds the encoder
     /// loaded and loads nothing itself.
@@ -405,6 +413,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: ARC-065
     /// The first grid's readying loads the encoder inside its own turn: while it loads, the
     /// admission runs it and grants no other load beside it.
     @Test func theFirstGridsReadyingLoadsTheEncoderInsideItsTurn() async throws {
@@ -439,6 +448,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     /// A shutdown while the admitted preparation waits for its turn starts nothing: the request
     /// withdraws, and opening the admission afterwards grants nothing.
     @Test func aShutdownWhileThePreparationWaitsStartsNothing() async throws {
@@ -459,6 +469,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     /// The intent to search loads the encoder and reads no scope ahead: a query's scope is the
     /// projection's. A query's readings over an unchanged scope and memory read its slots once,
     /// with the first match, so neither the words reading nor the picture's does it again.
@@ -498,6 +509,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     /// The encoder loads only when asked, and an idle one lets its model go under memory
     /// pressure; the next reading loads it again.
     @Test func theEncoderLoadsWhenAskedAndLetsGoWhenIdle() async throws {
@@ -535,6 +547,7 @@ struct PhotoSearchIndexTests {
         }
     }
 
+    // Validates: ENR-027
     /// ADR 0032 rule 1: a compaction writes the live slots into a new file while memory keeps
     /// answering from the old one, and memory takes the new file in one step with its revision.
     /// A query answered while the compaction awaits the catalog's naming of the new file reads
@@ -595,6 +608,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     /// A thumbnail that does not decode is no reading: nothing is recorded, it stays owed, and
     /// a pass pages past it, so the newest asset failing does not stop the rest being read.
     @Test func anUndecodableThumbnailStaysOwedAndDoesNotHoldUpTheRest() async throws {
@@ -621,6 +635,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     /// The index reads every thumbnail with the bundled model and answers a query from what
     /// it read: the red picture is the better match for a red one.
     @Test func aReadThatFailedIsRetriedWithoutACatalogChange() async throws {
@@ -684,6 +699,7 @@ struct PhotoSearchIndexTests {
         return (store, index)
     }
 
+    // Validates: ENR-027
     /// ADR 0048, "The index": a launch with the vector file the catalog names maps it and reads
     /// no stored vector — with every stored vector zeroed, it still tells red from blue — and a
     /// file short of the catalog's count (a crash between a commit and its append) is never
@@ -755,6 +771,7 @@ struct PhotoSearchIndexTests {
         }
     }
 
+    // Validates: ENR-027
     /// ADR 0027: the floor is asked before the catalog commits slots, never after. A disk that
     /// reaches the floor between the ask and the file's write leaves the write to go ahead: the
     /// catalog and the file agree, the index keeps its file and the new embedding is in it,
@@ -798,6 +815,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: ENR-027
     /// A rebuild the floor refuses removes only its own file: the one the catalog names stays
     /// on the disk until a replacement is complete, and the retry once there is room builds it.
     @Test func aRebuildTheFloorRefusesLeavesTheOldFile() async throws {
@@ -849,6 +867,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     /// A file pair a crash left beside the current one (a compaction or a build cut short) is
     /// removed when the current one opens, and a second index over the same folder — another
     /// Otos over the same Application Support — writes nothing there until the first lets go.
@@ -905,6 +924,7 @@ struct PhotoSearchIndexTests {
         try await enrich(store, red, thumbnail: "red-thumb-3.jpg")
     }
 
+    // Validates: ENR-027
     @Test func aTornFileIsRebuilt() async throws {
         let catalog = try await makeCatalog(onDisk: true)
         let first = PhotoSearchIndex(
@@ -933,6 +953,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-027
     @Test func theIndexEmbedsThumbnailsAndRanksAQuery() async throws {
         let catalog = try await makeCatalog()
         let index = PhotoSearchIndex(
@@ -959,6 +980,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     /// The cut follows the best match in the scope searched, not in the library: a scope whose
     /// best photo scores below the library's best still shows it.
     @Test func theCutFollowsTheBestMatchInTheScope() async throws {
@@ -982,6 +1004,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     /// A descriptor's search narrows the published grid to what the index matches; a
     /// search that matches nothing says so; ending it shows the whole scope again.
     @Test func aSearchNarrowsThePublishedGrid() async throws {
@@ -1095,9 +1118,10 @@ struct PhotoSearchIndexTests {
         return ShownSearch(catalog: catalog, index: index, projection: projection, recorder: recorder, recording: recording)
     }
 
+    // Validates: ARC-022
     /// A search narrows the order after it is read, so typing another search and clearing it
     /// read no order: the order read for the scope answers every search over it. On the
-    /// owner's catalog each search and its clear read the 164,762-row order again.
+    /// reference catalog each search and its clear read the 164,762-row order again.
     @Test func aSearchAndItsClearReadNoOrder() async throws {
         let shown = try await showRedSearch()
         let projection = shown.projection
@@ -1115,6 +1139,7 @@ struct PhotoSearchIndexTests {
         await shown.tearDown()
     }
 
+    // Validates: ARC-018
     /// A lap that takes up only a fact the search does not read — a choice the user made,
     /// which reads the order again — publishes from the answer it holds: the index is not
     /// asked to match again.
@@ -1137,6 +1162,7 @@ struct PhotoSearchIndexTests {
         await shown.tearDown()
     }
 
+    // Validates: ARC-018
     /// A new thumbnail moves what the index holds: the red photo's embedding is stale and read
     /// again, its revision moves, and the window asks the index to match again.
     @Test func aLapAfterTheIndexMovedMatchesAgain() async throws {
@@ -1159,6 +1185,7 @@ struct PhotoSearchIndexTests {
         await shown.tearDown()
     }
 
+    // Validates: APP-068
     /// A query being read (here a wedged Translation, held at its suspension) keeps what the
     /// window shows and says it is searching, for as long as the reading lasts: a filter change
     /// delivered while it is held publishes nothing else, never the scope unsearched; ending
@@ -1228,6 +1255,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-068
     @Test func aQueryBeingReadKeepsWhatTheWindowShowsAndSaysSo() async throws {
         let catalog = try await makeCatalog()
         let bundle = Bundle(for: CatalogWindowViewModel.self)
@@ -1310,6 +1338,7 @@ struct PhotoSearchIndexTests {
         }
     }
 
+    // Validates: APP-068
     /// A query whose reading fails is never answered with the scope unsearched: the grid holds
     /// the empty state that says the search could not be made, and the answer replaces it when
     /// a retry reads the query.
@@ -1363,6 +1392,7 @@ struct PhotoSearchIndexTests {
         await catalog.store.shutdown()
     }
 
+    // Validates: APP-074
     /// A query about words puts the photo whose text holds them first; the picture alone
     /// would not find it.
     @Test func aWordQueryRanksThePhotoHoldingTheWordFirst() async throws {
@@ -1397,6 +1427,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: APP-068
     /// ADR 0048, "The words first": the words reading is made with no text tower loaded, and
     /// matches only the photo showing its words: the picture it has not read narrows to them,
     /// never to every photo.
@@ -1425,6 +1456,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: APP-068
     /// ADR 0048, the first search while the text tower loads: a query typed while the first
     /// grid's readying holds the tower's load at its suspension publishes the photo showing its
     /// words at once, still searching, and the picture's answer when the load is let go: the
@@ -1496,6 +1528,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: APP-068
     /// ADR 0048, the first search of a session: a query typed while the text tower loads and
     /// the index's first pass is still at its vectors (here the build of the file, held as it
     /// names it) publishes the photo whose words match at once, still searching. The words are
@@ -1557,9 +1590,10 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: APP-068
     /// A words reading that matches nothing is no answer: the pass that matched it publishes
     /// nothing and reads nothing more, not the count of photos search has not read, which an
-    /// empty answer shows and which took 1.1 s on the owner's catalog.
+    /// empty answer shows and which took 1.1 s on the reference catalog.
     @Test func aWordsReadingThatMatchesNothingReadsNoOwedCount() async throws {
         let catalog = try await makeCatalog(onDisk: true)
         let store = catalog.store
@@ -1616,6 +1650,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: APP-068
     /// DES-108, ADR 0048: an answer that matches nothing says how many of the scope's photos
     /// search has not read yet — one whose thumbnail does not decode, still owed — and not the
     /// one that will get no thumbnail, which search never reads. The index knows the first of
@@ -1677,6 +1712,7 @@ struct PhotoSearchIndexTests {
         await store.shutdown()
     }
 
+    // Validates: ENR-028
     /// ADR 0048, "Text in the photo": a search shown follows the catalog's text readings as
     /// they are written. A reading written while the search is shown joins its answer, and one
     /// whose preview changes (stale until it is read again) leaves it: the held answer is not reused once a kind of fact the text match reads moved
@@ -1743,6 +1779,7 @@ struct PhotoSearchIndexTests {
         )])
     }
 
+    // Validates: APP-068
     /// Relevance order is best match first, ties in the scope's order, and ungrouped; the
     /// scope's own order keeps its day grouping. Unmatched items leave either way.
     @Test func searchedScopesKeepOrDropTheirOrder() {
@@ -1759,6 +1796,7 @@ struct PhotoSearchIndexTests {
         #expect(sorted.dayBuckets == [days[0], days[2], days[3]])
     }
 
+    // Validates: APP-068
     /// The cut follows the best match, and never falls below the floor.
     @Test func theCutoffFollowsTheBestMatch() {
         let cutoff = SearchCutoff(floor: 0.08, margin: 0.04)
@@ -1766,6 +1804,7 @@ struct PhotoSearchIndexTests {
         #expect(cutoff.threshold(best: 0.10) == 0.08)
     }
 
+    // Validates: APP-068
     @Test func blankTextIsNoSearch() {
         #expect(CatalogSearch(text: "  \n ") == nil)
         #expect(CatalogSearch(text: "  dog ")?.text == "dog")

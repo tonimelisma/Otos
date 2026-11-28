@@ -19,6 +19,7 @@ import Testing
 struct PeopleActChainTests {
     typealias Fixture = PeopleViewModelTests.Fixture
 
+    // Validates: APP-087
     /// A name saved in the Person sheet survives a People state read before its write that
     /// arrives between the submission and the write, the write itself, and a state covering
     /// an older request that arrives after the answer; the state that covers the answer's
@@ -61,6 +62,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// A hide whose covering People state reaches the window before the store's answer (the
     /// gallery's read of the request can finish before the answer's main-actor turn): the
     /// person is hidden through the state, the answer and every state after.
@@ -90,6 +92,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// ⌘Z after a rename was answered but before People was built with it: a state covering
     /// the rename's request — the new name — arrives while the undo is on its way, and then
     /// again after the undo's answer. Neither puts the new name back: the window shows the
@@ -128,6 +131,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// Two merges in flight, the second merging away the person the first merges into, with
     /// the window on the first person's photos and filtering by them. The state both writes
     /// publish arrives before either answer; then each answer in turn. The window never
@@ -178,6 +182,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// ⌘Z on a merge before the store answers it, with the window on the person merged away:
     /// the merge's own state arrives first, then its answer, then the undo's write and the
     /// state with the person back. The window ends where an undo after the answer leaves it —
@@ -220,6 +225,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// Change to ▸ Sam on the stranger's face: the People state covering the act and the read
     /// of the photo's faces it rings, asked before the answer, both arrive before the answer;
     /// then the answer. The
@@ -264,6 +270,7 @@ struct PeopleActChainTests {
         }
     }
 
+    // Validates: APP-087
     /// The People state that covers an act's request can reach the window before the store's
     /// answer does: `PeopleGallery.request()` rings its loop, whose read can publish before the
     /// intent consumer's main-actor turn applies the answer. That state has the act in it, so
@@ -289,9 +296,10 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// A merge brings the person merged into to where their new photo count sorts them, often
-    /// far from where the user dropped (owner, 2026-11-20: "do both faces disappear from the
-    /// people list?"). The gallery scrolls to them once People shows them there: here the
+    /// far from where the user dropped, out of sight in the
+    /// people list. The gallery scrolls to them once People shows them there: here the
     /// state covering the merge arrives before the answer, so the answer reveals them.
     @Test func aMergeRevealsThePersonMergedIntoWhenItsStateCameFirst() async throws {
         let fixture = try await Fixture.make(in: makeTestDirectory(), consumesIntents: false)
@@ -312,6 +320,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-072
     /// The other order: the answer first, then a state covering only an older request, which
     /// still sorts the person merged into by their old count and reveals nothing, then the
     /// state that covers the merge, which reveals them, once.
@@ -343,6 +352,7 @@ struct PeopleActChainTests {
         await fixture.store.shutdown()
     }
 
+    // Validates: APP-087
     /// The same for an act on a face: the read of the photo's faces the covering state rang was
     /// asked before the answer, so the answer asks for one after it, and that read retires the
     /// face's override.

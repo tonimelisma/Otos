@@ -18,7 +18,7 @@ work and which is waiting?
   `op=ui.state.apply` (how long a publication waited in the window's mailbox for the main
   actor).
 - Tours: `script/scorecard.sh --tour --dev --optimized --seed 160000 --seed-media small
-  --settled --idle 20`, one at a time under the machine's owner-scale lock, with a second
+  --settled --idle 20`, one at a time under the machine's reference-scale lock, with a second
   `log stream` of the toured process beside the scorecard's own capture. An unattended Mac
   with other sessions' builds and tests running; every act ran in an occluded window.
 

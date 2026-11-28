@@ -3,19 +3,20 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// N location writes on a catalog of the owner's shape cost options reads in proportion to N
+/// N location writes on a catalog of the reference shape cost options reads in proportion to N
 /// (ADR 0005, "Keyed re-reads"): each write's rows are read again by key and patched
 /// into All Media's tally, the row's scope is never read again, and the options shown after
-/// each write are exactly what a whole read gives. On the owner's library a sync re-read All
+/// each write are exactly what a whole read gives. On the reference library a sync re-read All
 /// Media's options whole 92 times while 152 metadata changes arrived. It runs on a fiftieth of
-/// the owner's size in the suite, and at his size on demand (`OTOS_SCALE_TEST=1`), when it
+/// the reference size in the suite, and at the reference size on demand (`OTOS_SCALE_TEST=1`), when it
 /// writes each read's time to `build/filter-options-keyed/run.txt`.
 @Suite(.testScope, .serialized)
 struct FilterOptionsKeyedReadTests {
+    // Validates: ARC-022
     @Test func locationWritesAreReadByKeyAndKeepTheOptionsAWholeReadGives() async throws {
-        let scale = StallReproductionTests.ownerSize ? 1 : 0.02
+        let scale = StallReproductionTests.referenceSize ? 1 : 0.02
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: scale)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: scale)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let projection = CatalogProjection(
@@ -70,7 +71,7 @@ struct FilterOptionsKeyedReadTests {
             let asset = try #require(try await store.windowReads.mediaAssets(for: [id])[id])
             var metadata = AssetMetadata.absoluteCapture(instant: asset.captureLocalTime?.presentationDate())
             if let cell = move.cell {
-                // The centre of generated cell `cell` (`OwnerShapedCatalog`'s place cells).
+                // The centre of generated cell `cell` (`ReferenceShapedCatalog`'s place cells).
                 metadata.locations = [GeoRecord(
                     source: "exifGPS",
                     latitude: (2000 + Double(cell / 40) + 0.5) / 50,
@@ -105,7 +106,7 @@ struct FilterOptionsKeyedReadTests {
         // Most writes moved their row: the reads followed them.
         #expect(owed >= UInt64(moves.count - 2), "owed=\(owed)")
         await store.shutdown()
-        if StallReproductionTests.ownerSize {
+        if StallReproductionTests.referenceSize {
             let url = SourceTree.root.appending(path: "build/filter-options-keyed/run.txt")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: url)
@@ -116,8 +117,8 @@ struct FilterOptionsKeyedReadTests {
     /// tally never counted brings that cell's name with its keyed re-read, and a renamed cell is
     /// named again by its key. After each, the patched tally offers what a whole read does.
     @Test func aKeyedReadNamesTheCellsItsRowsMoveIntoAndTheCellsRenamed() async throws {
-        // The owner's 1,435 named cells on a small catalog: Archive's eight rows count a few.
-        let catalog = try OwnerShapedCatalog.make(in: makeTestDirectory(), scale: 0.01, ownersPlaces: true)
+        // The reference library's 1,435 named cells on a small catalog: Archive's eight rows count a few.
+        let catalog = try ReferenceShapedCatalog.make(in: makeTestDirectory(), scale: 0.01, referencePlaces: true)
         let store = makeTestStore(location: .databaseFile(catalog.databaseURL))
         try await store.start(scansSavedLibraries: false)
         let libraries = try #require(await store.loadedLibraries())

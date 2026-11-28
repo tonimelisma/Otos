@@ -1,5 +1,7 @@
 # Activity
 
+GOVERNS: `OtosKit/Views/ActivityView.swift`, `OtosKit/Views/ActivityPresentation.swift`, `OtosKit/Services/ActivityBoard.swift`
+
 The surface that answers what a user asks of Otos's background work — is everything here
 yet, is something wrong that I can fix, is Otos busy — and nothing else (ADR 0058, DES-124;
 the HIG review is `docs/research/2026-11-27-activity-and-the-hig.md`). Most of Otos's work
@@ -84,13 +86,11 @@ fix it (HIG Writing).
 | Retried | never | One download, one ranged read a server did not answer, one RAW's camera support, one item's faces, one description | — the item stays counted as left; a row whose items all wait says `Otos will try these again later.` |
 | User work only | never, and not counted | An item whose source sends its original only for the user's work (ADR 0046 §4) | — |
 
-No row shows a time: the surface answers "is it done, working, or stuck", not "when"
-(owner, 2026-11-21).
+No row shows a time: the surface answers "is it done, working, or stuck", not "when".
 
 ## Progress
 
-Every row says how much is left (owner, 2026-11-26: "each should give the actual progress",
-"shouldn't each of these have a progress bar?"). A user looking at background work asks what
+Every row says how much is left, and each working row has a progress bar. A user looking at background work asks what
 it is doing, how much is left, why it runs when that is not obvious, and what stops it; the
 row answers each, in that order.
 
@@ -122,15 +122,13 @@ HIG review (Progress indicators):
   file gone — lowers the total and is never counted done.
 - **Say the step no count measures.** A row whose items are done while their result is still
   being built — faces into people, fingerprints into duplicate groups — says that step and
-  spins, instead of `0 … to scan` beside a full bar that never finishes (owner, 2026-11-28:
-  "say grouping faces into people and fix duplicates too").
+  spins, instead of `0 … to scan` beside a full bar that never finishes.
 - **A bar only while the work moves.** A paused or waiting row keeps its count, with what stops
-  it under the count, and draws no bar: a bar says work is progressing, and it is not (owner,
-  2026-11-26: "Whatever the problem the status needs to be right! It cant give a progress bar
-  if theres none").
+  it under the count, and draws no bar: a bar says work is progressing, and it is not: whatever the
+  problem, the status is right.
 - **Keep the indicator steady.** A row's state follows its items, not its owner's every wake:
   retries of items that wait out a failure keep it waiting, so its bar does not flicker in and
-  out (owner, 2026-11-27).
+  out.
 - **Say why when it is not obvious.** Downloads are a means, not an outcome: they are the line
   of the row whose photos they let show, never a row. A file still downloading cannot be
   measured from its provider, so the run moves as each one finishes.

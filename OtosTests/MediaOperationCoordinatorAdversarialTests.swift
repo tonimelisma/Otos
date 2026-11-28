@@ -86,6 +86,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 1. Detach during suspended build
 
+    // Validates: ARC-047
     @Test func detachDuringSuspendedBuildNoPresentationAfterResume() async throws {
         log("START detachDuringSuspendedBuildNoPresentationAfterResume")
         let temp = try makeTestDirectory()
@@ -144,6 +145,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// A change recorded while a build is suspended is a fact that build never saw, so
     /// its completion must not erase it: the session re-plans with the new preferences.
     @Test func aPreferenceChangeDuringABuildIsPlannedAfterIt() async throws {
@@ -196,6 +198,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 2. Rapid same-path reattach
 
+    // Validates: ARC-047
     @Test func rapidSamePathReattachOldBuildCannotBecomeReady() async throws {
         log("START rapidSamePathReattachOldBuildCannotBecomeReady")
         let temp = try makeTestDirectory()
@@ -271,6 +274,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 3. Old completion cannot clear new task
 
+    // Validates: ARC-047
     @Test func oldCompletionCannotClearNewTask() async throws {
         log("START oldCompletionCannotClearNewTask")
         let temp = try makeTestDirectory()
@@ -348,6 +352,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 4. Claims release on detach
 
+    // Validates: ARC-047
     @Test func claimsReleaseOnDetach() async throws {
         log("START claimsReleaseOnDetach")
         let temp = try makeTestDirectory()
@@ -419,6 +424,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 5. Claims release on cancel
 
+    // Validates: ARC-047
     @Test func claimsReleaseOnCancel() async throws {
         log("START claimsReleaseOnCancel")
         let temp = try makeTestDirectory()
@@ -526,6 +532,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 6. Claims release on failure
 
+    // Validates: ARC-047
     @Test func claimsReleaseOnFailure() async throws {
         log("START claimsReleaseOnFailure")
         let temp = try makeTestDirectory()
@@ -615,6 +622,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 7. Current-ledger conflict
 
+    // Validates: ARC-047
     @Test func currentLedgerConflictRebuildsWithDisjointName() async throws {
         log("START currentLedgerConflictRebuildsWithDisjointName")
         let temp = try makeTestDirectory()
@@ -696,6 +704,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 8. Settlement conversion
 
+    // Validates: ARC-047
     @Test func settlementConversionAfterPublishBStillSuffixDueToRealFile() async throws {
         log("START settlementConversionAfterPublishBStillSuffixDueToRealFile")
         let temp = try makeTestDirectory()
@@ -776,6 +785,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 9. Detach during execution
 
+    // Validates: ARC-047, APP-029
     @Test func detachDuringExecutionNoRecreation() async throws {
         log("START detachDuringExecutionNoRecreation")
         let temp = try makeTestDirectory()
@@ -833,6 +843,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// A settled run's outcome is carried as state on the presentation, so a
     /// consumer never needs to have observed the frame that first set it —
     /// only the current snapshot. `presentationsStream()`'s
@@ -916,6 +927,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// APP-029: `presentation(for:)` derives `.executing` from the executing phase's progress,
     /// never a zero-progress literal, so every re-derivation — a `publish()` for an
     /// unrelated reason, or simply re-reading the current snapshot, as here — shows
@@ -1015,6 +1027,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047, APP-029
     /// A settled attachment's status belongs to the card's row, so it leaves
     /// when the card does. The journaled batch remains the source of truth for
     /// the imported assets.
@@ -1080,6 +1093,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// APP-029: a failed run stays Failed after the rebuild it schedules
     /// lands. The failure is a recorded fact about the last run; the rebuild
     /// replaces the *phase* and finds a Ready plan, which the presentation
@@ -1149,6 +1163,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// APP-029: `Try Again` is what leaves state G — it clears the
     /// recorded failure and re-plans, and the Ready the rebuild already found
     /// is what the user sees next.
@@ -1215,6 +1230,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// A destination folder that exists but cannot be listed is a missing
     /// observation, not a plan: the build is deferred with a bounded backoff
     /// and the last proven plan keeps presenting. On 2026-09-13 the blocked
@@ -1294,6 +1310,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// Past the last backoff delay the condition is a planning failure the user
     /// can act on; `Try Again` restarts the backoff and, with the folder readable
     /// again, reaches Ready.
@@ -1362,6 +1379,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// After a completed run the coordinator dropped into `.building` while still
     /// holding the pre-run plan, so the bar drew `Ready · Import 368 Items` for
     /// 360 ms between two Done frames (observed 2026-09-13, 17:57:37). The plan a
@@ -1436,6 +1454,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// A run's outcome is a claim about the library it copied into. Change
     /// the destination and the outcome is withheld — otherwise the bar would
     /// read `1 copied just now · N items in <the other library>` — and it
@@ -1516,6 +1535,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// State C's "not everything will fit" line needs the destination's
     /// available capacity on the Ready presentation, sampled with the same
     /// reader the floor uses, and only where there is a plan to compare it to.
@@ -1569,6 +1589,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// APP-029: a run that stops early settles as a partial success whose
     /// facts — why it stopped, what it copied, of what it planned — are
     /// published as state and survive the post-settlement re-plan, so state F's
@@ -1639,6 +1660,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// ADR 0027 end to end through the real executor: a card that does not fit
     /// whole is copied up to the floor, settles as stopped with the floor as
     /// the reason, and the re-plan that follows offers exactly the remainder —
@@ -1725,6 +1747,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// A live execution's `ExecutionContext` (claims, namespace lease) already
     /// committed to a specific destination. Reordering libraries while that
     /// execution is in flight must not rewrite `session.destination` out from
@@ -1815,6 +1838,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 10. Shutdown
 
+    // Validates: ARC-047
     @Test func shutdownWaitsForSuspendedWorkAndNoLaterPublication() async throws {
         log("START shutdownWaitsForSuspendedWorkAndNoLaterPublication")
         let temp = try makeTestDirectory()
@@ -1893,6 +1917,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 11. Repeated import
 
+    // Validates: ARC-047, ARC-046A
     @Test func repeatedImportStartsExactlyOneBatch() async throws {
         log("START repeatedImportStartsExactlyOneBatch")
         let temp = try makeTestDirectory()
@@ -2037,6 +2062,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     /// J4 after an import: the card gains a file whose naming facts are pending. The
     /// settled run describes the card before that file, so holding it through the
     /// metadata wait drew Done — and the sidebar row its eject button — between
@@ -2118,6 +2144,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    // Validates: ARC-047
     @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws {
         log("START catalogChangeWakesWaitingForMetadataSourceDeterministic")
         let temp = try makeTestDirectory()
@@ -2211,6 +2238,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 13. Zero-copy without delete
 
+    // Validates: ARC-047
     @Test func zeroCopyWithoutDeleteRemainsReadyWithoutExecutor() async throws {
         log("START zeroCopyWithoutDeleteRemainsReadyWithoutExecutor")
         let temp = try makeTestDirectory()
@@ -2282,6 +2310,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 14. Zero-copy with delete
 
+    // Validates: ARC-047
     @Test func zeroCopyWithDeleteExecutorRunsDeletionPath() async throws {
         log("START zeroCopyWithDeleteExecutorRunsDeletionPath")
         let temp = try makeTestDirectory()
@@ -2352,6 +2381,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 14. Device inventory triggers a replan (ARC-047)
 
+    // Validates: ARC-047
     @Test func deviceInventoryLandingAfterAttachTriggersReplan() async throws {
         log("START deviceInventoryLandingAfterAttachTriggersReplan")
         let temp = try makeTestDirectory()
@@ -2414,6 +2444,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 15. Import refused while still enumerating (ADR 0024, ImportSourceReadiness)
 
+    // Validates: ARC-047
     @Test func importIsRefusedWhileDeviceIsStillEnumerating() async throws {
         log("START importIsRefusedWhileDeviceIsStillEnumerating")
         let temp = try makeTestDirectory()

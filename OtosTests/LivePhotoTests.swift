@@ -12,6 +12,7 @@ import Testing
 struct LivePhotoTests {
     private let identifier = "66E9019A-9CAF-4603-A6C3-2F22030B7C65"
 
+    // Validates: APP-059
     @Test func aStillAndItsMotionAreOneItem() async throws {
         try await withLibrary(["a/IMG_1.HEIC", "a/IMG_1.MOV", "a/IMG_2.JPG"]) { library in
             try await library.enrich("a/IMG_1.HEIC", kind: .image, contentIdentifier: identifier)
@@ -26,6 +27,7 @@ struct LivePhotoTests {
         }
     }
 
+    // Validates: APP-059
     /// The pair needs its evidence: the same identifier, the same folder, exactly one still
     /// and one movie. A name proves nothing (the Takeout folder's `IMG_0002.JPG`).
     @Test func anythingLessThanOneStillAndOneMovieInOneFolderPairsNothing() async throws {
@@ -51,6 +53,7 @@ struct LivePhotoTests {
         }
     }
 
+    // Validates: ENR-019
     /// A movie read before its still shows on its own; reading the still makes them one
     /// item, and the write reports a structural change so the grid re-queries.
     @Test func theMotionLeavesTheGridWhenItsStillIsRead() async throws {
@@ -75,6 +78,7 @@ struct LivePhotoTests {
         }
     }
 
+    // Validates: APP-059
     @Test func moveToTrashTakesTheMotionWithItsStill() async throws {
         try await withLibrary(["IMG_7.HEIC", "IMG_7.MOV"]) { library in
             try await library.enrich("IMG_7.HEIC", kind: .image, contentIdentifier: identifier)
@@ -89,6 +93,7 @@ struct LivePhotoTests {
         }
     }
 
+    // Validates: ARC-060
     /// Import and reorganization name the movie with its still, whatever its own stem, so
     /// a date-time policy can never put the two in different folders.
     @Test func theMotionNamesInItsStillsBundle() async throws {
@@ -113,6 +118,7 @@ struct LivePhotoTests {
         }
     }
 
+    // Validates: APP-059
     /// The loupe offers the motion of the Live Photo it shows (DES-106), and only of one.
     @Test func theLoupeOffersToPlayALivePhotosMotion() async throws {
         try await withLibrary(["IMG_9.HEIC", "IMG_9.MOV", "IMG_10.JPG"]) { library in

@@ -9,6 +9,7 @@ extension AppKitWindowTests {
     /// applies through the controller and read the header AppKit actually shows.
     @MainActor
     struct MediaGridDayHeaderRefreshTests {
+        // Validates: APP-030
         /// The import case: the oldest day lands first, as the top section, so its
         /// header is drawn blank; a newer day then lands above it.
         @Test func aHeaderThatWasTheFirstSectionDrawsItsDayOnceANewerDayLandsAbove() async throws {
@@ -26,6 +27,7 @@ extension AppKitWindowTests {
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 4))
         }
 
+        // Validates: APP-030
         @Test func aHeaderOnScreenDrawsTheCountItsDayHasNow() async throws {
             let harness = DayHeaderHarness()
             let newer = harness.ids(prefix: "newer", count: 2)
@@ -44,6 +46,7 @@ extension AppKitWindowTests {
             #expect(harness.header(section: 1) == .map(date: DayHeaderHarness.olderDay, itemCount: 4))
         }
 
+        // Validates: APP-030
         /// DES-069: the header and the bar are one label drawn twice, identical in height,
         /// and the blank first header still reserves that height, so no row moves.
         @Test func everyHeaderIsTheBarsHeight() async throws {
@@ -65,6 +68,7 @@ extension AppKitWindowTests {
             #expect(heights == [barHeight, barHeight])
         }
 
+        // Validates: ARC-023
         /// ARC-023: the structure is built off the main actor inside the one in-flight slot.
         /// Until the build lands nothing on screen changes, and a grid arriving meanwhile
         /// parks and is applied after it, never instead of it or alongside it.

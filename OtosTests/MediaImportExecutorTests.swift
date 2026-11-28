@@ -40,6 +40,7 @@ struct CopyfileTransferTests {
         #expect(CopyfileTransfer.statusAnswer(stage: COPYFILE_ERR, shouldContinue: false) == .cancel)
     }
 
+    // Validates: ARC-048, ARC-049
     @Test func copiesBytesAndReportsCompletion() throws {
         let temp = try makeTestDirectory()
         let source = temp.appending(path: "source.bin")
@@ -86,6 +87,7 @@ struct CopyfileTransferTests {
 
 @Suite(.testScope)
 struct ActiveFileOperationJournalTests {
+    // Validates: ARC-048, ARC-049, ARC-053
     @Test func journalRoundTripsThroughStore() async throws {
         let store = makeTestStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -159,6 +161,7 @@ struct ImportRecoveryTests {
         )
     }
 
+    // Validates: ARC-048
     @Test func readyToPublishRecoveryPublishesAndSettlesJournaledDigest() async throws {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -212,6 +215,7 @@ struct ImportRecoveryTests {
         #expect(asset.contentHashSourceSize == 8)
     }
 
+    // Validates: ARC-048
     @Test func finalAndStagingRecoveryTreatsFinalAsForeign() async throws {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -245,6 +249,7 @@ struct ImportRecoveryTests {
         #expect(try await store.windowReads.importBatches(counting: .every).isEmpty)
     }
 
+    // Validates: ARC-048
     @Test func matchingFinalOnlyRecoverySettlesAfterOwnershipProof() async throws {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -311,6 +316,7 @@ struct ImportRecoveryTests {
         #expect(try await store.windowReads.importBatches(counting: .every).isEmpty)
     }
 
+    // Validates: ARC-048
     /// Launch order: the coordinator starts on its own task, independent of
     /// `CatalogStore.start()`, so its startup recovery can reach the Store before
     /// the persisted roots are loaded. The registered destination root must still
@@ -355,6 +361,7 @@ struct ImportRecoveryTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-048
     /// A staging file that will not go keeps its row, marked abandoned, so nothing is
     /// left in the library that no record names; the next recovery that can remove it
     /// removes the row with it.
@@ -394,6 +401,7 @@ struct ImportRecoveryTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-048
     @Test func coordinatorStartRecoversJournalBeforeStoreLoadsRoots() async throws {
         let temp = try makeTestDirectory()
         let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -432,6 +440,7 @@ struct ImportRecoveryTests {
 
 @Suite(.testScope)
 struct CameraImportAccessTests {
+    // Validates: APP-029
     /// A camera download refused for space is typed from the error chain, not
     /// its wording, so the executor can stop at the floor for a camera the way
     /// it does for a card (ADR 0027). Anything else stays a per-entry failure.
@@ -550,6 +559,7 @@ struct ImportExecutionProgressTests {
         await coordinator.shutdown()
     }
 
+    // Validates: APP-029
     /// APP-029: when every attempted entry fails `sourceStillMatches` for the
     /// same non-per-file reason — no `cameraImport` gateway wired up, matching a
     /// device session that never opened — the run must report itself as a failure,
@@ -616,6 +626,7 @@ struct ImportExecutionProgressTests {
         #expect(publishedCount == 0)
     }
 
+    // Validates: APP-029
     /// A per-file staleness failure alongside a successful entry must stay
     /// `.completed(failedCount:)` — only a run where every attempted entry fails
     /// the *same* `.sourceNotReady` way is systemic.
@@ -700,6 +711,7 @@ struct ImportExecutionProgressTests {
         #expect(hasEntryFailures)
     }
 
+    // Validates: APP-029
     /// APP-029: state F-incomplete's "Show them" reveal selects from the card
     /// row's grid — the only row the bar is drawn on — so a `.skippedForeign`
     /// entry records the card's own identity. The destination path holds a
@@ -784,6 +796,7 @@ struct ImportExecutionProgressTests {
         #expect(!incompleteItems.contains(destinationID))
     }
 
+    // Validates: APP-032
     @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {
         let fixture = try await makeZeroCopyFixture()
         let result = await MediaImportExecutor(store: fixture.store, volumeCapacity: ampleVolumeCapacity).execute(
@@ -826,6 +839,7 @@ struct ImportExecutionProgressTests {
         #expect(try await fixture.store.backgroundReads.activeImportOperations().isEmpty)
     }
 
+    // Validates: APP-032
     @Test func failedCopySourceSurvivesEraseSweep() async throws {
         let fixture = try await makeZeroCopyFixture()
         try FileManager.default.removeItem(at: fixture.destinationFile)
@@ -886,6 +900,7 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
     }
 
+    // Validates: APP-032
     @Test func busySourceNamespaceLeavesTheCopyStandingAndReportsAnIncompleteErase() async throws {
         let fixture = try await makeZeroCopyFixture()
         let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
@@ -921,6 +936,7 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
     }
 
+    // Validates: ARC-048
     /// A card file is erased only under the card's own namespace lease — on its entry's
     /// settle or in the end-of-run sweep. With another owner holding the card for the
     /// whole run, every copy still lands and not one card file is touched.
@@ -948,6 +964,7 @@ struct ImportExecutionProgressTests {
         }
     }
 
+    // Validates: APP-032
     /// ADR 0027: each landed source is erased as it settles, and the outcome counts it as
     /// deleted. The end-of-run sweep leaves a path that was already erased alone rather
     /// than finding it gone and calling it skipped.
@@ -967,6 +984,7 @@ struct ImportExecutionProgressTests {
         }
     }
 
+    // Validates: ARC-048
     /// A run never treats another run's journal as something to recover: an entry in
     /// flight in another library keeps its row and its staging file while this one runs.
     @Test func aRunLeavesAnotherRunsJournalAlone() async throws {
@@ -1005,6 +1023,7 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: staging.path))
     }
 
+    // Validates: APP-032
     @Test func everyJournaledEraseForOneRootRecoversInOneSweep() async throws {
         let fixture = try await makeZeroCopyFixture()
         let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
@@ -1134,6 +1153,7 @@ struct ImportExecutionProgressTests {
         ) { _ in }
     }
 
+    // Validates: APP-029
     /// Three 1 KB entries into a volume with room for two above the floor:
     /// two land, the third is never attempted, and the run settles as stopped
     /// at the floor with the count it actually published. The figure never
@@ -1158,6 +1178,7 @@ struct ImportExecutionProgressTests {
         #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
     }
 
+    // Validates: APP-029
     /// A fresh figure shows each copy as it reaches the disk (`copyfile` reserves the
     /// whole file when it starts), and the run is not charged for it twice: a volume
     /// with room for exactly three takes all three, however far the copies have got
@@ -1176,6 +1197,7 @@ struct ImportExecutionProgressTests {
         #expect(publishedCount == 3)
     }
 
+    // Validates: APP-029
     /// A figure that never moves does not let landed entries be forgotten: with more
     /// entries than workers, room for nine of ten copies nine, though entries land and
     /// leave the in-flight set while the run goes on.
@@ -1209,6 +1231,7 @@ struct ImportExecutionProgressTests {
         return total
     }
 
+    // Validates: APP-029
     /// A volume that does not answer admits everything; `ENOSPC` is the
     /// backstop, not a guess.
     @Test func anUnknownCapacityAdmitsEveryEntry() async throws {
@@ -1222,6 +1245,7 @@ struct ImportExecutionProgressTests {
         #expect(publishedCount == 3)
     }
 
+    // Validates: APP-029
     /// A floor stop is never fully clean: with erase requested, the end-of-run
     /// sweep does not run and the result is `.stopped`, not
     /// `.completedWithErase`. Delete-after-import of entries that *landed* is
@@ -1253,6 +1277,7 @@ struct ImportExecutionProgressTests {
         #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
     }
 
+    // Validates: APP-029
     /// The write itself refusing for space is the same stop: the entry that
     /// hit `ENOSPC` is not counted as a failure — it never landed and the
     /// re-plan offers it again — and nothing after it is attempted.
@@ -1295,6 +1320,7 @@ struct ImportExecutionProgressTests {
         #expect(failedCount == 0)
     }
 
+    // Validates: ARC-048
     /// Every worker's copy blocks its thread for as long as the volume takes, so the copies
     /// run on their own queue, never on the cooperative pool: with all eight workers' copies
     /// held, other async work still runs. On the cooperative pool (one thread per core) eight
@@ -1345,6 +1371,7 @@ struct ImportExecutionProgressTests {
 
     // MARK: - Companions travel only when their bytes do
 
+    // Validates: ARC-048
     /// A copied companion lands beside its primary, is recorded with it, and its
     /// source is erased with it.
     @Test func aCopiedCompanionIsRecordedBesideItsPrimaryAndErasedWithIt() async throws {
@@ -1365,6 +1392,7 @@ struct ImportExecutionProgressTests {
         #expect(try Self.stagingLeftovers(under: fixture.destinationRoot).isEmpty)
     }
 
+    // Validates: ARC-048
     /// A companion whose copy fails is not in the library, so it is not recorded and
     /// its source is never erased; the primary still imports and the item is incomplete.
     @Test func aCompanionThatFailsToCopyStaysOnTheCardAndOutOfTheCatalog() async throws {
@@ -1385,6 +1413,7 @@ struct ImportExecutionProgressTests {
         #expect(try await fixture.store.windowReads.companions(in: fixture.destinationPath).isEmpty)
     }
 
+    // Validates: ARC-048
     /// A file that took the companion's destination after planning is never
     /// overwritten, and the companion it displaced stays on the card. The catalog may
     /// list that occupant as the primary's companion once the library is reconciled —

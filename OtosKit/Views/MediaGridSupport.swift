@@ -244,8 +244,8 @@ nonisolated enum MediaGridScrollWorkCadence {
 /// mouse, which sends no such pair: its ticks arrive while a scroll-wheel event is being
 /// handled. Every other tick is a move Otos made itself (a structural apply keeping its
 /// anchor, a focus scroll, a clamp after a layout), and holding on it parked a Move to
-/// Trash's result at the owner's library size for the whole quiet threshold
-/// (`docs/research/2026-11-17-acts-at-the-owners-library-size.md`).
+/// Trash's result at the reference library's size for the whole quiet threshold
+/// (`docs/research/2026-11-17-acts-at-the-reference-library-size.md`).
 nonisolated enum MediaGridScrollInput {
     static func isUserScroll(liveScrolling: Bool, handlingEvent: NSEvent.EventType?) -> Bool {
         liveScrolling || handlingEvent == .scrollWheel

@@ -6,7 +6,8 @@ import Testing
 
 @Suite(.testScope)
 struct CatalogStoreRemovableSourceTests {
-    /// ADR 0013 / owner decision 2026-10-25: at launch a card or camera unseen for 90 days is
+    // Validates: ARC-033
+    /// ADR 0013: at launch a card or camera unseen for 90 days is
     /// forgotten, and detaching it records when it was last seen — 89 days after the detach
     /// keeps it although 94 have passed since it was attached.
     @Test func aSourceUnseenForNinetyDaysIsForgottenAtLaunch() async throws {
@@ -48,6 +49,7 @@ struct CatalogStoreRemovableSourceTests {
         await expired.shutdown()
     }
 
+    // Validates: ARC-033
     /// APP-018: a camera that returns without some of the files it had last time loses their
     /// rows once its new catalog is complete; the files it still has keep theirs.
     @Test func aCameraReturningWithoutSomeFilesLosesTheirRows() async throws {
@@ -93,6 +95,7 @@ struct CatalogStoreRemovableSourceTests {
         await store.shutdown()
     }
 
+    // Validates: ARC-010, APP-005, APP-017
     @Test func quiesceKeepsRemovableSourceAvailableForSidebar() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store
@@ -109,6 +112,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(quiesced.removableSources.first?.availability == .available)
     }
 
+    // Validates: APP-017
     /// An ejecting card stays available for the sidebar but offers enrichment nothing
     /// new to claim — from the claim query or as a viewport priority — until it
     /// resumes, so the eject drain waits on finite work.
@@ -149,6 +153,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(afterResume.contains { $0.asset.id == cardID })
     }
 
+    // Validates: ENR-017
     /// ENR-017: while an import copies from a card, enrichment is offered nothing on it —
     /// claims taken before are released — and the fixed library keeps enriching. When the
     /// import ends, however it ended, the card is offered again.
@@ -213,6 +218,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(candidates.contains { $0.asset.id == cardID })
     }
 
+    // Validates: APP-007
     /// APP-007: a removal waiting for the card follows it when it remounts at another
     /// path. The card at its new mount is held by nothing, so the removal runs there.
     @Test func aRemovalWaitingForACardFollowsItToItsNewMount() async throws {
@@ -251,6 +257,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(try await catalogStoreTestState(store).removableSources.isEmpty)
     }
 
+    // Validates: APP-017
     /// Otos's own eject reports its outcome, so a refused one resumes the card at once:
     /// it is still mounted, and its enrichment must not wait on a limit meant for ejects
     /// started elsewhere, which report nothing.
@@ -283,6 +290,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(afterRefusal.contains { $0.asset.id == cardID })
     }
 
+    // Validates: ARC-004, ARC-007, APP-016, APP-017
     @Test func removableVolumeRemountsByIdentityAndStaysOutOfAllMedia() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store
@@ -330,6 +338,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(remounted.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"])
     }
 
+    // Validates: APP-018
     @Test func mtpCatalogRowsAreScopedToCameraAndStagingSurvivesDetach() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
@@ -382,8 +391,7 @@ struct CatalogStoreRemovableSourceTests {
         // Staged bytes survive an eject. They are already off the camera, so
         // discarding them here would re-download the whole device on the next
         // attach — tens of gigabytes for a full card. They are released at app close,
-        // with a launch sweep as the crash-safe backstop (APP-018, owner decision
-        // 2026-08-30, reversing the previous "only while connected" rule).
+        // with a launch sweep as the crash-safe backstop (APP-018).
         #expect(FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
         #expect(try await store.windowReads.catalogedAssetCount(for: .library(rootPath)) == 1)
     }
@@ -419,6 +427,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(await store.currentLibraries().isEmpty)
     }
 
+    // Validates: ARC-033
     /// ADR 0013: the camera comes back while its removal deletes its staging folder. The
     /// re-attach waits for the removal's lease, and the folder it attaches at is made only once
     /// it holds the root: the removal's delete never takes the folder of the camera attached
@@ -463,6 +472,7 @@ struct CatalogStoreRemovableSourceTests {
         )
     }
 
+    // Validates: ARC-003, ARC-026
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
         let temp = try makeTestDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
@@ -545,6 +555,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(Set(watcherHarness.roots()) == Set([fixedPath, cardPath]))
     }
 
+    // Validates: ARC-033
     /// ADR 0013: a card the launch forgets for being unseen 90 days, and a different card that
     /// mounts at its mount point while the removal runs. The removal owns the old card's
     /// root from its start; the new card waits for it and attaches as a source of its own, so
@@ -570,6 +581,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(sources.rowAtMount == RetentionRaceFixture.newCard, "the new card's row is kept")
     }
 
+    // Validates: ARC-033
     /// The same two at the other order: the new card's attachment holds the mount's root when
     /// the launch's retention reaches it, so retention leaves it, and the new card is kept.
     @Test func retentionLeavesTheRootACardIsAttachingTo() async throws {

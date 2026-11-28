@@ -19,10 +19,12 @@ struct MediaGridDayHeaderPolicyTests {
         return MediaGridStructure(orderedIDs: ids, dayBuckets: buckets)
     }()
 
+    // Validates: APP-030
     @Test func theFirstSectionDoesNotDrawItsOwnHeader() {
         #expect(MediaGridDayHeaderPolicy.presentation(section: 0, in: structure) == nil)
     }
 
+    // Validates: APP-030
     @Test func everyOtherSectionDrawsItsDayAndCount() {
         #expect(
             MediaGridDayHeaderPolicy.presentation(section: 1, in: structure)

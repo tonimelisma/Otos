@@ -10,6 +10,7 @@ import Testing
 struct AutoEditModelTests {
     // MARK: - Solver
 
+    // Validates: APP-048
     /// Fields drawn from a known camera are explained exactly by it: the solver recovers the
     /// roll to a hundredth of a degree, confidently enough for Auto straighten to use it.
     @Test func theSolverRecoversTheCameraThatDrewTheFields() throws {
@@ -24,6 +25,7 @@ struct AutoEditModelTests {
         #expect(solution.rollUncertainty < AutoLevelModel.maximumUncertainty)
     }
 
+    // Validates: APP-048
     /// Fields with no confidence anywhere constrain nothing: there is no roll to report.
     @Test func fieldsWithoutConfidenceGiveNoRoll() {
         var fields = PerspectiveFieldSolver.Fields.camera(width: 64, height: 64, roll: 0.1, pitch: 0, focal: 200)
@@ -39,6 +41,7 @@ struct AutoEditModelTests {
 
     // MARK: - Preprocessing and selection
 
+    // Validates: APP-048
     /// GeoCalib's preprocessing: short side 320, the long side truncated, then centered crops
     /// to a multiple of 32 and to the nearest converted shape.
     @Test func photosRunAtTheNearestConvertedShape() {
@@ -56,6 +59,7 @@ struct AutoEditModelTests {
         #expect(nearlySquare.crop.left == 40)
     }
 
+    // Validates: APP-048
     /// Candidates cover ten shapes at five sizes, stay inside the frame, include the whole
     /// frame, and come sorted, as FocalNet's `np.unique` leaves them.
     @Test func candidatesSpanTheShapesInsideTheFrame() {
@@ -67,6 +71,7 @@ struct AutoEditModelTests {
         #expect(Set(boxes).count == boxes.count)
     }
 
+    // Validates: APP-048
     /// FocalNet's rule: only candidates keeping nearly the most importance compete, and the
     /// best score among them wins, however good a candidate outside them scores.
     @Test func theBestScoreWinsAmongCandidatesThatKeepTheSubject() {
@@ -78,6 +83,7 @@ struct AutoEditModelTests {
 
     // MARK: - The bundled models
 
+    // Validates: APP-048
     /// Both models load from the framework and read a photo; the same photo always reads the
     /// same.
     @Test func theBundledModelsReadAPhotoTheSameWayEveryTime() throws {

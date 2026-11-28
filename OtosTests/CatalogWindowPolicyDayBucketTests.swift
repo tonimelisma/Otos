@@ -9,6 +9,7 @@ struct CatalogWindowPolicyDayBucketTests {
     private static let keptPath = LibraryRootPath(rawValue: "/Kept")
     private static let droppedPath = LibraryRootPath(rawValue: "/Dropped")
 
+    // Validates: APP-030
     @Test func filteringDropsPairedDayBucketAtTheSameIndex() {
         let dayOne = Date(timeIntervalSince1970: 0)
         let dayTwo = Date(timeIntervalSince1970: 86400)

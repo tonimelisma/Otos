@@ -23,7 +23,7 @@ final class DeviceStagingRegistry {
     /// transferred off the camera, so discarding them on eject would re-download the
     /// whole device on the next attach — tens of gigabytes for a full card. Staging
     /// lives for the session and is cleared at app close, with a startup sweep as the
-    /// crash-safe backstop (APP-018, owner decision 2026-08-30).
+    /// crash-safe backstop (APP-018).
     func unregister(identity: DeviceIdentity) {
         sessionsByIdentity.removeValue(forKey: identity)
     }

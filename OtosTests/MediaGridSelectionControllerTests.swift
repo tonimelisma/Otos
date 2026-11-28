@@ -25,6 +25,7 @@ extension AppKitWindowTests {
     struct MediaGridSelectionControllerTests {
         // MARK: - Acceptance matrix (rows 1–14)
 
+        // Validates: APP-022
         @Test func row1_plainClickSelectsOnlyTheClickedItem() throws {
             let harness = try makeHarness(itemCount: 8)
             try harness.click(harness.ids[2], modifiers: [])

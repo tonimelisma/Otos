@@ -97,8 +97,7 @@ Adjacent decisions requiring separate ADRs or specs:
    removes the source row and its overlay. **Retention:** at launch, before any
    source re-attaches, a source that is not attached and whose `last_seen_at` is more
    than 90 days old (`RemovableSourceRetention.unseenPeriod`) is forgotten through the
-   same removal as Forget, likes on never-imported photos included (owner decision
-   2026-10-25). A source with no stamp is kept. Retention re-reads each root and takes its
+   same removal as Forget, likes on never-imported photos included. A source with no stamp is kept. Retention re-reads each root and takes its
    namespace lease in one step, so a root a source attached to meanwhile, or that any owner
    holds, is left. An attachment that takes over a root's row — a known identity, or a new
    card at the mount point of an unavailable one — holds that root's lease

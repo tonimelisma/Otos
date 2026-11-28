@@ -25,6 +25,7 @@ struct PersonPhotoOrderTests {
     static let anna: Int64 = 1
     static let ben: Int64 = 2
 
+    // Validates: ARC-022
     @Test func aPersonsOrderIsThePreviousReadsOrderThroughEveryWrite() async throws {
         let temp = try makeTestDirectory()
         let queue = try makeTestDatabaseQueue(path: temp.appending(path: "catalog.sqlite").path(percentEncoded: false))
@@ -44,6 +45,7 @@ struct PersonPhotoOrderTests {
         }
     }
 
+    // Validates: ARC-022
     /// The table is what `face` and `media_asset` say after every write: a row for each photo
     /// holding a face of a person that is a face, with the photo's columns.
     @Test func thePersonsPhotosAreWhatTheFacesAndThePhotosSay() async throws {
@@ -66,6 +68,7 @@ struct PersonPhotoOrderTests {
         }
     }
 
+    // Validates: ARC-022
     /// A person's order, under every sort and with a filter or none, reads the person's own
     /// range of `person_photo`'s key and nothing of another person's, finds the photos through
     /// a copy from the person's photos that have copies, and scans no table: on a catalog of
@@ -125,6 +128,7 @@ struct PersonPhotoOrderTests {
         }
     }
 
+    // Validates: ARC-022
     /// A sought order builds only its own rows' stacks while it holds at most
     /// `PhotoStackSQL.rowsSpanMostRows` rows, and every stack of its roots past that.
     @Test func aSoughtOrderOfMoreThanTwoThousandRowsBuildsEveryStackOfItsRoots() async throws {

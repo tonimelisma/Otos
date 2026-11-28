@@ -7,6 +7,7 @@ import Testing
 
 @Suite(.testScope)
 struct PreviewImageLoaderTests {
+    // Validates: APP-023
     @Test func datalessPreviewSubmitsInteractiveRequestThenDecodes() async throws {
         let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
@@ -69,6 +70,7 @@ struct PreviewImageLoaderTests {
         #expect(PaneOriginalDownloads.configured(environment: [:]) == .whenNeeded)
     }
 
+    // Validates: APP-008
     /// An eject quiesces the card's root: a decode already running finishes, a new one
     /// there is refused without reading the file, other roots are untouched, and resume
     /// lets decodes start again.
@@ -122,6 +124,7 @@ struct PreviewImageLoaderTests {
         }
     }
 
+    // Validates: APP-040
     @Test func decodeReportsNativePixelSize() async throws {
         let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
@@ -161,6 +164,7 @@ struct PreviewImageLoaderTests {
         #expect(native.height == 24)
     }
 
+    // Validates: APP-040
     /// ADR 0035: a cloud-only still with a stored preview opens from the preview with no
     /// download, reporting the original's size from metadata; only a full-resolution
     /// request goes to the original.
@@ -234,6 +238,7 @@ struct PreviewImageLoaderTests {
         #expect(materializeCalls.withLock { $0 } == 1)
     }
 
+    // Validates: APP-023
     @Test func coalescesConcurrentRequestsForSameID() async throws {
         let directory = try makeTestDirectory()
         let file = directory.appending(path: "sample.jpg")
@@ -263,6 +268,7 @@ struct PreviewImageLoaderTests {
         }
     }
 
+    // Validates: APP-023
     /// A camera's originals are staged on demand (ADR 0013 decision 5). One never copied,
     /// opened at full resolution in the loupe, is absent from the staging folder, which
     /// the coordinator reads as fetchable rather than missing: it stages it through the
@@ -405,6 +411,7 @@ struct PreviewImageLoaderRetentionTests {
         )
     }
 
+    // Validates: APP-023
     /// Four photos visited in turn: the last three are held, so stepping back through them
     /// paints the decode already made; the first was let go and is decoded again.
     @Test func theLoaderHoldsOnlyThePhotosAPaneCanReturnTo() async throws {
@@ -420,6 +427,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(try await Self.image(loader, ids[0]) !== first[0], "the oldest photo was let go")
     }
 
+    // Validates: APP-023
     /// A full-resolution decode is the pane's to hold: asked for again it is decoded again,
     /// while the photo's screen-sized decode stays held for a return to it.
     @Test func aFullResolutionDecodeIsHeldOnlyByThePaneShowingIt() async throws {
@@ -431,6 +439,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(try await Self.image(loader, ids[0]) === screen)
     }
 
+    // Validates: APP-023
     /// Leaving the full-size view lets go of every photo held for a return: none is left
     /// held, and the next visit decodes anew.
     @Test func leavingTheFullSizeViewLetsGoOfEveryHeldPhoto() async throws {
@@ -446,6 +455,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(try await Self.image(loader, ids[0]) !== first[0])
     }
 
+    // Validates: APP-023
     /// A screen-sized request is decoded at the size it asks for, not at the stored
     /// preview's: what a shown photo holds is bounded by the pane it is shown in. Walked
     /// through five photos, the loader holds three of them at that size, once each.
@@ -478,6 +488,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(await loader.decodeCounts == .init(started: 5, cancelledBeforeStart: 0))
     }
 
+    // Validates: APP-023
     /// A decode whose every waiter has moved on is cancelled before it reads a byte, and is
     /// not held: asked for again, the photo is decoded by a request of its own.
     @Test func aDecodeNobodyWaitsForStopsBeforeItReadsAByte() async throws {
@@ -500,6 +511,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(await loader.decodeCounts == .init(started: 1, cancelledBeforeStart: 1))
     }
 
+    // Validates: APP-023
     /// A decode asked for before the full-size view was left, landing after it, goes to its
     /// caller and is not held.
     @Test func aDecodeLandingAfterTheViewWasLeftIsNotHeld() async throws {
@@ -519,6 +531,7 @@ struct PreviewImageLoaderRetentionTests {
         #expect(loader.heldPhotos == (0, 0))
     }
 
+    // Validates: APP-023
     /// A shared decode keeps running while anyone still waits for it: one of two waiters
     /// moving on leaves the other its photo.
     @Test func aSharedDecodeRunsForTheWaiterStillWaiting() async throws {

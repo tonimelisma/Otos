@@ -1,9 +1,9 @@
 # Text and scene labels in the Info pane
 
-Run 2026-11-12 on the owner's library (19,221 photos, 10,065 stills with a stored 2,560 px
+Run 2026-11-12 on the reference library (19,221 photos, 10,065 stills with a stored 2,560 px
 preview), macOS 27.0.1 (26A434), while other checks loaded the Mac (load average 20–100). The
 judged material is the keyword-search research set (`docs/research/2026-11-09-keyword-search.md`
-§9), kept outside the repository with the owner's photos.
+§9), kept outside the repository with the reference photos.
 
 Question: can the Info pane show what search recognised in a photo — its scene labels and its
 text — and what does each need to be shown rather than only searched?

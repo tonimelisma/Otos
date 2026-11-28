@@ -4,10 +4,10 @@ import GRDB
 import SQLite3
 import Testing
 
-/// What the newest migration costs at launch on a catalog of the owner's shape (ADR 0002,
+/// What the newest migration costs at launch on a catalog of the reference shape (ADR 0002,
 /// "Schema Migrations At Launch"): its milliseconds through the Store's own migration pass,
 /// the write-ahead log it leaves, and the file's size before and after. A migration's PR
-/// states these; the test writes them to `build/migration-cost/owner.txt`. At the owner's size
+/// states these; the test writes them to `build/migration-cost/reference.txt`. At the reference size
 /// only on demand (`OTOS_SCALE_TEST=1 script/check.sh --only CatalogMigrationCostTests`), since
 /// it writes a 2.3 GB file; it is a measurement, not a benchmark.
 ///
@@ -30,11 +30,11 @@ struct CatalogMigrationCostTests {
         ]
     }
 
-    @Test(.enabled(if: StallReproductionTests.ownerSize))
-    func theNewestMigrationCostsOnTheOwnersShape() throws {
+    @Test(.enabled(if: StallReproductionTests.referenceSize))
+    func theNewestMigrationCostsOnTheReferenceShape() throws {
         #expect(CatalogStore.knownMigrationIdentifiers.last == Self.newest)
         let directory = try makeTestDirectory()
-        let catalog = try OwnerShapedCatalog.make(in: directory, scale: 1)
+        let catalog = try ReferenceShapedCatalog.make(in: directory, scale: 1)
         let path = catalog.databaseURL.path(percentEncoded: false)
         let queue = try makeTestDatabaseQueue(path: path)
         try queue.writeWithoutTransaction { db in
@@ -91,7 +91,7 @@ struct CatalogMigrationCostTests {
 
         """ + WindowReadPages.report(before: readsBefore, after: readsAfter, withoutRowID: readsWithoutRowID)
             + "\n" + variants.joined(separator: "\n")
-        let url = SourceTree.root.appending(path: "build/migration-cost/owner.txt")
+        let url = SourceTree.root.appending(path: "build/migration-cost/reference.txt")
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(line.utf8).write(to: url)
     }
