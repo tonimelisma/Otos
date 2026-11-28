@@ -200,7 +200,8 @@ self_test() {
 
   # A valid fixture: one verified and one unverified item, the implementation file, and a test
   # file whose tags sit above a plain @Test, a multi-line @Test(arguments:), an @MainActor
-  # function and a @Suite. Each failing case below starts from it and breaks one rule.
+  # function, a @Suite, and a test whose doc comment and swiftlint:disable:next sit between
+  # the tag and its @Test. Each failing case below starts from it and breaks one rule.
   make_valid() {
     local t="$1"
     mkdir -p "$t/docs" "$t/OtosKit" "$t/OtosTests"
@@ -239,6 +240,10 @@ DOC
       echo "    $tag"
       echo '    @MainActor'
       echo '    static func scenario() throws { try #require(true == true) }'
+      echo "    $tag"
+      echo '    /// A doc comment and a lint exception stay attached to the test below the tag.'
+      echo '    // swiftlint:disable:next cyclomatic_complexity'
+      echo '    @Test func documented() { #expect(2 == 2) }'
       echo '}'
     } > "$t/OtosTests/FooTests.swift"
   }

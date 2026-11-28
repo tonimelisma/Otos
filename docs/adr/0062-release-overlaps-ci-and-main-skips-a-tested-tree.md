@@ -61,6 +61,21 @@ published release without publishing anything CI has not passed (ADR 0059).
    the release restores. CI's shards only restore.
 5. The disk image is compressed with LZFSE (`ULFO`) instead of zlib at level 9.
 
+## Measurements
+
+| | Merge → release published | CI on main | Release job |
+| --- | --- | --- | --- |
+| Before (#49, `92115720`) | 19.0 min | 12.6 min, all shards | 6.4 min, after CI |
+| Before (#47, `506eef7f`) | 27.0 min | 20.3 min, all shards | 6.6 min, after CI |
+| After (#53, `74bae1db`) | 8.4 min | 3.4 min, shards skipped | 8.5 min, beside CI |
+
+The first release after the change found no saved package cache (Build Cache saves it on that
+same push) and fetched every Swift package (47 s); its stages, in seconds from the job's
+start: prepare 5, build 309, package 351, launch check 401, `CI gate` already green (waited 0),
+published 444. Later releases restore the packages. The disk image with LZFSE is 497.9 MB
+against 492.5 MB with zlib at level 9 (1.1 % larger); packaging (archive, symbols, image,
+signature) took 42 s against about 60 s.
+
 ## Consequences
 
 - Merge to release is bounded by the release job itself (its build, about three minutes)
