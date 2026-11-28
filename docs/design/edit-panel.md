@@ -92,7 +92,11 @@ Sections, in order (Lightroom desktop's order, ADR 0036):
 The panel's controls never appear or disappear between states (DES-053). With no photo
 to edit, every control and `Reset` stays in place, disabled, with the tooltip
 `Select one photo to edit` (DES-038). While the photo is being opened (downloaded if it is
-cloud-only), the tooltip is `Preparing to edit`. `Reset` is also disabled while its section
+cloud-only), the tooltip is `Preparing to edit`. When its original can't be read (a volume
+gone, a file a sync client is replacing), the tooltip is `Can’t read the original right
+now`, and the histogram's well says the same in L3 secondary, centered, at its fixed height
+(DES-100), so the pane never sits waiting without a word. The photo opens again by itself
+when its file or library changes, or when it is selected or shown again. `Reset` is also disabled while its section
 is already neutral. Values show their sign (`+0.50`, `-20`); neutral reads `0.00` / `0`. A
 RAW's temperature reads in kelvin; as shot, it reads the camera's value.
 

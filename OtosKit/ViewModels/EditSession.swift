@@ -19,6 +19,13 @@ import OSLog
 /// as editing needs its bytes — and its facts (`EditPhotoFacts`: RAW or not, a RAW's
 /// as-shot white balance) are published. The controls act only once they are known.
 ///
+/// How that open went is the target's own state (`EditTarget.open`): opening, opened, or
+/// failed. A failed open is not the end of the photo: the pane says its original can't be
+/// read, and the target is resolved and opened again by the next refresh of the target and
+/// by the next catalog change (`catalogDidChange`): a row written, a root that came back.
+/// Nothing retries on a timer (ADR 0033); a refresh of a target that is open or opening
+/// leaves it alone.
+///
 /// Three lanes, each one consumer:
 /// - **Live render** (`editRenderStream`, newest-wins): opens the photo and renders the
 ///   draft on `LiveEditRenderer`, which keeps the photo open between renders. A render is
@@ -54,6 +61,20 @@ import OSLog
 nonisolated struct EditTarget: Equatable, Sendable {
     let id: MediaAssetID
     let sourceSize: Int64?
+    /// How opening the original has gone so far.
+    var open: EditTargetOpen
+}
+
+/// Where opening an edit target's original stands.
+nonisolated enum EditTargetOpen: Equatable, Sendable {
+    /// Asked for under `sequence` on the live lane, and not yet answered: by that request or
+    /// any later one for the photo, since a newer render can replace a queued open.
+    case opening(sequence: UInt64)
+    /// Its facts are published; the controls act.
+    case opened
+    /// The original could not be made local or read. The next target refresh or catalog
+    /// change resolves and opens it again.
+    case failed
 }
 
 /// A live render of `recipe` for `id`. `revision` is the save that recipe became, once it
@@ -442,12 +463,16 @@ final class EditSession {
             clearEditTarget()
             return
         }
-        // Already the target, or already being read: every target writer calls this, and
-        // one gesture fires several, so a read in flight for the same photo is kept.
-        guard editTarget?.id != id, !(editTargetTask != nil && editTargetRequestedID == id) else { return }
+        // Already the target and open or opening, or already being read: every target writer
+        // calls this, and one gesture fires several, so a read in flight for the same photo
+        // is kept. A target whose open failed is resolved and opened again.
+        if let target = editTarget, target.id == id, target.open != .failed {
+            return
+        }
+        guard !(editTargetTask != nil && editTargetRequestedID == id) else { return }
         // Only moving off a resolved photo ends its tools; the crop tool started for a
-        // target still resolving stays on for it.
-        if editTarget != nil {
+        // target still resolving, or opening again, stays on for it.
+        if let target = editTarget, target.id != id {
             endCropping()
         }
         commitPendingEdit()
@@ -473,30 +498,50 @@ final class EditSession {
                 clearEditTarget()
                 return
             }
-            let saved = detail.editRecipe ?? .neutral
-            editTarget = EditTarget(id: id, sourceSize: detail.byteSize)
-            editPhotoFacts = nil
-            editAutoLevel = nil
-            editAutoCrop = nil
-            editAnalysisRequested = nil
-            editOriginalPixelSize = nil
-            isPickingNeutral = false
-            endShowingOriginal()
-            editSavedRecipe = saved
-            editDraft = saved
-            editLivePreview = nil
-            editHistogram = nil
-            editRenderRequested &+= 1
-            editRenderContinuation.yield(.open(
-                id: id, sourceSize: detail.byteSize, recipe: saved, sequence: editRenderRequested
-            ))
-            if isCropping {
-                requestLiveEditRender()
-            }
-            OtosLog.ui.debugOperation("edit.target", phase: "resolved", fields: [
-                "id": id.relativePath.rawValue, "edited": "\(!saved.isNeutral)",
-            ])
+            openTarget(id, detail: detail)
         }
+    }
+
+    /// The target's detail was read: it becomes the target, opening, and the live lane is
+    /// asked to open it.
+    private func openTarget(_ id: MediaAssetID, detail: MediaTileDetail) {
+        let saved = detail.editRecipe ?? .neutral
+        let reopening = editTarget?.id == id
+        editRenderRequested &+= 1
+        editTarget = EditTarget(id: id, sourceSize: detail.byteSize, open: .opening(sequence: editRenderRequested))
+        editPhotoFacts = nil
+        editAutoLevel = nil
+        editAutoCrop = nil
+        editAnalysisRequested = nil
+        editOriginalPixelSize = nil
+        isPickingNeutral = false
+        endShowingOriginal()
+        editSavedRecipe = saved
+        editDraft = saved
+        editLivePreview = nil
+        editHistogram = nil
+        editRenderContinuation.yield(.open(
+            id: id, sourceSize: detail.byteSize, recipe: saved, sequence: editRenderRequested
+        ))
+        if isCropping {
+            requestLiveEditRender()
+        }
+        OtosLog.ui.debugOperation("edit.target", phase: reopening ? "reopening" : "resolved", fields: [
+            "id": id.relativePath.rawValue, "edited": "\(!saved.isNeutral)",
+        ])
+    }
+
+    /// The window applied a publication whose rows or roots changed. A target whose open
+    /// failed may be readable now — its file written again, its volume back — so it is
+    /// resolved and opened again; any other target is left as it is.
+    func catalogDidChange() {
+        guard editTarget?.open == .failed else { return }
+        refreshEditTarget()
+    }
+
+    /// The target is resolved and its original could not be read: the pane says so.
+    var isOriginalUnreadable: Bool {
+        editTarget?.open == .failed
     }
 
     private func clearEditTarget() {
@@ -745,7 +790,10 @@ final class EditSession {
                 case .close:
                     await pipeline.renderer.close()
                 case let .open(id, sourceSize, recipe, sequence):
-                    guard let opened = await pipeline.open(id, sourceSize: sourceSize) else { continue }
+                    guard let opened = await pipeline.open(id, sourceSize: sourceSize) else {
+                        self?.publishOpenFailed(id: id, sequence: sequence)
+                        continue
+                    }
                     self?.publishOpenedPhoto(id: id, opened)
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
                         continue
@@ -755,6 +803,8 @@ final class EditSession {
                 case let .render(id, recipe, sourceSize, sequence, purpose, requestedAt):
                     let startedAt = ContinuousClock.now
                     guard let live = await pipeline.liveImage(id, recipe: recipe, sourceSize: sourceSize) else {
+                        // A render that replaced a queued open answers for it.
+                        self?.publishOpenFailed(id: id, sequence: sequence)
                         continue
                     }
                     // How long the pane waited for this render: queued behind the lane,
@@ -821,9 +871,12 @@ final class EditSession {
     }
 
     private func publishOpenedPhoto(id: MediaAssetID, _ opened: OpenedEditPhoto) {
-        guard editTarget?.id == id,
-              editPhotoFacts != opened.facts || editOriginalPixelSize != opened.pixelSize
-        else { return }
+        guard var target = editTarget, target.id == id else { return }
+        if target.open != .opened {
+            target.open = .opened
+            editTarget = target
+        }
+        guard editPhotoFacts != opened.facts || editOriginalPixelSize != opened.pixelSize else { return }
         editPhotoFacts = opened.facts
         editOriginalPixelSize = opened.pixelSize
         if let degrees = opened.facts.cameraLevel, editAutoLevel?.id != id {
@@ -834,6 +887,20 @@ final class EditSession {
             "id": id.relativePath.rawValue, "raw": "\(opened.facts.isRAW)",
             "width": "\(Int(opened.pixelSize.width))", "height": "\(Int(opened.pixelSize.height))",
             "asShotTemperature": opened.facts.asShotTemperature.map { "\(Int($0.rounded()))" } ?? "none",
+        ])
+    }
+
+    /// A request for the target could not read its original. It fails the open only while
+    /// that open is still unanswered and the request is the open or a later one; a render
+    /// failing once the photo is open leaves it open.
+    private func publishOpenFailed(id: MediaAssetID, sequence: UInt64) {
+        guard var target = editTarget, target.id == id,
+              case let .opening(opening) = target.open, sequence >= opening
+        else { return }
+        target.open = .failed
+        editTarget = target
+        OtosLog.ui.noticeOperation("edit.target", phase: "openFailed", fields: [
+            "id": id.relativePath.rawValue, "sequence": "\(sequence)",
         ])
     }
 

@@ -78,13 +78,16 @@ nonisolated enum EnsureLocalOutcome: Equatable, Sendable {
 extension MaterializationRequesting {
     /// Makes an original's bytes local before a decode, a render, an export or a
     /// hand-off reads them: a deliberate transfer at the request's priority when it is
-    /// fetchable, then its locality once more (ADR 0008). The caller still
+    /// fetchable, then its locality once more (ADR 0008). Each way it is not local logs its
+    /// own phase: `unreachable` (the first look found no readable original),
+    /// `userWorkOnly`, `notMaterialized` (the transfer failed) and `notLocalAfterFetch` (the
+    /// transfer finished but the file is still not local). The caller still
     /// re-checks right before its read; this answer can go stale across its next await.
     @concurrent
     func ensureLocal(_ request: MaterializationCoordinator.Request) async -> EnsureLocalOutcome {
         switch await locality(of: request.id) {
         case .local:
-            break
+            return .local
         case .unreachable:
             OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "unreachable", fields: [
                 "id": request.id.relativePath.rawValue,
@@ -104,9 +107,12 @@ extension MaterializationRequesting {
                 return .notMaterialized(result.outcome)
             }
         }
-        guard await locality(of: request.id) == .local else {
-            OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "unreachable", fields: [
-                "id": request.id.relativePath.rawValue,
+        // The transfer reported the bytes local; the file's own status confirms it, or names
+        // what it is instead.
+        let fetched = await locality(of: request.id)
+        guard fetched == .local else {
+            OtosLog.mediaIO.noticeOperation("original.ensureLocal", phase: "notLocalAfterFetch", fields: [
+                "id": request.id.relativePath.rawValue, "locality": "\(fetched)",
             ])
             return .unreachable
         }

@@ -183,7 +183,8 @@ capture_step() {
         echo "op=appCapture phase=rendered view=$view appearance=$appearance"
         ;;
       *"op=smoke.capture phase=start"* | *"op=smoke.capture phase=selected"* | *"op=smoke.capture phase=waiting"* | *"op=smoke.capture phase=editorShown"* \
-        | *"op=smoke.capture phase=presented"* | *"op=smoke.capture phase=thumbnailsRendered"* | *"op=smoke.capture phase=detailReadFailed"*)
+        | *"op=smoke.capture phase=presented"* | *"op=smoke.capture phase=thumbnailsRendered"* | *"op=smoke.capture phase=detailReadFailed"* \
+        | *"op=smoke.capture phase=editorOriginalUnreadable"*)
         echo "op=appCapture phase=progress ${line#*op=smoke.capture }"
         ;;
       *"op=smoke.capture"*)
@@ -266,6 +267,12 @@ walk_launch() {
   # A failed walk leaves the app's own lines of this launch beside the captures, so a session
   # reading the artifact sees where the walk stopped. The library is generated media.
   if [[ "$status" != 0 ]]; then
+    # Whether the library's own volume was still mounted when the walk stopped: an original
+    # that vanished (errno 2 in `op=file.status`) with the volume gone is the runner's disk
+    # image detaching, not the app (runs 46109184512, 46115028966).
+    local volume
+    volume="$(/sbin/mount | /usr/bin/grep -F " on $home/TourLibrary " || true)"
+    echo "op=appCapture phase=libraryVolume appearance=$appearance mounted=$([[ -n "$volume" ]] && echo true || echo false) files=$(/usr/bin/find "$library" -type f 2>/dev/null | /usr/bin/wc -l | tr -d ' ')" >&2
     /usr/bin/log show --style compact --info --debug --start "$launched_at" \
       --predicate "subsystem == \"$SUBSYSTEM\" AND processImagePath == \"$EXECUTABLE\" AND eventMessage BEGINSWITH \"op=\"" \
       > "$OUT/app-log-$appearance.txt" 2>&1 || true

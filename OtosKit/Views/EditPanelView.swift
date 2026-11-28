@@ -4,8 +4,10 @@ import SwiftUI
 /// the draft recipe and the open photo's facts it is given, and reports each control's
 /// movement and drag state to the view model, which owns saving, rendering and undo.
 ///
-/// The controls stay in place and disabled while there is no single photo to edit or it
-/// is still being opened (DES-053); their tooltip says which (DES-038).
+/// The controls stay in place and disabled while there is no single photo to edit, while it
+/// is still being opened, or while its original can't be read (DES-053); their tooltip says
+/// which (DES-038), and an unreadable original is also said in the histogram's well
+/// (DES-100), where its picture would be.
 ///
 /// Each section folds under its heading's disclosure triangle (`hig-validation.md` F-16).
 /// Which sections are folded is the person's own arrangement of the panel, kept across
@@ -18,6 +20,9 @@ import SwiftUI
 struct EditPanelView: View {
     let photoName: String?
     let facts: EditPhotoFacts?
+    /// The photo's original could not be read when it was opened; it opens again when the
+    /// file or its library changes.
+    let isOriginalUnreadable: Bool
     let recipe: EditRecipe
     let histogram: EditHistogram?
     let original: EditPanelOriginalState
@@ -59,7 +64,7 @@ struct EditPanelView: View {
                         if let pair {
                             PairSwitch(pair: pair.stack, shown: pair.shown, onSelect: showPairMember)
                         }
-                        EditHistogramView(histogram: histogram)
+                        EditHistogramView(histogram: histogram, isOriginalUnreadable: isOriginalUnreadable)
                         originalRow
                     }
                     // A section the photo has nothing to adjust in is left out (ADR 0036): Optics
@@ -118,6 +123,9 @@ struct EditPanelView: View {
     private var unavailableHelp: String? {
         if photoName == nil {
             return "Select one photo to edit"
+        }
+        if isOriginalUnreadable {
+            return EditHistogramView.unreadableTitle
         }
         return facts == nil ? "Preparing to edit" : nil
     }

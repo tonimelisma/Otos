@@ -493,15 +493,28 @@
             model.selectAssets([photo])
             model.setInspectorPane(.edit)
             let shown = Observations { @MainActor in
-                owner().map { $0.editSession.editTarget?.id == photo && $0.editSession.editHistogram != nil }
+                owner().map { model in
+                    let session = model.editSession
+                    let isTarget = session.editTarget?.id == photo
+                    return (shown: isTarget && session.editHistogram != nil, unreadable: isTarget && session.isOriginalUnreadable)
+                }
             }
-            for await isShown in shown {
-                guard let isShown else {
+            var saidUnreadable = false
+            for await state in shown {
+                guard let state else {
                     return false
                 }
-                if isShown {
+                if state.shown {
                     OtosLog.app.notice("op=smoke.capture phase=editorShown")
                     return true
+                }
+                // The open failed: said once, and the wait goes on, since the next catalog
+                // change opens the photo again.
+                if state.unreadable, !saidUnreadable {
+                    saidUnreadable = true
+                    OtosLog.app.notice(
+                        "op=smoke.capture phase=editorOriginalUnreadable id=\(photo.relativePath.rawValue, privacy: .public)"
+                    )
                 }
             }
             return false

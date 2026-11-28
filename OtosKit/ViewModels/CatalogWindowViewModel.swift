@@ -799,6 +799,9 @@ final class CatalogWindowViewModel {
         volumeCapacity: @escaping VolumeCapacityReader,
         trashFiles: MediaTrashCoordinator.FileOperations,
         trashFileStatus: @escaping MediaTrashCoordinator.StatusReader = { FileMaterialization.status(of: $0) },
+        // Where the window's materialization coordinator reads an original's status; a test
+        // hands in one that fails when it chooses.
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
         trashMarkHook: (@Sendable () async throws -> Void)? = nil,
         trashUndoHook: (@Sendable () async -> Void)? = nil,
         handOffPreparer: HandOffPreparer? = nil
@@ -914,6 +917,7 @@ final class CatalogWindowViewModel {
                 }
             },
             volumeCapacity: volumeCapacity,
+            status: originalStatus,
             room: backgroundRoom
         )
         self.materializationCoordinator = materializationCoordinator
@@ -1759,6 +1763,12 @@ extension CatalogWindowViewModel {
         }
         restoreBrowserPlaceIfReady()
         followRunsIntoTheirBatches()
+        // A written row or a root that came or went can make an original readable again
+        // (a file replaced by its sync client, a volume remounted): an edit target whose open
+        // failed opens again.
+        if previousState.mediaGrid.detailRefreshGeneration != nextState.mediaGrid.detailRefreshGeneration {
+            editSession.catalogDidChange()
+        }
         // A scope drawn by a pane in place of the grid paints when that pane has its content;
         // the grid's own structural apply ends the interval for every other scope.
         if let surface = nextState.detailSurface, nextState.detailSurfaceHasContent {

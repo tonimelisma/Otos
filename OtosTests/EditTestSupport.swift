@@ -15,10 +15,14 @@ struct EditableLibrary {
     let models: EditModels
 
     /// A view model over the library's store whose grid holds `ids` (the library's own when
-    /// none are given), with its edit lanes started, ended with the test (`EditModels`).
+    /// none are given), with its edit lanes started, ended with the test (`EditModels`). Its
+    /// materialization coordinator reads originals' status through `originalStatus`.
     @MainActor
-    func makeEditModel(ids: [MediaAssetID]? = nil) -> CatalogWindowViewModel {
-        models.make(store: store, ids: ids ?? self.ids)
+    func makeEditModel(
+        ids: [MediaAssetID]? = nil,
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
+    ) -> CatalogWindowViewModel {
+        models.make(store: store, ids: ids ?? self.ids, originalStatus: originalStatus)
     }
 }
 
@@ -37,7 +41,11 @@ final class EditModels {
     private static let analyzer = EditAnalyzer()
 
     /// A view model over `store` whose grid holds `ids`, with its edit lanes started.
-    func make(store: CatalogStore, ids: [MediaAssetID]) -> CatalogWindowViewModel {
+    func make(
+        store: CatalogStore,
+        ids: [MediaAssetID],
+        originalStatus: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:)
+    ) -> CatalogWindowViewModel {
         let model = CatalogWindowViewModel(
             catalogStore: store,
             startsStallMonitor: false,
@@ -45,7 +53,8 @@ final class EditModels {
             startsSourceMonitoring: false,
             preferencesDomain: .suite(UUID().uuidString),
             volumeCapacity: ampleVolumeCapacity,
-            trashFiles: .refusing
+            trashFiles: .refusing,
+            originalStatus: originalStatus
         )
         model.applyState(CatalogWindowState(
             title: "Edit",

@@ -52,9 +52,17 @@ nonisolated enum FileMaterialization {
     /// Reports the point-in-time materialization status of `url` without reading its
     /// bytes. Pure inode metadata, so it is safe to call from any thread and never forces a cloud download. The result is transient and must
     /// not be persisted.
+    ///
+    /// A failed `lstat` is logged with its errno and the full path, so an unreachable original
+    /// names its cause (a missing file, a volume gone, an I/O error).
     static func status(of url: URL) -> FileMaterializationStatus {
         var info = stat()
-        guard lstat(url.path(percentEncoded: false), &info) == 0 else {
+        let path = url.path(percentEncoded: false)
+        guard lstat(path, &info) == 0 else {
+            let code = errno
+            OtosLog.fileAccess.noticeOperation("file.status", phase: "lstatFailed", fields: [
+                "errno": "\(code)", "error": String(cString: strerror(code)), "path": path,
+            ])
             return .unknown
         }
         return (info.st_flags & datalessFlag) != 0 ? .dataless : .materialized

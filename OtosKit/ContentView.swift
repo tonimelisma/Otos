@@ -711,6 +711,7 @@ struct InspectorColumn: View {
             EditPanelView(
                 photoName: viewModel.editSession.editTarget?.id.fileURL.lastPathComponent,
                 facts: viewModel.editSession.editPhotoFacts,
+                isOriginalUnreadable: viewModel.editSession.isOriginalUnreadable,
                 recipe: viewModel.editSession.editDraft,
                 histogram: viewModel.editSession.editHistogram,
                 original: EditPanelOriginalState(
