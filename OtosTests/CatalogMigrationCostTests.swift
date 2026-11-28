@@ -17,12 +17,15 @@ import Testing
 @Suite(.testScope, .serialized)
 struct CatalogMigrationCostTests {
     /// The newest migration, and the statements that put a catalog it migrated back to the
-    /// schema before it: the trigger v82 made dropped and its record removed.
-    static let newest = CatalogSchema.personDeletionOpensFacesMigrationIdentifier
+    /// schema before it: its index dropped, what the source hides put back to its trash alone,
+    /// its column dropped, and its record removed.
+    static let newest = CatalogSchema.sourceUnreadHiddenMigrationIdentifier
 
     static func schemaBeforeNewest() throws -> [String] {
         [
-            "DROP TRIGGER person_deleted_opens_faces",
+            "DROP INDEX \(AssetRowSQL.unreadIndexName)",
+            "UPDATE media_asset SET hidden_by_source = source_deleted WHERE source_item_id IS NOT NULL",
+            "ALTER TABLE media_asset DROP COLUMN source_deleted",
             "DELETE FROM grdb_migrations WHERE identifier = '\(newest)'",
         ]
     }

@@ -85,7 +85,7 @@ struct CatalogWALBoundTests {
                         contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                     ),
                     sourceItemID: "\(prefix)-\(index)",
-                    isHiddenBySource: false,
+                    isInSourceTrash: false,
                     sourceHasProducts: true
                 )
             }

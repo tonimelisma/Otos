@@ -123,6 +123,14 @@ is the question every copy answers, and the copies' rule is "identical copies ar
   modification time: rsync's quick check, on the exact path. A file whose digest is not read
   yet — a cloud-only one, whose download for its digest has not come yet (ADR 0009 §12) — agrees
   this way with no byte read.
+- While the server has not read the asset, it reports no size, and the asset agrees on its
+  whole-second modification time alone (v83, owner, 2026-11-28). An external library's asset
+  is listed when the server's scan finds its file and read only when its metadata job runs,
+  which on the owner's server waited behind 247,640 others; the size check could never pass
+  for it, and 930 photos already shown from the Camera Roll library showed again, as
+  placeholders, from the account. The path makes the file exact, and the time the scan read
+  names its version; once the server reports the size, the full check holds again, so an edit
+  the server reads later still splits them (`docs/research/2026-11-28-immich-unprocessed-assets.md`).
 - A pair whose versions differ — the file edited and not yet read again by the server, or a
   digest that disagrees — is two photos, each shown where it is, until a listing or a read
   makes them agree. The pair itself stays: it is a fact about paths, and the next listing of

@@ -3492,6 +3492,134 @@ nonisolated enum CatalogSchema {
         "UPDATE face SET assignment = 0, is_key_photo = 0 WHERE person_id IS NULL AND assignment IN (1, 2, 3)",
     ]
 
+    /// v83: a pair whose account asset the server has not read yet agrees on its modification
+    /// time alone (ADR 0054). An external library's asset is listed when the server's scan finds
+    /// its file, before the server reads it: it has no metadata, so no size, until its metadata
+    /// job runs, which on the owner's server waited behind 247,640 others
+    /// (`docs/research/2026-11-28-immich-unprocessed-assets.md`). The size-and-time check could
+    /// never pass for it, so 930 photos already shown from the Camera Roll library showed again,
+    /// as placeholders, from the account. The path proves the pair is one file, and the
+    /// whole-second modification time the scan read says which version; once the server reports
+    /// the size, the full check holds again. The four copy triggers are made again with the rule,
+    /// and every pair's rows are rekeyed.
+    static let pairTimeWhileSizeUnknownMigrationIdentifier = "v83_pair_time_while_size_unknown"
+
+    /// v83's key rule, frozen with it (ADR 0002): v80's, but an asset with no size agrees on its
+    /// modification time alone.
+    private static let v83PairKey = """
+    CASE WHEN CASE WHEN (\(v79OwnKey("f"))) IS NOT NULL AND (\(v79OwnKey("a"))) IS NOT NULL
+                   THEN (\(v79OwnKey("f"))) = (\(v79OwnKey("a")))
+                   ELSE (a.byte_size IS NULL OR f.byte_size = a.byte_size)
+                    AND CAST(f.content_modified_at_unix AS INTEGER) = CAST(a.content_modified_at_unix AS INTEGER)
+              END
+         THEN COALESCE((\(v79OwnKey("f"))), (\(v79OwnKey("a"))), CAST('pair:' || a.library_root_id || ':' || a.relative_path AS BLOB))
+    END
+    """
+
+    private static func v83Key(_ row: String) -> String {
+        """
+        COALESCE(
+            (SELECT \(v83PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.library_root_id = \(row).library_root_id AND p.file_path = \(row).relative_path),
+            (SELECT \(v83PairKey) FROM immich_mirror_pair AS p
+             JOIN media_asset AS f ON f.library_root_id = p.library_root_id AND f.relative_path = p.file_path
+             JOIN media_asset AS a ON a.library_root_id = p.account_root_id AND a.relative_path = p.asset_path
+             WHERE p.account_root_id = \(row).library_root_id AND p.asset_path = \(row).relative_path),
+            \(v79OwnKey(row))
+        )
+        """
+    }
+
+    private static func v83Rekey(rows: String) -> String {
+        """
+        DELETE FROM copy_key_touched;
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        UPDATE media_asset SET copy_key = \(v83Key("media_asset"))
+        WHERE rowid IN (\(rows)) AND copy_key IS NOT \(v83Key("media_asset"));
+        INSERT OR IGNORE INTO copy_key_touched (key)
+        SELECT copy_key FROM media_asset WHERE rowid IN (\(rows)) AND copy_key IS NOT NULL;
+        \(v79Regroup)
+        \(v79Unify)
+        UPDATE media_asset SET shown_copy_root_id = NULL, has_copies = 0
+        WHERE rowid IN (\(rows)) AND copy_key IS NULL AND (shown_copy_root_id IS NOT NULL OR has_copies <> 0);
+        DELETE FROM copy_key_touched;
+        """
+    }
+
+    static let pairTimeWhileSizeUnknownStatements: [String] = [
+        "DROP TRIGGER media_asset_copy_inserted",
+        "DROP TRIGGER media_asset_copy_updated",
+        "DROP TRIGGER immich_mirror_pair_inserted",
+        "DROP TRIGGER immich_mirror_pair_deleted",
+        v83Rekey(rows: v80EveryPairRow),
+        """
+        CREATE TRIGGER media_asset_copy_inserted AFTER INSERT ON media_asset
+        WHEN NEW.content_sha1 IS NOT NULL
+        BEGIN
+        \(v83Rekey(rows: "NEW.rowid"))
+        END
+        """,
+        """
+        CREATE TRIGGER media_asset_copy_updated AFTER UPDATE OF \(v79Inputs) ON media_asset
+        WHEN (\(v79InputChanged)) AND (OLD.content_sha1 IS NOT NULL OR NEW.content_sha1 IS NOT NULL
+          OR OLD.copy_key IS NOT NULL
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = NEW.library_root_id AND file_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = NEW.library_root_id AND asset_path = NEW.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE library_root_id = OLD.library_root_id AND file_path = OLD.relative_path)
+          OR EXISTS (SELECT 1 FROM immich_mirror_pair WHERE account_root_id = OLD.library_root_id AND asset_path = OLD.relative_path))
+        BEGIN
+        UPDATE choice_sequence SET value = value + 1 WHERE NEW.media_choice IS NOT OLD.media_choice;
+        UPDATE media_asset SET media_choice_sequence = (SELECT value FROM choice_sequence)
+        WHERE rowid = NEW.rowid AND NEW.media_choice IS NOT OLD.media_choice;
+        \(v83Rekey(rows: v79UpdatedRows))
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_inserted AFTER INSERT ON immich_mirror_pair
+        BEGIN
+        \(v83Rekey(rows: v79PairSides("NEW")))
+        END
+        """,
+        """
+        CREATE TRIGGER immich_mirror_pair_deleted AFTER DELETE ON immich_mirror_pair
+        BEGIN
+        \(v83Rekey(rows: v79PairSides("OLD")))
+        END
+        """,
+    ]
+
+    /// v84: an Immich asset the server has not read yet is hidden by its source, as the server's
+    /// own timeline hides it (ADR 0046; `docs/research/2026-11-28-immich-unprocessed-assets.md`).
+    /// The server lists an external library's asset when its scan finds the file and reads it
+    /// only when its metadata job runs; until then the asset has no metadata, so no size, no
+    /// images and no place in the server's timeline or search, which join its metadata. Otos
+    /// showed each as a placeholder.
+    /// - `source_deleted` keeps what `hidden_by_source` held alone before: the asset is in the
+    ///   server's trash. `hidden_by_source` is now that, or an account's row with no size and
+    ///   none of the server's images, which only an asset the server has not read has: the sync
+    ///   writes both (`sourceHiddenSQL`, `writeSourceByteSizeSQL`), and the order indexes keep
+    ///   covering the one they test.
+    /// - `idx_media_asset_source_unread` holds those rows alone, for the account's count of
+    ///   them (`unreadSourceItemCount`): 943 of the owner's 149,581 on 2026-11-28.
+    /// Rows are written before the index that holds them.
+    static let sourceUnreadHiddenMigrationIdentifier = "v84_source_unread_hidden"
+
+    static let sourceUnreadHiddenStatements: [String] = [
+        "ALTER TABLE media_asset ADD COLUMN source_deleted INTEGER NOT NULL DEFAULT 0",
+        "UPDATE media_asset SET source_deleted = 1 WHERE source_item_id IS NOT NULL AND hidden_by_source <> 0",
+        """
+        UPDATE media_asset SET hidden_by_source = 1
+        WHERE source_item_id IS NOT NULL AND byte_size IS NULL AND source_products_absent = 1 AND hidden_by_source = 0
+        """,
+        """
+        CREATE INDEX idx_media_asset_source_unread ON media_asset(library_root_id) \
+        WHERE source_item_id IS NOT NULL AND byte_size IS NULL
+        """,
+    ]
+
     /// The face's person has no photo row for the face's photo yet.
     private static let v81NoPersonPhoto = """
     NOT EXISTS (

@@ -80,6 +80,7 @@ fix it (HIG Writing).
 | | | Place names failed | `Place names couldn’t be looked up. Otos will try again.` |
 | | | Search failed | `Search couldn’t be updated. Otos will try again.` |
 | | on the account's row | Account offline | `The server isn’t answering. Otos will try again.` |
+| | on the account's row | Server has not read some assets | `The server hasn’t processed 943 photos and videos yet. They appear once it has.` — the assets with no metadata and no images yet, which Otos does not show, as the server's own timeline does not (v84) |
 | Retried | never | One download, one ranged read a server did not answer, one RAW's camera support, one item's faces, one description | — the item stays counted as left; a row whose items all wait says `Otos will try these again later.` |
 | User work only | never, and not counted | An item whose source sends its original only for the user's work (ADR 0046 §4) | — |
 
@@ -150,7 +151,7 @@ outcome it serves (`EnrichmentPurpose`), never under a row of its own.
 | What search compares a query with, made for each item | `Indexing for search` |
 | A description of each still, written by Apple Intelligence | `Writing descriptions` |
 | Fingerprints of each still and digests of each file, compared into duplicate groups | `Finding duplicates` |
-| An Immich account | `Syncing “Home”`, the account's sidebar glyph; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account |
+| An Immich account | `Syncing “Home”`, the account's sidebar glyph; L3 `Connecting to the server` while it connects, then how far its pass is (Progress); a pass that ended shows only what stops the account and the assets its server has not read yet |
 
 Not listed, because each has its own surface (one fact, one owner): an import (the import
 bar), Move to Trash (the trash status bar), export and reorganization (their sheets and

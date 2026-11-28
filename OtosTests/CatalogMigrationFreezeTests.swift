@@ -62,6 +62,7 @@ struct CatalogMigrationFreezeTests {
             ("face", PeopleGallerySQL.anchorIndexName, PeopleGallerySQL.anchorPredicate),
             ("media_asset", SearchEmbeddingStorage.noThumbnailComingIndexName, SearchEmbeddingStorage.noThumbnailComingPredicate),
             ("person_photo", PersonPhotoSQL.copiesIndexName, PersonPhotoSQL.copiesPredicate),
+            ("media_asset", AssetRowSQL.unreadIndexName, AssetRowSQL.unreadPredicate),
         ]
         let partial = try await dbQueue.read { db in
             try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%WHERE%'"))

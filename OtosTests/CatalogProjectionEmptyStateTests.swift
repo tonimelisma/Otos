@@ -119,7 +119,7 @@ struct CatalogProjectionEmptyStateTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
         }
@@ -259,7 +259,7 @@ struct CatalogProjectionEmptyStateTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
         }

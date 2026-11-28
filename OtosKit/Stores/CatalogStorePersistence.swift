@@ -651,6 +651,16 @@ extension CatalogStore {
                 try db.execute(sql: statement)
             }
         }
+        register(CatalogSchema.pairTimeWhileSizeUnknownMigrationIdentifier) { db in
+            for statement in CatalogSchema.pairTimeWhileSizeUnknownStatements {
+                try db.execute(sql: statement)
+            }
+        }
+        register(CatalogSchema.sourceUnreadHiddenMigrationIdentifier) { db in
+            for statement in CatalogSchema.sourceUnreadHiddenStatements {
+                try db.execute(sql: statement)
+            }
+        }
         return migrator
     }
 

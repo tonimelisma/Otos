@@ -87,6 +87,9 @@ nonisolated enum AssetEnrichmentSQL {
         AND COALESCE(m.extraction_revision, 0) < \(AssetEnrichmentSQL.currentExtractionRevisionSQL)
     """
 
+    /// The source said it holds none of its images of the row. Only a row with a size is
+    /// asked for its images (`SourceProductsSQL.owedPredicate`), so the mark never makes a
+    /// row one its server has not read, and leaves `hidden_by_source` as it is (v84).
     static let sourceProductsAbsentSQL = """
     UPDATE media_asset SET source_products_absent = 1
     WHERE \(AssetKey.exactText()) AND source_products_absent IS NOT 1

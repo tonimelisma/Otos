@@ -236,7 +236,14 @@ as the Store applies it times out on the client while the server is still sendin
 batch rather than losing one. An asset with a non-null `deletedAt` (in Immich's trash) is
 hidden but keeps its overlay, the same rule as Otos's own Trash (ADR 0022): its row is
 marked `hidden_by_source` (migration v16), which the shared scope clause and Duplicates'
-reads leave out. Restoring it in Immich shows it again. `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
+reads leave out. Restoring it in Immich shows it again. Since v84 the trash is
+`source_deleted`, and `hidden_by_source` is that or an asset the server has not read yet: no
+size, which only its metadata gives, and none of the server's images, which it makes only
+after. The server's own timeline and search leave such an asset out (they join its metadata),
+and an external library's scan lists one long before its metadata job runs — 942 on the
+owner's server on 2026-11-28, which Otos showed as placeholders. It shows once the server
+reports its size; the account's Activity row counts the ones waiting
+(`docs/research/2026-11-28-immich-unprocessed-assets.md`). `AssetDeleteV1` purges the row. `SyncResetV1` runs a full
 resync: rows the resync does not list are purged only after it completes. The resync is
 recorded as owed in the catalog (`library_root.resync_owed`, migration v41) before the
 reset is acknowledged. A new session owes one too, recorded before its token is saved: its

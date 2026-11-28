@@ -98,10 +98,19 @@ nonisolated enum AssetRowSQL {
     WHERE \(AssetKey.exactText())
     """
 
+    /// Whether the source hides the row (ADR 0046, v84): its item is in the source's trash
+    /// (`source_deleted`, bound), or it is an account's item the server has not read yet
+    /// (`unreadSQL`), which the server's own timeline hides too. Run after the row's source
+    /// facts and size are written, so a new row's `source_item_id` and images are there.
     static let sourceHiddenSQL = """
-    UPDATE media_asset SET hidden_by_source = ?
-    WHERE \(AssetKey.exactText()) AND hidden_by_source IS NOT ?
+    UPDATE media_asset SET source_deleted = ?1, hidden_by_source = (?1 OR (\(unreadSQL)))
+    WHERE library_root_id = ?2 AND relative_path = ?3
+      AND (source_deleted IS NOT ?1 OR hidden_by_source IS NOT (?1 OR (\(unreadSQL))))
     """
+
+    /// An account's item its server has not read yet: no size, which only its metadata gives,
+    /// and none of the server's images, which it makes only after (v84).
+    static let unreadSQL = "source_item_id IS NOT NULL AND byte_size IS NULL AND source_products_absent = 1"
 
     static let sourceItemFactsSQL = """
     UPDATE media_asset SET source_item_id = ?, source_path_sha1 = ?, source_products_absent = ?
@@ -203,10 +212,23 @@ nonisolated enum AssetRowSQL {
 
     static let highestRowIDSQL = "SELECT MAX(rowid) FROM media_asset"
 
+    /// A size the source reports after it listed the item: the server has read it, so the source
+    /// no longer hides it unless it is in its trash (v84).
     static let writeSourceByteSizeSQL = """
-    UPDATE media_asset SET byte_size = ?
-    WHERE library_root_id = ? AND source_item_id = ? AND byte_size IS NOT ?
+    UPDATE media_asset SET byte_size = ?1, hidden_by_source = source_deleted
+    WHERE library_root_id = ?2 AND source_item_id = ?3
+      AND (byte_size IS NOT ?1 OR hidden_by_source IS NOT source_deleted)
     """
+
+    /// An account's items its server has not read yet and not in its trash, through the index
+    /// that holds only rows with a source ID and no size (v84).
+    static let unreadSourceItemCountSQL = """
+    SELECT COUNT(*) FROM media_asset INDEXED BY \(unreadIndexName)
+    WHERE library_root_id = ? AND \(unreadPredicate)
+    """
+
+    static let unreadIndexName = "idx_media_asset_source_unread"
+    static let unreadPredicate = "\(unreadSQL) AND source_deleted = 0 AND trash_path IS NULL"
 
     static let pathOfSourceItemSQL = "SELECT relative_path FROM media_asset WHERE library_root_id = ? AND source_item_id = ?"
 
@@ -215,7 +237,7 @@ nonisolated enum AssetRowSQL {
     /// The rows of `count` source items (bound after the root) in one root.
     static func rowsOfSourceItemsSQL(count: Int) -> String {
         """
-        SELECT source_item_id, relative_path, hidden_by_source FROM media_asset
+        SELECT source_item_id, relative_path, source_deleted FROM media_asset
         WHERE library_root_id = ? AND source_item_id IN (\(Array(repeating: "?", count: count).joined(separator: ", ")))
         """
     }

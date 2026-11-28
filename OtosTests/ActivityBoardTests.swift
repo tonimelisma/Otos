@@ -537,6 +537,23 @@ struct ActivityPresentationTests {
         #expect(presentation.footer == "Everything else is up to date")
     }
 
+    /// The assets an account's server has not read yet are said on the account's row, so the
+    /// photos Otos does not show yet are accounted for; an otherwise current account waits on
+    /// its server for them.
+    @Test func anAccountSaysWhatItsServerHasNotReadYet() {
+        let current = ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, unread: 943))
+        let presentation = ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: [current])
+        #expect(presentation.rows.map(\.details) == [
+            ["The server hasn’t processed 943 photos and videos yet. They appear once it has."],
+        ])
+        #expect(presentation.rows.map(\.status) == [.waiting])
+        #expect(presentation.line == "Syncing “Home”")
+
+        let read = ActivityAccount(name: "Home", status: ImmichAccountStatus(reach: .online, unread: 0))
+        #expect(ActivityPresentation.map(ActivitySnapshot(watching: true), accounts: [read]).rows.isEmpty)
+        #expect(ActivityPresentation.unreadText(1) == "The server hasn’t processed 1 photo or video yet. They appear once it has.")
+    }
+
     /// An account's pass says how far it is: its listing so far with no bar, since the stream
     /// names no total ahead; then its images of those owed, with a bar when they were counted;
     /// and a pass that ended shows only what stops it.

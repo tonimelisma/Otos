@@ -889,7 +889,7 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: path,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
         }
@@ -924,7 +924,7 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: hidden,
+                isInSourceTrash: hidden,
                 sourceHasProducts: true
             )
         }
@@ -981,7 +981,7 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
             listed.sourceDigest = digest
@@ -1026,7 +1026,7 @@ struct ImmichCatalogSyncTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: id,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
         }
@@ -1180,7 +1180,7 @@ struct ImmichCatalogSyncTests {
         let row = try #require(try await fixture.store.windowReads.mediaAssets(for: [motion])[motion])
         #expect(row.byteSize == 3)
         #expect(row.contentModifiedAt == Date(timeIntervalSince1970: 1_700_000_900))
-        #expect(try await fixture.store.backgroundReads.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isHiddenBySource == true)
+        #expect(try await fixture.store.backgroundReads.sourceItemRows(["m"], in: fixture.rootPath)["m"]?.isInSourceTrash == true)
         #expect(server.requestedDetails.isEmpty)
         await fixture.store.shutdown()
     }
@@ -1220,7 +1220,9 @@ struct ImmichCatalogSyncTests {
 
     /// A motion part whose own line came earlier in the pass is listed from it when its
     /// still arrives, with no request to the server, even before the server has reported its
-    /// size; the size reaches its row by its own ID when it comes.
+    /// size. With no size and, a hidden asset, none of the server's images, it is one the
+    /// server has not read, which its source hides (v84); the size reaches its row by its own
+    /// ID when it comes, and shows it.
     @Test func aMotionPartIsListedFromItsOwnLineBeforeItsSizeIsKnown() async throws {
         let fixture = try await Fixture.make()
         let server = ScriptedServer([
@@ -1232,11 +1234,12 @@ struct ImmichCatalogSyncTests {
         )
 
         _ = await sync.pass()
-        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC"])
         #expect(server.requestedDetails.isEmpty)
         #expect(try await fixture.size(of: "s/IMG_1.MOV") == nil)
         _ = await sync.pass()
         #expect(try await fixture.size(of: "s/IMG_1.MOV") == 2000)
+        #expect(try await fixture.visible() == ["s/IMG_1.HEIC", "s/IMG_1.MOV"])
         await fixture.store.shutdown()
     }
 

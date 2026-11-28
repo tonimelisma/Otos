@@ -237,10 +237,11 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
     /// An Immich account's row, or nil when it is up to date: syncing or connecting works,
     /// offline waits, and signed out needs the user, who signs in again in Settings. A server
     /// that stops answering is said here, on the account it is, never as the items it held
-    /// back.
+    /// back; so are the assets the server has not read yet, which Otos does not show until it
+    /// has (v84), and which make an otherwise current account wait on its server.
     private static func row(_ account: ActivityAccount) -> Row? {
-        let status: Status
-        let details: [String]
+        var status: Status
+        var details: [String]
         var bar: Bar?
         var action: Action?
         if account.status.isSyncing {
@@ -254,13 +255,28 @@ nonisolated struct ActivityPresentation: Equatable, Sendable {
             case .signedOut:
                 (status, details) = (.needsYou, ["You’re signed out of this account. Sign in again in Settings."])
                 action = .openSettings("Open Settings…")
-            case .online: return nil
+            case .online: (status, details) = (.upToDate, [])
             }
+        }
+        if let unread = account.status.unread, unread > 0 {
+            details.append(unreadText(unread))
+            if status == .upToDate {
+                status = .waiting
+            }
+        }
+        guard status != .upToDate else {
+            return nil
         }
         return Row(
             id: "immich.\(account.name)", systemImage: "server.rack", title: "Syncing “\(account.name)”",
             details: details, status: status, bar: bar, reason: status == .working ? nil : details.first, action: action
         )
+    }
+
+    /// The account's assets its server has not read, which are not shown until it has.
+    static func unreadText(_ count: Int) -> String {
+        let items = count == 1 ? "photo or video" : "photos and videos"
+        return "The server hasn’t processed \(count.formatted()) \(items) yet. They appear once it has."
     }
 
     /// How far an account's pass is: its listing so far, with no bar, since the stream names

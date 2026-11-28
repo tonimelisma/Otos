@@ -6746,15 +6746,6 @@ extension CatalogStore {
             )
             let id = MediaAssetID(libraryRootPath: rootPath, relativePath: file.relativePath)
             rows.record(upsert, of: id)
-            try db.cachedStatement(sql: AssetRowSQL.sourceHiddenSQL).execute(
-                arguments: [item.isHiddenBySource]
-                    + AssetKey(rootID: rootRowID, path: file.relativePath).arguments
-                    + [item.isHiddenBySource]
-            )
-            // A new row's hide is part of the new row; an existing one's is a change to it.
-            if upsert != .inserted {
-                rows.recordChanged(db.changesCount, of: id, facts: .presence)
-            }
             // The source's own facts of the row, none of them shown: its name for the item;
             // where it holds the item on its server, what a mirrored library file finds it by
             // (ADR 0054); and whether it has its own images of it, what the product pass asks
@@ -6769,6 +6760,15 @@ extension CatalogStore {
             )
             if upsert != .inserted {
                 rows.recordChanged(db.changesCount, of: id, facts: [.membership, .copies, .images, .detail])
+            }
+            // Whether the source hides the row: in its trash, or not read by the server yet (v84),
+            // decided after the facts above wrote whose row it is. A new row's hide is part of
+            // the new row; an existing one's is a change to it.
+            try db.cachedStatement(sql: AssetRowSQL.sourceHiddenSQL).execute(
+                arguments: [item.isInSourceTrash] + AssetKey(rootID: rootRowID, path: file.relativePath).arguments
+            )
+            if upsert != .inserted {
+                rows.recordChanged(db.changesCount, of: id, facts: .presence)
             }
             // The source's digest of the item's bytes is the row's (ADR 0054), stamped with
             // the facts this listing wrote: the source lists the item again when its bytes
@@ -6798,10 +6798,11 @@ extension CatalogStore {
         }
         for (item, size) in changes.sizesBySourceItem {
             try db.cachedStatement(sql: AssetRowSQL.writeSourceByteSizeSQL).execute(
-                arguments: [size, rootRowID, item, size]
+                arguments: [size, rootRowID, item]
             )
-            // A size is which rows exist as they are, and a copy-key input.
-            rows.recordUnnamedUpdates(db.changesCount, facts: [.membership, .copies, .choices, .detail])
+            // A size is which rows exist as they are, a copy-key input, and, the server having
+            // read the item, whether its source still hides it (v84).
+            rows.recordUnnamedUpdates(db.changesCount, facts: [.membership, .copies, .choices, .detail, .presence])
             // A digest the source stated before it reported the size was stamped with no
             // size (-1); the size it reports now is of the same bytes.
             try db.cachedStatement(sql: AssetEnrichmentSQL.restampDigestSizeSQL).execute(
@@ -6850,6 +6851,17 @@ extension CatalogStore {
             try Double.fetchOne(
                 db, sql: LibraryRootSQL.lastSyncedAtSQL, arguments: [rootID]
             ).map(Date.init(timeIntervalSince1970:))
+        }
+    }
+
+    /// The items of the source at `rootPath` its server has not read yet, outside its trash:
+    /// the rows its source hides for that (v84), which the account's Activity row counts.
+    func unreadSourceItemCount(rootPath: LibraryRootPath, lane: CatalogReadLane) async throws -> Int {
+        guard let rootID = roots.rowIDSnapshot()[rootPath] else {
+            return 0
+        }
+        return try await reader(for: lane).readFreeingConnection { db in
+            try Int.fetchOne(db, sql: AssetRowSQL.unreadSourceItemCountSQL, arguments: [rootID]) ?? 0
         }
     }
 
@@ -7028,7 +7040,7 @@ extension CatalogStore {
             ) {
                 rows[row["source_item_id"]] = SourceItemRow(
                     relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                    isHiddenBySource: row["hidden_by_source"]
+                    isInSourceTrash: row["source_deleted"]
                 )
             }
             return rows

@@ -112,8 +112,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 20).map { "\($0)/20" })
-        #expect(run.applied == 20)
+        #expect(steps.recorded == (1 ... 22).map { "\($0)/22" })
+        #expect(run.applied == 22)
         let applied = try await queue.read { db in try CatalogStore.migrator.appliedIdentifiers(db) }
         #expect(applied == Set(CatalogStore.knownMigrationIdentifiers))
 
@@ -147,8 +147,8 @@ struct CatalogStoreSchemaMigrationTests {
         let run = try CatalogStore.applyPendingMigrations(queue) { step, total in
             steps.record("\(step)/\(total)")
         }
-        #expect(steps.recorded == (1 ... 20).map { "\($0)/20" })
-        #expect(run.applied == 20)
+        #expect(steps.recorded == (1 ... 22).map { "\($0)/22" })
+        #expect(run.applied == 22)
     }
 
     private final class StepLog: Sendable {
@@ -361,6 +361,8 @@ struct CatalogStoreSchemaMigrationTests {
             CatalogSchema.mirrorPrefixesMigrationIdentifier,
             CatalogSchema.triggerConflictPolicyMigrationIdentifier,
             CatalogSchema.personDeletionOpensFacesMigrationIdentifier,
+            CatalogSchema.pairTimeWhileSizeUnknownMigrationIdentifier,
+            CatalogSchema.sourceUnreadHiddenMigrationIdentifier,
         ])
         #expect(columns.contains("file_identifier"))
         #expect(rows == 1)

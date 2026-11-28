@@ -113,7 +113,7 @@ struct RemoteRangeEnrichmentTests {
                 contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
             ),
             sourceItemID: "asset-1",
-            isHiddenBySource: false,
+            isInSourceTrash: false,
             sourceHasProducts: true
         )]), scan: scan)
         await store.endSourceListing(scan: scan)

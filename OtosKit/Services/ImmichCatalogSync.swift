@@ -1110,7 +1110,7 @@ actor ImmichCatalogSync: QuiescentOwner {
                 contentModifiedAt: asset.fileModifiedAt
             ),
             sourceItemID: asset.id,
-            isHiddenBySource: asset.deletedAt != nil,
+            isInSourceTrash: asset.deletedAt != nil,
             sourceHasProducts: asset.hasPreview,
             sourceDigest: asset.contentDigest,
             sourcePathChecksum: asset.pathChecksum
@@ -1119,7 +1119,7 @@ actor ImmichCatalogSync: QuiescentOwner {
 
     /// A Live Photo's motion part: `<still id>/<motion original file name>` (ADR 0046 §2),
     /// in its still's folder so the pairing rule (ADR 0041) pairs them, named by its own
-    /// asset ID, and hidden with its still.
+    /// asset ID, and in the trash with its still.
     static func motionItem(_ motion: ImmichAssetDetail, in still: ImmichAsset, size: Int64?) -> SourceListedItem {
         let name = fileName(motion.originalFileName, fallback: motion.id)
         return SourceListedItem(
@@ -1132,7 +1132,7 @@ actor ImmichCatalogSync: QuiescentOwner {
                 contentModifiedAt: motion.fileModifiedAt
             ),
             sourceItemID: motion.id,
-            isHiddenBySource: still.deletedAt != nil,
+            isInSourceTrash: still.deletedAt != nil,
             sourceHasProducts: motion.hasPreview,
             sourceDigest: motion.contentDigest,
             sourcePathChecksum: motion.pathChecksum
@@ -1154,7 +1154,7 @@ actor ImmichCatalogSync: QuiescentOwner {
                 contentModifiedAt: asset.fileModifiedAt
             ),
             sourceItemID: asset.id,
-            isHiddenBySource: row.isHiddenBySource,
+            isInSourceTrash: row.isInSourceTrash,
             sourceHasProducts: asset.hasPreview,
             sourceDigest: asset.contentDigest,
             sourcePathChecksum: asset.pathChecksum

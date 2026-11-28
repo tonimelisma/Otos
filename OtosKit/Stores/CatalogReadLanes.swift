@@ -486,6 +486,10 @@ extension CatalogReads where Lane == BackgroundLane {
         try await store.sourceLastSynced(rootPath: rootPath, lane: lane)
     }
 
+    func unreadSourceItemCount(rootPath: LibraryRootPath) async throws -> Int {
+        try await store.unreadSourceItemCount(rootPath: rootPath, lane: lane)
+    }
+
     func sourceResyncOwed(rootPath: LibraryRootPath) async throws -> SourceResyncDebt? {
         try await store.sourceResyncOwed(rootPath: rootPath, lane: lane)
     }

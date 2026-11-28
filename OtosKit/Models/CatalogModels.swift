@@ -2675,8 +2675,9 @@ nonisolated struct SourceListedItem: Hashable, Sendable {
     /// The source's own ID for the item (an Immich asset's ID), which every later report
     /// and request about it uses.
     let sourceItemID: String
-    /// The source holds the item but hides it: an Immich asset in Immich's trash.
-    let isHiddenBySource: Bool
+    /// The item is in its source's trash: an Immich asset in Immich's trash. The source hides it
+    /// then, and also while its server has not read it (`AssetRowSQL.sourceHiddenSQL`, v84).
+    let isInSourceTrash: Bool
     /// The source holds its own thumbnail and preview of the item (ADR 0046 §7); false
     /// for one it has none of, which is not asked for them.
     let sourceHasProducts: Bool
@@ -2695,10 +2696,10 @@ nonisolated struct SourceResyncDebt: Equatable, Sendable {
     let revision: Int64
 }
 
-/// Where an item its source names by ID already lives, and whether the source hides it.
+/// Where an item its source names by ID already lives, and whether it is in its source's trash.
 nonisolated struct SourceItemRow: Equatable, Sendable {
     let relativePath: MediaRelativePath
-    let isHiddenBySource: Bool
+    let isInSourceTrash: Bool
 }
 
 /// A row whose source's own thumbnail and preview are missing or older than its file

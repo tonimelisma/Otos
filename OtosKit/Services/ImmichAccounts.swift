@@ -31,6 +31,10 @@ nonisolated struct ImmichAccountStatus: Equatable, Sendable {
     /// How far the running pass is, as its sync reports it (`ImmichSyncReport.progress`); nil
     /// while no pass runs, and before the running one has reported.
     var progress: SyncProgress?
+    /// The account's assets its server has not read yet, which Otos does not show until it
+    /// has, as the server's own timeline does not (v84): counted after each pass that applied
+    /// the stream to its end; nil before one has, or when the catalog could not say (logged).
+    var unread: Int?
 
     /// How far a pass is, in exact counts: what its listing has applied so far — the stream
     /// names no total ahead of its end — then the server's images it has fetched of the rows
@@ -591,6 +595,30 @@ actor ImmichAccounts {
                 ])
             }
         }
+        // The catalog is current with the server: how many of its assets the server has not
+        // read is now a fact of this pass.
+        storeUpdates.yield { [weak self] in
+            let unread: Int?
+            do {
+                unread = try await store.backgroundReads.unreadSourceItemCount(rootPath: path)
+            } catch {
+                OtosLog.catalog.errorOperation("immich.account.unread", phase: "readFailed", fields: [
+                    "rootPath": path.rawValue, "error": String(describing: error),
+                ])
+                unread = nil
+            }
+            await self?.counted(unread: unread, for: path)
+        }
+    }
+
+    /// The count of the account's assets its server has not read, as the last complete pass
+    /// left the catalog.
+    private func counted(unread: Int?, for path: LibraryRootPath) {
+        guard var current = status[path] else {
+            return
+        }
+        current.unread = unread
+        update(current, for: path)
     }
 
     /// A pass that ended without applying its stream: the server's answer, and no pass syncing.

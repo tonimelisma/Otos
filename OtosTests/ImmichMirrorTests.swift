@@ -288,15 +288,86 @@ struct ImmichMirrorTests {
         await fixture.store.shutdown()
     }
 
-    /// The server lists a new asset before it has read the file's size: the pair is made by
-    /// path, and the two are two photos while their versions cannot be compared. The next pass
-    /// lists the asset again with its size, an upsert of a row whose pair's key holds, and the
-    /// pair becomes one photo. The upsert's own conflict policy reaches the copy triggers, so
-    /// it once aborted there, the batch was never acknowledged, and every pass after failed on
-    /// it (owner's catalog, 2026-11-19).
-    @Test func aSizeListedAfterThePairIsMadeMakesItOnePhoto() async throws {
-        let fixture = try await fixture(digested: true)
+    /// The server lists a new asset before it has read the file's size (an external library's
+    /// scan finds the file; its metadata job comes later): the pair is made by path, and the
+    /// two are one photo at once (v83), since the modification time the scan read is the
+    /// file's, so a Like on the file is the asset's too. The next pass lists the asset again
+    /// with its size, an upsert of a row whose pair's key holds, and the pair stays one photo.
+    /// The upsert's own conflict policy reaches the copy triggers, so it once aborted there,
+    /// the batch was never acknowledged, and every pass after failed on it (owner's catalog,
+    /// 2026-11-19).
+    @Test func anAssetTheServerHasNotReadIsOnePhotoWithItsFileByTime() async throws {
+        let fixture = try await fixture(digested: true, secondCopy: true)
         let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG")
+        // The library's other file, which the server has read, teaches the mirror's prefix: the
+        // probe asks only about an asset with a size.
+        let other = try #require(await fixture.store.windowReads.planningMedia(for: fixture.library)?.first {
+            $0.id.relativePath.rawValue == "2024/IMG_1 copy.JPG"
+        })
+        let read = try Self.listing("b", of: other, at: Self.serverPrefix + "2024/IMG_1 copy.JPG")
+        let unsized = listing.events.filter {
+            if case .asset = $0 {
+                true
+            } else {
+                false
+            }
+        }
+        let server = MirrorServer(
+            [read.events + unsized + [Self.complete], listing.events + [Self.complete]],
+            details: ["a": listing.detail, "b": read.detail]
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+
+        #expect(await sync.pass() == .synced(listed: 2, deleted: 0, full: false))
+        _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.file.id])
+        #expect(try await asset(fixture.asset, fixture.store)?.mediaChoice == .liked, "one photo, so one choice")
+
+        #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
+        #expect(try await ids(.allMedia, fixture.store).contains(fixture.asset) == false)
+        #expect(try await asset(fixture.asset, fixture.store)?.mediaChoice == .liked)
+        await fixture.store.shutdown()
+    }
+
+    /// An asset the server has not read, listed with another modification time than the file's,
+    /// is another version: with no size to compare, the time alone tells them apart, so a Like
+    /// on the file is not the asset's.
+    @Test func anAssetTheServerHasNotReadOfAnotherVersionIsTwoPhotos() async throws {
+        let fixture = try await fixture(digested: true, secondCopy: true)
+        let modified = try #require(fixture.file.contentModifiedAt).addingTimeInterval(60)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2024/IMG_1.JPG", modified: modified)
+        let other = try #require(await fixture.store.windowReads.planningMedia(for: fixture.library)?.first {
+            $0.id.relativePath.rawValue == "2024/IMG_1 copy.JPG"
+        })
+        let read = try Self.listing("b", of: other, at: Self.serverPrefix + "2024/IMG_1 copy.JPG")
+        let unsized = listing.events.filter {
+            if case .asset = $0 {
+                true
+            } else {
+                false
+            }
+        }
+        let server = MirrorServer(
+            [read.events + unsized + [Self.complete]], details: ["a": listing.detail, "b": read.detail]
+        )
+        let sync = ImmichCatalogSync(
+            rootPath: fixture.account, source: server, store: fixture.store, volumeCapacity: ampleVolumeCapacity
+        )
+
+        #expect(await sync.pass() == .synced(listed: 2, deleted: 0, full: false))
+        _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.file.id])
+        #expect(try await asset(fixture.asset, fixture.store)?.mediaChoice != .liked)
+        await fixture.store.shutdown()
+    }
+
+    /// An asset the server has not read yet, with no library file it is one photo with, is
+    /// hidden by its source until the server reads it, as the server's own timeline hides it
+    /// (v84), and the account counts it; the size the server reports once it has read it
+    /// shows it.
+    @Test func anAssetTheServerHasNotReadIsHiddenUntilItHas() async throws {
+        let fixture = try await fixture(digested: true)
+        let listing = try Self.listing("a", of: fixture.file, at: Self.serverPrefix + "2023/IMG_1.JPG")
         let unsized = listing.events.filter {
             if case .asset = $0 {
                 true
@@ -313,10 +384,12 @@ struct ImmichMirrorTests {
         )
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await ids(.allMedia, fixture.store).count == 2)
+        #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id], "the unread asset is not shown")
+        #expect(try await fixture.store.backgroundReads.unreadSourceItemCount(rootPath: fixture.account) == 1)
 
         #expect(await sync.pass() == .synced(listed: 1, deleted: 0, full: false))
-        #expect(try await ids(.allMedia, fixture.store) == [fixture.file.id])
+        #expect(try await ids(.allMedia, fixture.store).count == 2, "read, it is shown")
+        #expect(try await fixture.store.backgroundReads.unreadSourceItemCount(rootPath: fixture.account) == 0)
         await fixture.store.shutdown()
     }
 

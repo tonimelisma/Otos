@@ -54,7 +54,7 @@ struct CatalogSQLTextTests {
                     contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                 ),
                 sourceItemID: folder,
-                isHiddenBySource: false,
+                isInSourceTrash: false,
                 sourceHasProducts: true
             )
         }

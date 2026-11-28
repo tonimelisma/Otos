@@ -440,7 +440,7 @@ struct BenchmarkTests {
                         contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
                     ),
                     sourceItemID: folder,
-                    isHiddenBySource: false,
+                    isInSourceTrash: false,
                     sourceHasProducts: true
                 )
             }
@@ -522,7 +522,7 @@ struct BenchmarkTests {
                         name: String(format: "IMG_%05d.JPG", index), contentTypeIdentifier: "public.jpeg", byteSize: 4,
                         createdAt: base.addingTimeInterval(Double(index)), contentModifiedAt: base.addingTimeInterval(Double(index))
                     ),
-                    sourceItemID: folder, isHiddenBySource: false, sourceHasProducts: true,
+                    sourceItemID: folder, isInSourceTrash: false, sourceHasProducts: true,
                     sourcePathChecksum: ImmichPathChecksum(serverPath: prefix + path(index))
                 )
             }

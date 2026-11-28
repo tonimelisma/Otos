@@ -212,7 +212,7 @@ struct ImmichAccountCatalogTests {
                     relativePath: MediaRelativePath(rawValue: "\(asset)/IMG_1.JPG"), name: "IMG_1.JPG",
                     contentTypeIdentifier: "public.jpeg", byteSize: 42, createdAt: date, contentModifiedAt: date
                 ),
-                sourceItemID: asset, isHiddenBySource: false, sourceHasProducts: true,
+                sourceItemID: asset, isInSourceTrash: false, sourceHasProducts: true,
                 sourceDigest: nil,
                 sourcePathChecksum: external ? ImmichPathChecksum(serverPath: "/mnt/photos/\(asset)/IMG_1.JPG") : nil
             )

@@ -267,7 +267,7 @@ struct ImmichAccountsTests {
                 createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                 contentModifiedAt: Date(timeIntervalSince1970: 1_700_000_000)
             ),
-            sourceItemID: "gone", isHiddenBySource: false, sourceHasProducts: false
+            sourceItemID: "gone", isInSourceTrash: false, sourceHasProducts: false
         )]), scan: scan)
         await store.endSourceListing(scan: scan)
         #expect(try await assetPaths(store, rootPath).sorted() == ["a1/IMG_1.JPG", "gone/IMG.JPG"])
@@ -461,7 +461,7 @@ struct ImmichAccountsTests {
                 byteSize: 1, createdAt: nil, contentModifiedAt: nil
             ),
             sourceItemID: "silent",
-            isHiddenBySource: false,
+            isInSourceTrash: false,
             sourceHasProducts: true
         )]), scan: scan)
         await store.endSourceListing(scan: scan)
